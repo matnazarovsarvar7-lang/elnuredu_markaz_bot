@@ -5,7 +5,8 @@ from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
 from aiogram.types import InlineKeyboardButton as IB, InlineKeyboardMarkup as IM
-from aiogram.filters import CommandStart
+from aiogram.filters import Command, CommandStart
+from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 from sqlalchemy.orm import selectinload
 
@@ -43,7 +44,9 @@ async def show_menu(m: Message, who: S.Who) -> None:
 
 
 @router.message(CommandStart())
-async def start(m: Message) -> None:
+async def start(m: Message, state: FSMContext | None = None) -> None:
+    if state:
+        await state.clear()   # boshlangan har qanday amal bekor bo'ladi
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
     if who.staff or who.parent or who.student:

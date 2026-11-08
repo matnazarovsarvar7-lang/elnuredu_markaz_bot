@@ -35,6 +35,13 @@ async def main() -> None:
     await ensure_owner()
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+    # /start har doim birinchi: boshlangan amal (to'lov, tahrir) o'rtasida ham ishlaydi
+    from app.bot.handlers import start as start_handler
+    from aiogram import Router
+    from aiogram.filters import CommandStart
+    top = Router()
+    top.message.register(start_handler, CommandStart())
+    dp.include_router(top)
     dp.include_router(pay_router)
     dp.include_router(edit_router)
     dp.include_router(router)
