@@ -99,5 +99,7 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     sch.add_job(debt_reminders, "cron", hour=10, minute=0, args=[bot])
     sch.add_job(attendance_watch, "cron", minute="*/10", args=[bot])
     sch.add_job(evening_report, "cron", hour=21, minute=0, args=[bot])
+    from app.bot.manage import tasks_job
+    sch.add_job(tasks_job, "cron", hour=9, minute=0, args=[bot])
     sch.start()
     return sch

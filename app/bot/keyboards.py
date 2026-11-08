@@ -15,6 +15,10 @@ B_HELP = "ℹ️ Yordam"
 B_GROUPS = "⚙️ Guruhlar"
 B_STUDENT = "👤 O'quvchi"
 B_STAFF = "👥 Xodimlar"
+B_SETTINGS = "🛠 Sozlamalar"
+B_TASK_NEW = "📝 Vazifa berish"
+B_TASKS_ALL = "📋 Vazifalar holati"
+B_MY_TASKS = "📝 Vazifalarim"
 B_PARENT_PAY = "💳 To'lov chekini yuborish"
 
 
@@ -34,6 +38,10 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_STUDENT, B_DEBTS])
     if role == "rahbar":
         rows.append([B_PENDING, B_STAFF])
+        rows.append([B_TASK_NEW, B_TASKS_ALL])
+        rows.append([B_SETTINGS])
+    else:
+        rows.append([B_MY_TASKS])
     rows.append([B_HELP] + ([B_SWITCH] if multi else []))
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in r] for r in rows], resize_keyboard=True)
 

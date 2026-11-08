@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 from app.bot.handlers import router
 from app.bot.payments import router as pay_router
 from app.bot.edit import router as edit_router
+from app.bot.manage import router as manage_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -43,6 +44,7 @@ async def main() -> None:
     top.message.register(start_handler, CommandStart())
     dp.include_router(top)
     dp.include_router(pay_router)
+    dp.include_router(manage_router)
     dp.include_router(edit_router)
     dp.include_router(router)
     setup_jobs(bot)

@@ -177,3 +177,18 @@ class AuditLog(Base):
     action: Mapped[str] = mapped_column(String(60))
     details: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Task(Base):
+    """Rahbar xodimga beradigan qo'shimcha vazifa."""
+    __tablename__ = "tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    text: Mapped[str] = mapped_column(Text)
+    due: Mapped[date] = mapped_column(Date)
+    status: Mapped[str] = mapped_column(String(10), default="ochiq")   # ochiq | bajarildi | bekor
+    done_at: Mapped[datetime | None] = mapped_column(DateTime)
+    done_note: Mapped[str | None] = mapped_column(Text)
+    overdue_notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
