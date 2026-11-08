@@ -10,8 +10,8 @@ if [ "$FREE_GB" -lt 5 ]; then echo "Diskda joy kam: ${FREE_GB} GB. Kamida 5 GB k
 command -v docker >/dev/null || { apt-get update -y; apt-get install -y docker.io docker-compose-v2; }
 command -v git >/dev/null || apt-get install -y git
 
-if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone https://github.com/REPO_OWNER/REPO_NAME.git "$DIR"; fi
-cd "$DIR/bot"
+if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone https://github.com/matnazarovsarvar7-lang/elnur-edu-bot.git "$DIR"; fi
+cd "$DIR"
 
 if [ ! -f .env ]; then
   echo
@@ -27,7 +27,7 @@ docker compose up -d --build
 # Har kuni 03:00 da baza nusxasi, 14 kunlik saqlanadi
 mkdir -p /opt/elnur-backups
 cat > /etc/cron.d/elnur-backup <<CRON
-0 3 * * * root cd $DIR/bot && docker compose exec -T db pg_dump -U elnur elnur | gzip > /opt/elnur-backups/elnur-\$(date +\%F).sql.gz && find /opt/elnur-backups -name '*.sql.gz' -mtime +14 -delete
+0 3 * * * root cd $DIR && docker compose exec -T db pg_dump -U elnur elnur | gzip > /opt/elnur-backups/elnur-\$(date +\%F).sql.gz && find /opt/elnur-backups -name '*.sql.gz' -mtime +14 -delete
 CRON
 
 echo
