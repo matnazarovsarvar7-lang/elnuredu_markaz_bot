@@ -5,7 +5,7 @@ ELNUR_EDU o'quv markazi uchun Telegram bot: davomat, vazifa, to'lovlar, qarzlar,
 Serverga o'rnatish (Ubuntu):
 
 ```
-git clone https://github.com/matnazarovsarvar7-lang/elnur-edu-bot.git /opt/elnur-bot
+git clone https://github.com/matnazarovsarvar7-lang/elnuredu_markaz_bot.git /opt/elnur-bot
 bash /opt/elnur-bot/install.sh
 ```
 

@@ -10,7 +10,7 @@ if [ "$FREE_GB" -lt 5 ]; then echo "Diskda joy kam: ${FREE_GB} GB. Kamida 5 GB k
 command -v docker >/dev/null || { apt-get update -y; apt-get install -y docker.io docker-compose-v2; }
 command -v git >/dev/null || apt-get install -y git
 
-if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone https://github.com/matnazarovsarvar7-lang/elnur-edu-bot.git "$DIR"; fi
+if [ -d "$DIR/.git" ]; then git -C "$DIR" pull --ff-only; else git clone https://github.com/matnazarovsarvar7-lang/elnuredu_markaz_bot.git "$DIR"; fi
 cd "$DIR"
 
 if [ ! -f .env ]; then
