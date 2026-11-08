@@ -17,6 +17,7 @@ from app.bot.notify import send
 from app.config import settings
 from app.db.models import Enrollment, Group, Lead, Parent, Student
 from app.db.session import Session
+from app.logic.calendar import nth_lesson_on_or_after
 from app.logic.money import first_month_due, new_student_deadline, tier_of_grade
 from app import services as S
 
@@ -158,12 +159,13 @@ async def reg_group(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(gid=gid)
     await state.set_state(Rg.date)
     t = today()
-    kb = IM(inline_keyboard=[[IB(text=f"Bugun ({t:%d.%m})", callback_data=f"rgd:{t.isoformat()}"),
-                              IB(text=f"Ertaga ({t + timedelta(1):%d.%m})",
-                                 callback_data=f"rgd:{(t + timedelta(1)).isoformat()}")]])
+    wd = ["Du", "Se", "Chor", "Pay", "Ju", "Sha", "Yak"]
+    days = [nth_lesson_on_or_after(t, g.days, i) for i in (1, 2, 3)]
+    kb = IM(inline_keyboard=[[IB(text=("Bugun" if x == t else f"{wd[x.weekday()]}") + f" {x:%d.%m}",
+                                 callback_data=f"rgd:{x.isoformat()}") for x in days]])
     d = await state.get_data()
     step = "" if d.get("sid") else "5/5. "
-    await c.message.edit_text(f"Guruh: <b>{g.name}</b> ✅\n\n{step}Birinchi darsga qaysi kuni keladi (keldi)?\n"
+    await c.message.edit_text(f"Guruh: <b>{g.name}</b> ✅\n\n{step}Birinchi darsga qaysi kuni keladi (keldi)?\nPastda shu guruhning eng yaqin dars kunlari.\n"
                               f"Boshqa sana bo'lsa yozing: <i>12.11</i>\n"
                               f"(ko'pi bilan {BACK_DAYS} kun oldingi sana)", reply_markup=kb)
 
