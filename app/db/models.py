@@ -145,6 +145,7 @@ class Payment(Base):
     paid_date: Mapped[date] = mapped_column(Date)
     receipt_file_id: Mapped[str | None] = mapped_column(String(200))
     receipt_hash: Mapped[str | None] = mapped_column(String(64))
+    batch: Mapped[str | None] = mapped_column(String(36), index=True)  # bitta to'lov bir necha guruhga bo'linganda
     entered_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     coins_given: Mapped[int] = mapped_column(Integer, default=0)

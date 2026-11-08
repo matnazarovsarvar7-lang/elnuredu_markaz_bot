@@ -258,6 +258,7 @@ async def student_summary(s, stu: Student) -> str:
     await s.refresh(stu, ["enrollments"])
     t = today()
     lines = [f"<b>{stu.full_name}</b>", f"Coin: <b>{stu.coins}</b>"]
+    total = 0
     for e in stu.enrollments:
         if not e.active:
             continue
@@ -268,6 +269,8 @@ async def student_summary(s, stu: Student) -> str:
         days = {"toq": "Du-Chor-Ju", "juft": "Se-Pay-Sha", "har": "Du-Sha"}[g.days]
         pay = "✅ to'langan" if st.debt == 0 else f"qoldi {S.fmt_som(st.debt)}"
         lines.append(f"\n📘 {g.name} · {days} {when}\n   {t:%m.%Y} uchun: {S.fmt_som(st.payable)}, {pay}")
+        total += st.debt
+    lines.append("\n✅ Bu oy uchun qarz yo'q" if total == 0 else f"\n<b>Umumiy qarz: {S.fmt_som(total)}</b>")
     return "\n".join(lines)
 
 

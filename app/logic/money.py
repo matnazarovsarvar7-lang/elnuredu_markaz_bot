@@ -97,3 +97,27 @@ def is_market_debtor(today: date, due: int, paid: int, new_student_deadline_date
 def reminder_day(day: int) -> bool:
     """Qarz eslatmasi yuboriladigan kunmi: 5; 8, 11, 14; 16-dan oy oxirigacha har kuni."""
     return day == 5 or day in (8, 11, 14) or day >= 16
+
+
+def split_payment(amount: int, debts: list[int], step: int = 1000) -> list[int]:
+    """Umumiy to'lovni guruhlar qarziga mutanosib taqsimlash (qarzlar teng bo'lsa — teng).
+    Har guruhga qarzidan ko'p tushmaydi; ortiqchasi oxirgi guruhga (keyingi oy hisobiga) qoladi."""
+    if not debts:
+        return []
+    total = sum(debts)
+    if total <= 0:
+        out = [0] * len(debts)
+        out[-1] = amount
+        return out
+    if amount >= total:
+        out = list(debts)
+        out[-1] += amount - total
+        return out
+    out = [min(d, int(amount * d / total // step * step)) for d in debts]
+    rest = amount - sum(out)
+    for i in sorted(range(len(debts)), key=lambda i: debts[i] - out[i], reverse=True):  # qoldiqni taqsimlash
+        add = min(rest, debts[i] - out[i])
+        out[i] += add
+        rest -= add
+    out[-1] += rest
+    return out

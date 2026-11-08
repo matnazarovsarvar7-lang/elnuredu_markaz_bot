@@ -227,10 +227,11 @@ async def coins_allowed(s: AsyncSession, student: Student, on: date) -> bool:
 
 async def record_payment(s: AsyncSession, enr: Enrollment, amount: int, method: str, paid_date: date,
                          month: str, by: Staff | None, status: str = "tasdiq",
-                         receipt_file_id: str | None = None, receipt_hash: str | None = None) -> Payment:
+                         receipt_file_id: str | None = None, receipt_hash: str | None = None,
+                         batch: str | None = None) -> Payment:
     pay = Payment(enrollment_id=enr.id, month=month, amount=amount, method=method, status=status,
                   paid_date=paid_date, entered_by=by.id if by else None,
-                  receipt_file_id=receipt_file_id, receipt_hash=receipt_hash)
+                  receipt_file_id=receipt_file_id, receipt_hash=receipt_hash, batch=batch)
     s.add(pay)
     await s.flush()
     if status == "tasdiq":
@@ -330,3 +331,63 @@ async def admin_may_see_debts() -> bool:
     async with Session() as s:
         row = await s.get(Setting, "admin_sees_debts")
         return bool(row and row.value.get("on"))
+
+
+
+# ---------- o'quvchi bo'yicha umumiy qarz va to'lovni taqsimlash ----------
+@dataclass
+class StudentDebt:
+    student: Student
+    parts: list[MonthStatus]
+
+    @property
+    def debt(self) -> int:
+        return sum(p.debt for p in self.parts)
+
+    @property
+    def payable(self) -> int:
+        return sum(p.payable for p in self.parts)
+
+
+async def student_debt(s: AsyncSession, student_id: int, year: int, month: int) -> StudentDebt:
+    enrs = await student_enrollments(s, student_id)
+    parts = [await month_status(s, e, year, month) for e in enrs]
+    stu = enrs[0].student if enrs else await s.get(Student, student_id)
+    return StudentDebt(stu, parts)
+
+
+async def record_student_payment(s: AsyncSession, student_id: int, amount: int, method: str, paid_date: date,
+                                 month: str, by: Staff | None, status: str = "tasdiq",
+                                 receipt_file_id: str | None = None, receipt_hash: str | None = None
+                                 ) -> list[tuple[Enrollment, Payment]]:
+    """Bitta to'lov — o'quvchining barcha guruhlariga qarziga mutanosib taqsimlanadi."""
+    import uuid
+    from app.logic.money import split_payment
+    y, m = map(int, month.split("-"))
+    sd = await student_debt(s, student_id, y, m)
+    parts = [p for p in sd.parts if p.payable > 0] or sd.parts
+    shares = split_payment(amount, [p.debt for p in parts])
+    batch = str(uuid.uuid4())
+    out = []
+    for p, share in zip(parts, shares):
+        if share <= 0:
+            continue
+        pay = await record_payment(s, p.enrollment, share, method, paid_date, month, by, status,
+                                   receipt_file_id, receipt_hash if not out else None, batch)
+        out.append((p.enrollment, pay))
+    return out
+
+
+async def batch_payments(s: AsyncSession, pay: Payment) -> list[Payment]:
+    if not pay.batch:
+        return [pay]
+    return list((await s.execute(select(Payment).where(Payment.batch == pay.batch))).scalars())
+
+
+async def student_debtors(s: AsyncSession, year: int, month: int) -> list[StudentDebt]:
+    by_student: dict[int, list[MonthStatus]] = {}
+    for st in await debtors(s, year, month):
+        by_student.setdefault(st.enrollment.student_id, []).append(st)
+    out = [StudentDebt(v[0].enrollment.student, v) for v in by_student.values()]
+    out.sort(key=lambda x: x.student.full_name)
+    return out

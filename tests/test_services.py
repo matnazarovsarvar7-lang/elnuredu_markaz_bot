@@ -79,3 +79,31 @@ async def test_card_payment_and_debtors():
     found = await S.search_students(s, "ali")
     assert {x.full_name for x in found} == {"Ali", "Vali"}
     await s.close(); await eng.dispose()
+
+
+async def test_student_level_payment_split():
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with eng.begin() as c:
+        await c.run_sync(Base.metadata.create_all)
+    s = async_sessionmaker(eng, expire_on_commit=False)()
+    boss = Staff(full_name="Rahbar", phone="+998900000009", roles="rahbar")
+    g1, g2 = Group(name="Fizika", days="juft", teacher=boss), Group(name="Milliy", days="toq", teacher=boss)
+    k = Student(full_name="Kamron", tier=3)
+    s.add_all([boss, g1, g2, k]); await s.flush()
+    for g in (g1, g2):
+        s.add(Enrollment(student=k, group=g, join_date=date(2026, 11, 1), registered_at=date(2026, 11, 8),
+                         price_override=350_000))
+    await s.flush()
+    res = await S.record_student_payment(s, k.id, 400_000, "naqd", date(2026, 11, 8), "2026-11", boss)
+    assert sorted(p.amount for _, p in res) == [200_000, 200_000]
+    sd = await S.student_debt(s, k.id, 2026, 11)
+    assert sd.debt == 300_000 and len({p.batch for _, p in res}) == 1
+    res = await S.record_student_payment(s, k.id, 300_000, "karta", date(2026, 11, 9), "2026-11", boss,
+                                         status="kutilmoqda")
+    assert k.coins == 20 and len(await S.batch_payments(s, res[0][1])) == 2
+    for p in await S.batch_payments(s, res[0][1]):
+        await S.confirm_payment(s, p, boss)
+    assert (await S.student_debt(s, k.id, 2026, 11)).debt == 0
+    assert k.coins == 20 + 14            # har guruhga 150 000 -> 200k+150k=350k: 17-10=7 coin x2
+    assert len(await S.student_debtors(s, 2026, 11)) == 0
+    await s.close(); await eng.dispose()

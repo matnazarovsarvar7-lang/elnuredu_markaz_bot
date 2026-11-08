@@ -69,3 +69,13 @@ def test_salary():
     assert round(point_value(920_000, 105, 50)) == 8762
     assert point_value(920_000, 105, 140) == 920_000 / 140
     assert penalty_amount(5, 700_000) == 50_000 and penalty_amount(20, 700_000) == 70_000
+
+
+def test_split_payment():
+    from app.logic.money import split_payment
+    assert split_payment(400_000, [350_000, 350_000]) == [200_000, 200_000]
+    assert split_payment(650_000, [300_000, 350_000]) == [300_000, 350_000]
+    assert sum(split_payment(325_000, [300_000, 350_000])) == 325_000
+    assert split_payment(325_000, [300_000, 350_000]) == [150_000, 175_000]
+    assert split_payment(700_000, [300_000, 350_000]) == [300_000, 400_000]   # ortiqchasi oxirgisiga
+    assert split_payment(100_000, [0, 350_000]) == [0, 100_000]

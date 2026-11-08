@@ -25,19 +25,21 @@ def now() -> datetime:
 
 
 async def debt_reminders(bot: Bot) -> None:
+    """Bitta o'quvchiga bitta eslatma — barcha guruhlari bo'yicha umumiy qarz bilan."""
     t = now().date()
     if not reminder_day(t.day):
         return
     async with Session() as s:
-        items = await S.debtors(s, t.year, t.month)
         jobs = []
-        for st in items:
-            e = st.enrollment
-            if e.discount_kind == "ijtimoiy":
+        for sd in await S.student_debtors(s, t.year, t.month):
+            parts = [p for p in sd.parts if p.enrollment.discount_kind != "ijtimoiy"]
+            if not parts:
                 continue
-            for tg in await S.parent_tg_ids(s, e.student_id):
-                jobs.append((tg, f"🔔 Eslatma: {e.student.full_name} · {e.group.name}\n"
-                                 f"{t:%m.%Y} uchun to'lov: {S.fmt_som(st.payable)}, qoldi {S.fmt_som(st.debt)}.\n"
+            lines = "\n".join(f"• {p.enrollment.group.name}: {S.fmt_som(p.debt)}" for p in parts)
+            total = sum(p.debt for p in parts)
+            for tg in await S.parent_tg_ids(s, sd.student.id):
+                jobs.append((tg, f"🔔 Eslatma: {sd.student.full_name}\n{t:%m.%Y} uchun to'lanmagan:\n{lines}\n"
+                                 f"<b>Jami: {S.fmt_som(total)}</b>\n"
                                  "To'lov qilgan bo'lsangiz, chekni botga yuboring."))
     for tg, text in jobs:
         await send(bot, tg, text)
