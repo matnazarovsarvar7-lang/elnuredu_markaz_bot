@@ -104,6 +104,26 @@ async def test_student_level_payment_split():
     for p in await S.batch_payments(s, res[0][1]):
         await S.confirm_payment(s, p, boss)
     assert (await S.student_debt(s, k.id, 2026, 11)).debt == 0
-    assert k.coins == 20 + 14            # har guruhga 150 000 -> 200k+150k=350k: 17-10=7 coin x2
+    assert k.coins == 35                 # jami 700 000 / 20 000 = 35 (8-noyabr — bonus yo'q)
     assert len(await S.student_debtors(s, 2026, 11)) == 0
+    await s.close(); await eng.dispose()
+
+
+async def test_bonus_once_per_student():
+    eng = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with eng.begin() as c:
+        await c.run_sync(Base.metadata.create_all)
+    s = async_sessionmaker(eng, expire_on_commit=False)()
+    boss = Staff(full_name="Rahbar", phone="+998900000009", roles="rahbar")
+    g1, g2 = Group(name="A", days="juft", teacher=boss), Group(name="B", days="toq", teacher=boss)
+    k = Student(full_name="K", tier=3)
+    s.add_all([boss, g1, g2, k]); await s.flush()
+    for g in (g1, g2):
+        s.add(Enrollment(student=k, group=g, join_date=date(2026, 11, 1), registered_at=date(2026, 11, 1),
+                         price_override=350_000))
+    await s.flush()
+    await S.record_student_payment(s, k.id, 350_000, "naqd", date(2026, 12, 2), "2026-12", boss)
+    assert k.coins == 17                       # hali to'liq emas — bonus yo'q
+    await S.record_student_payment(s, k.id, 350_000, "naqd", date(2026, 12, 4), "2026-12", boss)
+    assert k.coins == 17 + 18 + 5               # 700k jami: 35 coin, +5 bitta marta
     await s.close(); await eng.dispose()

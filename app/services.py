@@ -241,20 +241,35 @@ async def record_payment(s: AsyncSession, enr: Enrollment, amount: int, method: 
 
 
 async def apply_payment_coins(s: AsyncSession, pay: Payment, enr: Enrollment) -> int:
-    """Shu oy uchun shu oy ichida to'langan bo'lsa — coin; 5-sanagacha to'liq — +bonus."""
+    """Shu oy uchun shu oy ichida to'langan bo'lsa — coin (har 20 000 so'm).
+    +5 bonus o'quvchiga oyiga BIR MARTA: barcha guruhlari bo'yicha qarz 5-sanagacha to'liq yopilsa."""
     rules = await get_rules(s)
     y, m = map(int, pay.month.split("-"))
     if (pay.paid_date.year, pay.paid_date.month) > (y, m):
-        return 0  # keyingi oyga o'tgan qarz — coin yo'q (yangi o'quvchi istisnosi keyingi bosqichda)
-    before = await paid_for_month(s, enr.id, pay.month) - pay.amount
+        return 0  # keyingi oyga o'tgan qarz — coin yo'q
+    # coin o'quvchining shu oydagi BARCHA to'lovlari yig'indisidan (guruhlarga bo'linganda kasr yo'qolmasin)
+    enr_ids = list((await s.execute(select(Enrollment.id).where(Enrollment.student_id == enr.student_id))).scalars())
+    total = sum([await paid_for_month(s, eid, pay.month) for eid in enr_ids])
+    before = total - pay.amount
     got = C.payment_coins(before, pay.amount, rules)
-    st = await month_status(s, enr, y, m)
-    if pay.paid_date.day <= 5 and before < st.payable <= before + pay.amount:
-        got += rules["pay_bonus"]
     await s.refresh(enr, ["student"])
     await add_coins(s, enr.student, got, "tolov", f"To'lov {fmt_som(pay.amount)}", None)
-    pay.coins_given = got
-    return got
+    bonus = 0
+    if pay.paid_date.day <= 5 and rules["pay_bonus"]:
+        already = (await s.execute(select(CoinTx.id).where(CoinTx.student_id == enr.student_id, CoinTx.kind == "bonus",
+                                                           CoinTx.reason == f"Bonus {pay.month}"))).first()
+        if not already:
+            enrs = (await s.execute(select(Enrollment).where(Enrollment.student_id == enr.student_id,
+                                                             Enrollment.active)
+                                    .options(selectinload(Enrollment.group)))).scalars().all()
+            debt = 0
+            for e in enrs:
+                debt += (await month_status(s, e, y, m)).debt
+            if debt == 0:
+                bonus = rules["pay_bonus"]
+                await add_coins(s, enr.student, bonus, "bonus", f"Bonus {pay.month}", None)
+    pay.coins_given = got + bonus
+    return got + bonus
 
 
 # ---------- qidiruv, karta tasdig'i, qarzdorlar ----------
