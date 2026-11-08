@@ -145,28 +145,76 @@ async def pay_amount_btn(c: CallbackQuery, state: FSMContext) -> None:
     await _got_amount(c.message, state, int(c.data.split(":")[1]), c.from_user.id)
 
 
+class PayDate(StatesGroup):
+    custom = State()
+
+
 @router.callback_query(F.data.startswith("pm:"))
 async def pay_method(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     method = c.data.split(":")[1]
-    if method == "karta":
-        await state.set_state(Pay.receipt)
-        await c.message.edit_text("O'tkazma chekining rasmini yuboring. To'lov rahbar tasdiqlagach hisobga olinadi.")
+    await state.update_data(method=method)
+    t = today()
+    kb = IM(inline_keyboard=[[IB(text=f"Bugun ({t:%d.%m})", callback_data="pdt:0")],
+                             [IB(text="📅 Boshqa sana", callback_data="pdt:other")]])
+    await c.message.edit_text("To'lov qaysi kuni qilingan?", reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("pdt:"))
+async def pay_date(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    if c.data == "pdt:other":
+        await state.set_state(PayDate.custom)
+        await c.message.edit_text("Sanani kun va oy bilan yozing, masalan: 3 11")
         return
+    await state.update_data(paid=today().isoformat())
+    await _after_date(c.message, state, bot, c.from_user.id)
+
+
+@router.message(PayDate.custom)
+async def pay_date_custom(m: Message, state: FSMContext, bot: Bot) -> None:
+    import re
+    nums = [int(x) for x in re.findall(r"\d+", m.text or "")]
+    t = today()
+    try:
+        d = date(t.year, nums[1], nums[0])
+        if d > t:
+            d = date(t.year - 1, nums[1], nums[0])
+    except (IndexError, ValueError):
+        await m.answer("Tushunmadim. Masalan: 3 11 (3-noyabr)")
+        return
+    if (t - d).days > 62:
+        await m.answer("Juda eski sana. Oxirgi 2 oy ichidagi sanani yozing.")
+        return
+    await state.update_data(paid=d.isoformat(), month=f"{d.year:04d}-{d.month:02d}")
+    await _after_date(m, state, bot, m.from_user.id)
+
+
+async def _after_date(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> None:
     d = await state.get_data()
+    if d["method"] == "karta":
+        await state.set_state(Pay.receipt)
+        await msg.answer("O'tkazma chekining rasmini yuboring. To'lov rahbar tasdiqlagach hisobga olinadi.")
+        return
+    await _save_cash(msg, state, bot, tg_id)
+
+
+async def _save_cash(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> None:
+    d = await state.get_data()
+    paid = date.fromisoformat(d["paid"])
     async with Session() as s:
-        who = await S.who_by_tg(s, c.from_user.id)
+        who = await S.who_by_tg(s, tg_id)
         e = await s.get(Enrollment, d["eid"], options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])
-        pay = await S.record_payment(s, e, d["amount"], "naqd", today(), d["month"], who.staff)
-        st = await S.month_status(s, e, today().year, today().month)
+        pay = await S.record_payment(s, e, d["amount"], "naqd", paid, d["month"], who.staff)
+        y, mth = map(int, d["month"].split("-"))
+        st = await S.month_status(s, e, y, mth)
         parents = await S.parent_tg_ids(s, e.student_id)
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         await s.commit()
     await state.clear()
     # moliya faqat shu to'lovni ko'radi
-    await c.message.edit_text(f"✅ Saqlandi: {d['name']} · {d['group']} · {S.fmt_som(d['amount'])} (naqd).")
+    await msg.answer(f"✅ Saqlandi: {d['name']} · {d['group']} · {S.fmt_som(d['amount'])} (naqd, {paid:%d.%m}).")
     await _send_receipt(bot, parents, d, pay, st)
     for b in bosses:
-        if b != c.from_user.id:
+        if b != tg_id:
             await send(bot, b, f"💵 Naqd to'lov: {d['name']} · {d['group']} · {S.fmt_som(d['amount'])} "
                                f"({who.staff.full_name})")
 
@@ -190,7 +238,8 @@ async def pay_receipt(m: Message, state: FSMContext, bot: Bot) -> None:
             return
         who = await S.who_by_tg(s, m.from_user.id)
         e = await s.get(Enrollment, d["eid"], options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])
-        pay = await S.record_payment(s, e, d["amount"], "karta", today(), d["month"], who.staff, status="kutilmoqda",
+        paid = date.fromisoformat(d.get("paid") or today().isoformat())
+        pay = await S.record_payment(s, e, d["amount"], "karta", paid, d["month"], who.staff, status="kutilmoqda",
                                      receipt_file_id=photo.file_id, receipt_hash=photo.file_unique_id)
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         await s.commit()
