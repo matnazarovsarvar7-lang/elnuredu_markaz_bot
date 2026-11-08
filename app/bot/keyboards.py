@@ -22,6 +22,7 @@ B_MY_TASKS = "📝 Vazifalarim"
 B_LEADS = "🧲 Arizalar"
 B_NOW = "📊 Hozirgi holat"
 B_APPLY = "✍️ Kursga yozilish"
+B_NEW_STUDENT = "➕ Yangi o'quvchi"
 B_PARENT_PAY = "💳 To'lov chekini yuborish"
 
 
@@ -43,9 +44,10 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     if role in ("moliya", "rahbar"):
         rows.append([B_PAY_IN, B_DEBTS])
         rows.append([B_STUDENT, B_GROUPS])
+        rows.append([B_NEW_STUDENT])
     if role == "admin":
         rows.append([B_STUDENT, B_DEBTS])
-        rows.append([B_LEADS])
+        rows.append([B_NEW_STUDENT, B_LEADS])
     if role == "rahbar":
         rows.append([B_PENDING, B_STAFF])
         rows.append([B_TASK_NEW, B_TASKS_ALL])

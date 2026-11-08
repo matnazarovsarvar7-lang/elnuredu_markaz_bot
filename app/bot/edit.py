@@ -171,7 +171,8 @@ async def _student_card(sid: int, role: str) -> tuple[str, IM]:
     text = (f"<b>{stu.full_name}</b>\nHolat: {stu.status}\nCoin: {stu.coins}\nOta-ona telefoni: {par}\n"
             f"O'quvchi telefoni: {stu.phone or '—'}\n\nGuruhlar:\n{grp}")
     rows = [[IB(text="📞 Ota-ona raqami qo'shish", callback_data=f"spp:{sid}")],
-            [IB(text="📱 O'quvchi raqami", callback_data=f"sph:{sid}")]]
+            [IB(text="📱 O'quvchi raqami", callback_data=f"sph:{sid}")],
+            [IB(text="➕ Guruhga qo'shish", callback_data=f"sag:{sid}")]]
     if role in ("moliya", "rahbar"):
         rows.append([IB(text="🏷 Chegirma", callback_data=f"sd:{sid}")])
     return text, IM(inline_keyboard=rows)

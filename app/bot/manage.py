@@ -284,7 +284,8 @@ ACTIONS = {
     "coin_qoida": "coin qoidasini o'zgartirdi", "narx_toifa": "narx toifasini o'zgartirdi", "sozlama": "sozlamani o'zgartirdi",
     "vazifa_berildi": "vazifa berdi", "vazifa_bajarildi": "vazifani bajardi", "davomat": "davomat oldi",
     "vazifa": "vazifa natijalarini kiritdi", "kelmadi_sabab": "kelmaganlik sababini yozdi", "import": "ma'lumot yukladi",
-    "ariza": "ariza holatini belgiladi",
+    "ariza": "ariza holatini belgiladi", "royxat": "yangi o'quvchini ro'yxatga oldi",
+    "guruhga_qoshdi": "o'quvchini guruhga qo'shdi",
 }
 HIDE = {"davomat", "vazifa"}  # kundalik ko'p yozuvlar — tarixda ko'rsatilmaydi
 PAGE = 20

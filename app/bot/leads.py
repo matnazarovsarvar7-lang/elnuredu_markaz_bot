@@ -108,7 +108,11 @@ async def lead_status(c: CallbackQuery) -> None:
         await S.audit(s, who.staff, "ariza", name=lead.child_name, status=st)
         await s.commit()
     await c.answer(STATUS[st])
-    if st in ("oquvchi", "rad"):
+    if st == "oquvchi":
+        await c.message.edit_text(f"{c.message.html_text}\n\nHolat: <b>{STATUS[st]}</b>",
+                                  reply_markup=IM(inline_keyboard=[[IB(text="➕ Ro'yxatga olish",
+                                                                       callback_data=f"rgl:{lid}")]]))
+    elif st == "rad":
         await c.message.edit_text(f"{c.message.html_text}\n\nHolat: <b>{STATUS[st]}</b>")
 
 
