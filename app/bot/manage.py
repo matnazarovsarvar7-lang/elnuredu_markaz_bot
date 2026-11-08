@@ -386,7 +386,7 @@ async def task_kind(c: CallbackQuery, state: FSMContext) -> None:
             ("1 haftada", t + timedelta(days=7))]
     kb = IM(inline_keyboard=[[IB(text=f"{n} ({d:%d.%m})", callback_data=f"td:{d.isoformat()}")] for n, d in opts]
             + [[IB(text="📅 Boshqa sana", callback_data="td:other")]])
-    await c.message.edit_text("Muddat?", reply_markup=kb)
+    await c.message.edit_text("📅 Vazifani qaysi kungacha bajarish kerak?\nKun tugaguncha bajarilmasa, xodimga va sizga eslatma boradi.", reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("tr:"))
