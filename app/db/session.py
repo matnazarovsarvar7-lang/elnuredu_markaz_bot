@@ -10,6 +10,15 @@ Session = async_sessionmaker(engine, expire_on_commit=False)
 # Mavjud bazaga yangi ustunlar (create_all ularni qo'shmaydi)
 MIGRATIONS = [
     "ALTER TABLE payments ADD COLUMN batch VARCHAR(36)",
+    "ALTER TABLE enrollments ADD COLUMN tier INTEGER",
+    # import paytida guruh narxi price_override ga yozilgan edi -> toifaga o'tkazamiz
+    "UPDATE enrollments SET tier = CASE price_override WHEN 200000 THEN 1 WHEN 300000 THEN 2 WHEN 350000 THEN 3 END, "
+    "price_override = NULL WHERE tier IS NULL AND price_override IN (200000, 300000, 350000)",
+    "ALTER TABLE tasks ADD COLUMN file_id VARCHAR(200)",
+    "ALTER TABLE tasks ADD COLUMN file_kind VARCHAR(10)",
+    "ALTER TABLE tasks ADD COLUMN done_file_id VARCHAR(200)",
+    "ALTER TABLE tasks ADD COLUMN done_file_kind VARCHAR(10)",
+    "ALTER TABLE tasks ADD COLUMN recurring_id INTEGER",
 ]
 
 

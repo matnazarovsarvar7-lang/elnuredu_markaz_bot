@@ -39,13 +39,38 @@ async def get_rules(s: AsyncSession) -> dict:
     return {**C.DEFAULT_RULES, **(row.value if row else {})}
 
 
-async def get_tier_prices(s: AsyncSession) -> dict[int, int]:
+async def tier_price_history(s: AsyncSession) -> list[dict]:
+    """[{"from": "2026-01", "prices": {"1": 200000, ...}}, ...] — eskidan yangiga."""
     row = await s.get(Setting, "tier_prices")
-    return {int(k): v for k, v in (row.value if row else DEFAULT_TIER_PRICES).items()}
+    hist = (row.value or {}).get("history") if row else None
+    return hist or [{"from": "2000-01", "prices": {str(k): v for k, v in DEFAULT_TIER_PRICES.items()}}]
 
 
-async def audit(s: AsyncSession, staff: Staff | None, action: str, **details) -> None:
-    s.add(AuditLog(staff_id=staff.id if staff else None, role=staff.current_role if staff else None,
+async def get_tier_prices(s: AsyncSession, year: int | None = None, month: int | None = None) -> dict[int, int]:
+    """Berilgan oy uchun amaldagi toifa narxlari (narx o'zgarsa o'tgan oylar eski narxda qoladi)."""
+    hist = await tier_price_history(s)
+    key = f"{year:04d}-{month:02d}" if year else "9999-12"
+    cur = hist[0]
+    for h in hist:
+        if h["from"] <= key:
+            cur = h
+    return {int(k): v for k, v in cur["prices"].items()}
+
+
+async def set_tier_price(s: AsyncSession, tier: int, price: int, from_month: str, by: Staff | None) -> None:
+    hist = await tier_price_history(s)
+    base = dict(hist[-1]["prices"])
+    base[str(tier)] = price
+    hist = [h for h in hist if h["from"] != from_month] + [{"from": from_month, "prices": base}]
+    hist.sort(key=lambda h: h["from"])
+    row = await s.get(Setting, "tier_prices") or Setting(key="tier_prices", value={})
+    row.value = {"history": hist}
+    s.add(row)
+    await audit(s, by, "narx_toifa", tier=tier, price=price, from_month=from_month)
+
+
+async def audit(s: AsyncSession, actor: Staff | None, action: str, /, **details) -> None:
+    s.add(AuditLog(staff_id=actor.id if actor else None, role=actor.current_role if actor else None,
                    action=action, details=details))
 
 
@@ -171,11 +196,11 @@ async def save_homework(s: AsyncSession, lesson: Lesson, marks: dict[int, str], 
 
 
 # ---------- to'lov va qarz ----------
-async def enrollment_fee(s: AsyncSession, enr: Enrollment) -> int:
+async def enrollment_fee(s: AsyncSession, enr: Enrollment, year: int | None = None, month: int | None = None) -> int:
     if enr.price_override:
         return enr.price_override
-    prices = await get_tier_prices(s)
-    return prices[enr.student.tier]
+    prices = await get_tier_prices(s, year, month)
+    return prices[enr.tier or enr.student.tier]
 
 
 async def paid_for_month(s: AsyncSession, enr_id: int, month: str) -> int:
@@ -197,7 +222,7 @@ class MonthStatus:
 
 
 async def month_status(s: AsyncSession, enr: Enrollment, year: int, month: int) -> MonthStatus:
-    fee = await enrollment_fee(s, enr)
+    fee = await enrollment_fee(s, enr, year, month)
     gross = month_due(fee, enr.join_date, year, month, enr.group.days)
     payable = Discount(enr.discount_kind, enr.discount_percent).payable(gross)
     paid = await paid_for_month(s, enr.id, f"{year:04d}-{month:02d}")

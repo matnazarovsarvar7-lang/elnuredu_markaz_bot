@@ -100,7 +100,8 @@ class Enrollment(Base):
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
     join_date: Mapped[date] = mapped_column(Date)
     registered_at: Mapped[date] = mapped_column(Date)
-    price_override: Mapped[int | None] = mapped_column(Integer)
+    price_override: Mapped[int | None] = mapped_column(Integer)   # faqat istisno narx
+    tier: Mapped[int | None] = mapped_column(Integer)             # 1/2/3 — narx toifadan (tarix bilan)
     discount_kind: Mapped[str] = mapped_column(String(10), default="none")
     discount_percent: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -191,4 +192,23 @@ class Task(Base):
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
     done_note: Mapped[str | None] = mapped_column(Text)
     overdue_notified: Mapped[bool] = mapped_column(Boolean, default=False)
+    file_id: Mapped[str | None] = mapped_column(String(200))
+    file_kind: Mapped[str | None] = mapped_column(String(10))      # photo | doc
+    done_file_id: Mapped[str | None] = mapped_column(String(200))
+    done_file_kind: Mapped[str | None] = mapped_column(String(10))
+    recurring_id: Mapped[int | None] = mapped_column(ForeignKey("recurring_tasks.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class RecurringTask(Base):
+    """Takrorlanadigan vazifa: har hafta (kun) yoki har oy (sana)."""
+    __tablename__ = "recurring_tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    text: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(String(8))        # weekly | monthly
+    day: Mapped[int] = mapped_column(Integer)           # haftada: 0=Du..6=Ya; oyda: 1..28
+    due_days: Mapped[int] = mapped_column(Integer, default=0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_created: Mapped[date | None] = mapped_column(Date)

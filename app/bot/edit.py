@@ -163,8 +163,9 @@ async def _student_card(sid: int, role: str) -> tuple[str, IM]:
     async with Session() as s:
         stu = await s.get(Student, sid, options=[selectinload(Student.parents)])
         enrs = await S.student_enrollments(s, sid)
+        fees = {e.id: await S.enrollment_fee(s, e) for e in enrs}
     par = ", ".join(p.phone + (" (botda)" if p.tg_id else "") for p in stu.parents) or "—"
-    grp = "\n".join(f"• {e.group.name} — {S.fmt_som(e.price_override or 0)}"
+    grp = "\n".join(f"• {e.group.name} — {S.fmt_som(fees[e.id])}" + (" (istisno narx)" if e.price_override else "")
                     + (f", {DISC[e.discount_kind]} {e.discount_percent}%" if e.discount_kind != "none" else "")
                     for e in enrs) or "—"
     text = (f"<b>{stu.full_name}</b>\nHolat: {stu.status}\nCoin: {stu.coins}\nOta-ona telefoni: {par}\n"

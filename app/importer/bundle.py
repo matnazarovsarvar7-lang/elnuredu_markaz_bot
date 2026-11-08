@@ -29,7 +29,7 @@ async def export_bundle(s: AsyncSession) -> dict:
         "students": [{"full_name": st.full_name, "tier": st.tier, "grade": st.grade, "phone": st.phone,
                       "parents": [p.phone for p in st.parents],
                       "enrollments": [{"group": gid[e.group_id], "join": e.join_date.isoformat(),
-                                       "registered": e.registered_at.isoformat(), "price": e.price_override,
+                                       "registered": e.registered_at.isoformat(), "price": e.price_override, "tier": e.tier,
                                        "discount": e.discount_kind, "percent": e.discount_percent}
                                       for e in st.enrollments if e.active]} for st in students],
     }
@@ -75,6 +75,7 @@ async def import_bundle(s: AsyncSession, data: dict) -> dict:
         for e in x["enrollments"]:
             s.add(Enrollment(student_id=stu.id, group_id=groups[e["group"]].id, join_date=date.fromisoformat(e["join"]),
                              registered_at=date.fromisoformat(e["registered"]), price_override=e["price"],
+                             tier=e.get("tier"),
                              discount_kind=e["discount"], discount_percent=e["percent"]))
             n_enr += 1
     await s.flush()
