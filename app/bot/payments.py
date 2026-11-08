@@ -191,19 +191,26 @@ async def pay_date_custom(m: Message, state: FSMContext, bot: Bot) -> None:
 async def _after_date(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> None:
     d = await state.get_data()
     if d["method"] == "karta":
+        who = await _who(tg_id)
+        if who.staff and who.staff.current_role == "rahbar":
+            # rahbar bank ilovasida o'zi ko'rgan — darhol tasdiqlangan
+            await _save_cash(msg, state, bot, tg_id, method="karta")
+            return
         await state.set_state(Pay.receipt)
-        await msg.answer("O'tkazma chekining rasmini yuboring. To'lov rahbar tasdiqlagach hisobga olinadi.")
+        kb = IM(inline_keyboard=[[IB(text="Chek yo'q — rahbar tekshirsin", callback_data="nochek")]])
+        await msg.answer("O'tkazma chekining rasmini yuboring. To'lov rahbar tasdiqlagach hisobga olinadi.",
+                         reply_markup=kb)
         return
     await _save_cash(msg, state, bot, tg_id)
 
 
-async def _save_cash(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> None:
+async def _save_cash(msg: Message, state: FSMContext, bot: Bot, tg_id: int, method: str = "naqd") -> None:
     d = await state.get_data()
     paid = date.fromisoformat(d["paid"])
     async with Session() as s:
         who = await S.who_by_tg(s, tg_id)
         e = await s.get(Enrollment, d["eid"], options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])
-        pay = await S.record_payment(s, e, d["amount"], "naqd", paid, d["month"], who.staff)
+        pay = await S.record_payment(s, e, d["amount"], method, paid, d["month"], who.staff)
         y, mth = map(int, d["month"].split("-"))
         st = await S.month_status(s, e, y, mth)
         parents = await S.parent_tg_ids(s, e.student_id)
@@ -211,11 +218,12 @@ async def _save_cash(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> N
         await s.commit()
     await state.clear()
     # moliya faqat shu to'lovni ko'radi
-    await msg.answer(f"✅ Saqlandi: {d['name']} · {d['group']} · {S.fmt_som(d['amount'])} (naqd, {paid:%d.%m}).")
+    await msg.answer(f"✅ Saqlandi: {d['name']} · {d['group']} · {S.fmt_som(d['amount'])} "
+                     f"({METHOD[method].lower()}, {paid:%d.%m}).")
     await _send_receipt(bot, parents, d, pay, st)
     for b in bosses:
         if b != tg_id:
-            await send(bot, b, f"💵 Naqd to'lov: {d['name']} · {d['group']} · {S.fmt_som(d['amount'])} "
+            await send(bot, b, f"💵 {METHOD[method]}: {d['name']} · {d['group']} · {S.fmt_som(d['amount'])} "
                                f"({who.staff.full_name})")
 
 
@@ -247,6 +255,22 @@ async def pay_receipt(m: Message, state: FSMContext, bot: Bot) -> None:
     await m.answer("Chek qabul qilindi. Rahbar tasdiqlagach, to'lov hisobga olinadi va xabar keladi.")
     for b in bosses:
         await send_photo(bot, b, photo.file_id, _pending_caption(d, pay), reply_markup=_confirm_kb(pay.id))
+
+
+@router.callback_query(F.data == "nochek")
+async def pay_no_receipt(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    d = await state.get_data()
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        e = await s.get(Enrollment, d["eid"], options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])
+        paid = date.fromisoformat(d.get("paid") or today().isoformat())
+        pay = await S.record_payment(s, e, d["amount"], "karta", paid, d["month"], who.staff, status="kutilmoqda")
+        bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+        await s.commit()
+    await state.clear()
+    await c.message.edit_text("Saqlandi. Rahbar bank ilovasida tekshirib tasdiqlagach hisobga olinadi.")
+    for b in bosses:
+        await send(bot, b, _pending_caption(d, pay) + "\n(chek rasmi yo'q)", reply_markup=_confirm_kb(pay.id))
 
 
 def _pending_caption(d: dict, pay: Payment) -> str:
@@ -282,7 +306,10 @@ async def pending(m: Message, bot: Bot) -> None:
         await m.answer("Tasdiq kutayotgan narsa yo'q ✅")
         return
     for p, d in rows:
-        await bot.send_photo(m.chat.id, p.receipt_file_id, caption=_pending_caption(d, p), reply_markup=_confirm_kb(p.id))
+        if p.receipt_file_id:
+            await bot.send_photo(m.chat.id, p.receipt_file_id, caption=_pending_caption(d, p), reply_markup=_confirm_kb(p.id))
+        else:
+            await m.answer(_pending_caption(d, p) + "\n(chek rasmi yo'q)", reply_markup=_confirm_kb(p.id))
 
 
 async def _decide(c: CallbackQuery, bot: Bot, ok: bool) -> None:
@@ -306,7 +333,11 @@ async def _decide(c: CallbackQuery, bot: Bot, ok: bool) -> None:
         st = await S.month_status(s, e, pay.paid_date.year, pay.paid_date.month)
         parents = await S.parent_tg_ids(s, e.student_id)
         await s.commit()
-    await c.message.edit_caption(caption=c.message.caption + ("\n\n✅ Tasdiqlandi" if ok else "\n\n❌ Rad etildi"))
+    mark = "\n\n✅ Tasdiqlandi" if ok else "\n\n❌ Rad etildi"
+    if c.message.photo:
+        await c.message.edit_caption(caption=(c.message.caption or "") + mark)
+    else:
+        await c.message.edit_text((c.message.text or "") + mark)
     if ok:
         await _send_receipt(bot, parents, d, pay, st)
     else:
