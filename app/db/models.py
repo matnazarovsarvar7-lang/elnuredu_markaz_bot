@@ -212,3 +212,17 @@ class RecurringTask(Base):
     due_days: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_created: Mapped[date | None] = mapped_column(Date)
+
+
+class Lead(Base):
+    """Botga yozgan yangi qiziquvchi (kursga yozilish arizasi)."""
+    __tablename__ = "leads"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tg_id: Mapped[int | None] = mapped_column(BigInteger)
+    phone: Mapped[str | None] = mapped_column(String(20))
+    child_name: Mapped[str] = mapped_column(String(120))
+    subject: Mapped[str | None] = mapped_column(String(60))
+    note: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(12), default="yangi")  # yangi | boglanildi | oquvchi | rad
+    handled_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

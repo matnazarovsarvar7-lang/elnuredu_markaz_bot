@@ -52,9 +52,10 @@ async def start(m: Message, state: FSMContext | None = None) -> None:
     if who.staff or who.parent or who.student:
         await show_menu(m, who)
     else:
-        await m.answer(f"{settings.center_name} botiga xush kelibsiz!\n"
-                       "Kirish uchun pastdagi tugma orqali telefon raqamingizni yuboring.",
-                       reply_markup=K.contact_kb())
+        await m.answer(f"{settings.center_name} botiga xush kelibsiz!\n\n"
+                       "• Farzandingiz markazimizda o'qisa — «📱 Raqamni yuborish» tugmasini bosing.\n"
+                       "• Kursga yozilmoqchi bo'lsangiz — «✍️ Kursga yozilish» tugmasini bosing.",
+                       reply_markup=K.guest_kb())
 
 
 @router.message(F.contact)
@@ -67,8 +68,10 @@ async def got_contact(m: Message) -> None:
         who = await S.link_by_phone(s, m.from_user.id, phone or "")
         await s.commit()
     if not (who.staff or who.parent or who.student):
-        await m.answer("Bu raqam markaz ro'yxatida topilmadi. Iltimos, admin bilan bog'laning — "
-                       "u raqamingizni qo'shgach, qayta /start bosing.")
+        await m.answer("Bu raqam markaz ro'yxatida topilmadi.\n\n"
+                       "• Kursga yozilmoqchi bo'lsangiz — «✍️ Kursga yozilish» tugmasini bosing.\n"
+                       "• Farzandingiz markazda o'qisa — admin raqamingizni qo'shgach, qayta /start bosing.",
+                       reply_markup=K.guest_kb())
         return
     if who.parent and not any(c.consent_at for c in who.parent.children):
         await m.answer("Farzandingiz ma'lumotlari (davomat, to'lov, baholar) markaz tomonidan saqlanadi va "

@@ -19,7 +19,16 @@ B_SETTINGS = "🛠 Sozlamalar"
 B_TASK_NEW = "📝 Vazifa berish"
 B_TASKS_ALL = "📋 Vazifalar holati"
 B_MY_TASKS = "📝 Vazifalarim"
+B_LEADS = "🧲 Arizalar"
+B_NOW = "📊 Hozirgi holat"
+B_APPLY = "✍️ Kursga yozilish"
 B_PARENT_PAY = "💳 To'lov chekini yuborish"
+
+
+def guest_kb() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_APPLY)],
+                                         [KeyboardButton(text=B_CONTACT, request_contact=True)]],
+                               resize_keyboard=True)
 
 
 def contact_kb() -> ReplyKeyboardMarkup:
@@ -36,9 +45,11 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_STUDENT, B_GROUPS])
     if role == "admin":
         rows.append([B_STUDENT, B_DEBTS])
+        rows.append([B_LEADS])
     if role == "rahbar":
         rows.append([B_PENDING, B_STAFF])
         rows.append([B_TASK_NEW, B_TASKS_ALL])
+        rows.append([B_NOW, B_LEADS])
         rows.append([B_SETTINGS])
     else:
         rows.append([B_MY_TASKS])
