@@ -15,6 +15,7 @@ from app.bot.homework import router as homework_router
 from app.bot.exams import router as exams_router
 from app.bot.delegate import router as delegate_router
 from app.bot.tests_flow import router as tests_router
+from app.bot.status import router as status_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -54,6 +55,7 @@ async def main() -> None:
     dp.include_router(leads_router)
     dp.include_router(register_router)
     dp.include_router(homework_router)
+    dp.include_router(status_router)
     dp.include_router(tests_router)
     dp.include_router(exams_router)
     dp.include_router(delegate_router)

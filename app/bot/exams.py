@@ -98,7 +98,7 @@ async def plan_week(mon: date, notify: Bot | None = None, from_day: date | None 
                                                             Exam.slot >= 1))).first()
             if exists:
                 continue
-            lessons = week_lessons(g, mon)
+            lessons = [d for d in week_lessons(g, mon) if not await S.group_paused(s, g.id, d)]
             days = [d for d in slots_for(g, lessons) if not from_day or d >= from_day]
             month_end = last_lesson_of_month(g, lessons)
             for i, d in enumerate(days, 1):

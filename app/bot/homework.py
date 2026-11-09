@@ -243,7 +243,7 @@ async def homework_watch(bot: Bot) -> None:
     todo = []
     async with Session() as s:
         for g in (await s.execute(select(Group).where(Group.active, Group.end_time.is_not(None)))).scalars():
-            if not is_lesson_day(t, g.days):
+            if not is_lesson_day(t, g.days) or await S.group_paused(s, g.id, t):
                 continue
             passed = n - datetime.combine(t, g.end_time, TZ)
             if passed < timedelta(hours=1) or passed % timedelta(hours=1) >= timedelta(minutes=10):
@@ -269,7 +269,7 @@ async def missing_today(s, t: date) -> list[str]:
     """Bugun dars bo'lgan, lekin vazifa (yoki 'yo'q' sababi) kiritilmagan guruhlar."""
     out = []
     for g in (await s.execute(select(Group).where(Group.active))).scalars():
-        if not is_lesson_day(t, g.days):
+        if not is_lesson_day(t, g.days) or await S.group_paused(s, g.id, t):
             continue
         les = (await s.execute(select(Lesson).where(Lesson.group_id == g.id, Lesson.date == t))).scalar_one_or_none()
         if les and (les.cancelled or les.homework_at):
@@ -328,7 +328,7 @@ async def _grade_rows(lid: int) -> list[tuple[int, str, str | None]]:
 
 
 def _grade_kb(lid: int, rows) -> IM:
-    kb = [[IB(text=f"{GR_ICON[g]} {name}" + (f" — {S.GRADE_NAMES[g]}" if g else ""), callback_data=f"gr:{lid}:{eid}")]
+    kb = [[IB(text=f"{GR_ICON[g]} {name}" + (f" — {S.GRADE_NAMES[g]}" if g else ""), callback_data=f"grd:{lid}:{eid}")]
           for eid, name, g in rows]
     kb.append([IB(text="💾 Saqlash", callback_data=f"grok:{lid}")])
     return IM(inline_keyboard=kb)
@@ -347,7 +347,7 @@ async def grade_open(c: CallbackQuery) -> None:
                            reply_markup=_grade_kb(lid, rows))
 
 
-@router.callback_query(F.data.startswith("gr:"))
+@router.callback_query(F.data.startswith("grd:"))
 async def grade_toggle(c: CallbackQuery) -> None:
     _, lid, eid = c.data.split(":")
     lid, eid = int(lid), int(eid)

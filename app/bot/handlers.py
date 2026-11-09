@@ -122,7 +122,8 @@ async def today_lessons(m: Message) -> None:
         who = await S.who_by_tg(s, m.from_user.id)
         if not who.staff:
             return
-        groups = S.todays_groups(await S.teacher_groups(s, who.staff, who.staff.current_role), today())
+        groups = [g for g in S.todays_groups(await S.teacher_groups(s, who.staff, who.staff.current_role), today())
+                  if not await S.group_paused(s, g.id, today())]
     if not groups:
         await m.answer("Bugun sizda dars yo'q.")
         return

@@ -59,7 +59,8 @@ async def _group_card(gid: int) -> tuple[str, IM]:
     text = (f"<b>{g.name}</b>\nO'qituvchi: {g.teacher.full_name if g.teacher else '—'}\nKunlar: {DAYS[g.days]}\n"
             f"Vaqt: {t}\nXona: {g.room or '—'}\nO'quvchilar: {n}")
     kb = IM(inline_keyboard=[[IB(text="🕒 Vaqt", callback_data=f"gt:{gid}"), IB(text="🚪 Xona", callback_data=f"gr:{gid}")],
-                             [IB(text="📅 Kunlar", callback_data=f"gd:{gid}")]])
+                             [IB(text="📅 Kunlar", callback_data=f"gd:{gid}")],
+                             [IB(text="⏸ Guruhni to'xtatish (yoz / uzrli)", callback_data=f"gpz:{gid}")]])
     return text, kb
 
 
@@ -161,10 +162,10 @@ async def student_search(m: Message, state: FSMContext) -> None:
 
 async def _student_card(sid: int, role: str) -> tuple[str, IM]:
     async with Session() as s:
-        stu = await s.get(Student, sid, options=[selectinload(Student.parents)])
         enrs = await S.student_enrollments(s, sid)
         fees = {e.id: await S.enrollment_fee(s, e) for e in enrs}
-    par = ", ".join(p.phone + (" (botda)" if p.tg_id else "") for p in stu.parents) or "—"
+        stu = await s.get(Student, sid, options=[selectinload(Student.parents)], populate_existing=True)
+        par = ", ".join(p.phone + (" (botda)" if p.tg_id else "") for p in stu.parents) or "—"
     grp = "\n".join(f"• {e.group.name} — {S.fmt_som(fees[e.id])}" + (" (istisno narx)" if e.price_override else "")
                     + (f", {DISC[e.discount_kind]} {e.discount_percent}%" if e.discount_kind != "none" else "")
                     for e in enrs) or "—"
@@ -175,6 +176,8 @@ async def _student_card(sid: int, role: str) -> tuple[str, IM]:
             [IB(text="➕ Guruhga qo'shish", callback_data=f"sag:{sid}")]]
     if role in ("moliya", "rahbar"):
         rows.append([IB(text="🏷 Chegirma", callback_data=f"sd:{sid}")])
+    if role in ("rahbar", "admin", "moliya", "oqituvchi"):
+        rows += [[IB(text=f"⚙️ {e.group.name}: muzlatish / chiqarish", callback_data=f"en:{e.id}")] for e in enrs]
     return text, IM(inline_keyboard=rows)
 
 

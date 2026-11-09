@@ -353,3 +353,17 @@ class TestPaper(Base):
     absent: Mapped[bool] = mapped_column(Boolean, default=False)
     entered_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     scanned: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class Freeze(Base):
+    """Muzlatish: bitta o'quvchi-guruh (enrollment_id) yoki butun guruh (group_id, masalan yozgi to'xtash)."""
+    __tablename__ = "freezes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    enrollment_id: Mapped[int | None] = mapped_column(ForeignKey("enrollments.id"))
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))
+    start: Mapped[date] = mapped_column(Date)
+    end: Mapped[date] = mapped_column(Date)
+    reason: Mapped[str | None] = mapped_column(String(200))
+    recalc: Mapped[str] = mapped_column(String(12), default="auto")   # auto | kutilmoqda | tasdiq | rad
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

@@ -13,7 +13,7 @@ from app.db.models import (Attendance, AuditLog, CoinTx, Enrollment, Group, Less
                            Setting, Staff, Student)
 from app.logic import coins as C
 from app.logic.calendar import is_lesson_day
-from app.logic.money import DEFAULT_TIER_PRICES, Discount, month_due
+from app.logic.money import round_to, DEFAULT_TIER_PRICES, Discount, month_due
 
 ROLE_TITLES = {"rahbar": "Rahbar", "moliya": "Moliya", "admin": "Admin",
                "oqituvchi": "O'qituvchi", "yordamchi": "Yordamchi o'qituvchi"}
@@ -130,11 +130,18 @@ def todays_groups(groups: list[Group], today: date) -> list[Group]:
 
 
 async def group_roster(s: AsyncSession, group_id: int, on: date) -> list[Enrollment]:
+    """Shu kuni darsga kelishi kerak bo'lganlar: faol, qo'shilgan, muzlatilmagan (guruh to'xtatilmagan)."""
+    from app.db.models import Freeze
+    if await group_paused(s, group_id, on):
+        return []
     q = (select(Enrollment).join(Student)
          .where(Enrollment.group_id == group_id, Enrollment.active, Enrollment.join_date <= on,
-                Student.status == "faol")
+                Student.status != "ketgan")
          .options(selectinload(Enrollment.student)).order_by(Student.full_name))
-    return list((await s.execute(q)).scalars())
+    rows = list((await s.execute(q)).scalars())
+    frozen = set((await s.execute(select(Freeze.enrollment_id).where(
+        Freeze.enrollment_id.in_([e.id for e in rows] or [0]), Freeze.start <= on, Freeze.end >= on))).scalars())
+    return [e for e in rows if e.id not in frozen]
 
 
 async def get_or_create_lesson(s: AsyncSession, group_id: int, on: date) -> Lesson:
@@ -246,9 +253,43 @@ class MonthStatus:
         return max(0, self.payable - self.paid)
 
 
+async def freezes_for(s: AsyncSession, enr: Enrollment, only_fee: bool = False) -> list:
+    """Shu o'quvchi-guruhga ta'sir qiladigan muzlatishlar (o'zi yoki butun guruh)."""
+    from app.db.models import Freeze
+    q = select(Freeze).where((Freeze.enrollment_id == enr.id) | (Freeze.group_id == enr.group_id))
+    if only_fee:
+        q = q.where(Freeze.recalc.in_(("auto", "tasdiq")))
+    return list((await s.execute(q)).scalars())
+
+
+async def is_frozen(s: AsyncSession, enr: Enrollment, d: date) -> bool:
+    return any(f.start <= d <= f.end for f in await freezes_for(s, enr))
+
+
+async def group_paused(s: AsyncSession, group_id: int, d: date) -> bool:
+    from app.db.models import Freeze
+    return (await s.execute(select(Freeze.id).where(Freeze.group_id == group_id, Freeze.start <= d,
+                                                    Freeze.end >= d))).first() is not None
+
+
+def _frozen_share(enr: Enrollment, year: int, month: int, periods: list, until: date | None = None) -> tuple[int, int]:
+    """(hisobga kiradigan darslar, oydagi darslar) — qo'shilgan sanadan, muzlatilganlarsiz, ketgan sanagacha."""
+    from app.logic.calendar import lesson_dates
+    start = enr.join_date.day if (year, month) == (enr.join_date.year, enr.join_date.month) else 1
+    days = lesson_dates(year, month, enr.group.days, from_day=start)
+    count = [d for d in days if not any(p.start <= d <= p.end for p in periods) and (until is None or d <= until)]
+    return len(count), len(days)
+
+
 async def month_status(s: AsyncSession, enr: Enrollment, year: int, month: int) -> MonthStatus:
     fee = await enrollment_fee(s, enr, year, month)
     gross = month_due(fee, enr.join_date, year, month, enr.group.days)
+    periods = await freezes_for(s, enr, only_fee=True)
+    until = enr.left_date if enr.left_date and (enr.left_date.year, enr.left_date.month) == (year, month) else None
+    if gross and (periods or until):
+        keep, total = _frozen_share(enr, year, month, periods, until)
+        if total and keep < total:
+            gross = round_to(gross * keep / total)
     payable = Discount(enr.discount_kind, enr.discount_percent).payable(gross)
     paid = await paid_for_month(s, enr.id, f"{year:04d}-{month:02d}")
     return MonthStatus(enr, gross, payable, paid)
