@@ -164,8 +164,11 @@ async def now_status(m: Message) -> None:
         open_tasks = (await s.execute(select(func.count(Task.id)).where(Task.status == "ochiq"))).scalar()
         late_tasks = (await s.execute(select(func.count(Task.id)).where(Task.status == "ochiq", Task.due < t))).scalar()
         new_leads = (await s.execute(select(func.count(Lead.id)).where(Lead.status == "yangi"))).scalar()
+        from app.bot.homework import missing_today
+        no_hw = await missing_today(s, t)
     lines += ["", "<b>Bugungi tushum</b>", f"Naqd: {S.fmt_som(cash)} · Karta: {S.fmt_som(card)}",
               f"Tasdiq kutayotgan to'lovlar: {pending}", "",
               f"📝 Ochiq vazifalar: {open_tasks} (muddati o'tgan: {late_tasks})",
+              f"📚 Uy vazifasi hali berilmagan: {len(no_hw)}" + (f" ({', '.join(no_hw)})" if no_hw else ""),
               f"🧲 Yangi arizalar: {new_leads}"]
     await m.answer("\n".join(lines))

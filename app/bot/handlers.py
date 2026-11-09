@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from zoneinfo import ZoneInfo
 
+from sqlalchemy import select
 from aiogram import Bot, F, Router
 from aiogram.types import InlineKeyboardButton as IB, InlineKeyboardMarkup as IM
 from aiogram.filters import Command, CommandStart
@@ -146,6 +147,11 @@ async def open_group(c: CallbackQuery) -> None:
         g = await s.get(Group, gid)
         les = await S.get_or_create_lesson(s, gid, today())
         await s.commit()
+        if les.confirmed_at and les.id not in DRAFT_HW:
+            from app.bot.homework import lesson_status_text, prompt_kb
+            text, given = await lesson_status_text(les.id)
+            await c.message.edit_text("Davomat olingan ✅\n\n" + text, reply_markup=prompt_kb(les.id, given))
+            return
         draft = DRAFT_ATT.setdefault(les.id, {})
         rows = await _roster_rows(s, les, draft, "k")
     if not rows:
@@ -220,14 +226,24 @@ async def confirm_att(c: CallbackQuery, bot: Bot) -> None:
         await s.commit()
         hw_draft = DRAFT_HW.setdefault(lid, {})
         present = {e: m for e, m in draft.items() if m != "y"}
-        rows = [r for r in await _roster_rows(s, les, hw_draft, "done") if r[0] in present]
+        # oldingi darsda vazifa berilgan bo'lsagina tekshiramiz
+        prev = (await s.execute(select(Lesson).where(Lesson.group_id == les.group_id, Lesson.date < les.date,
+                                                    Lesson.homework_at.is_not(None))
+                                .order_by(Lesson.date.desc()).limit(1))).scalar_one_or_none()
+        has_prev = bool(prev and not prev.no_homework_reason)
+        rows = [r for r in await _roster_rows(s, les, hw_draft, "done") if r[0] in present] if has_prev else []
+        if not has_prev:
+            DRAFT_HW.pop(lid, None)
     await c.message.edit_text(f"Davomat saqlandi: keldi {counts['k']}, kechikdi {counts['l']}, "
                               f"kelmadi {counts['y']}.")
     if counts["y"]:
         await notify_absent(bot, lid)
     if rows:
-        await c.message.answer("Uy vazifasi: hammasi «bajardi». Qisman — bir marta, bajarmagan — ikki marta "
-                               "bosing.", reply_markup=K.homework_kb(lid, rows))
+        await c.message.answer("Oldingi uy vazifasi tekshiruvi: hammasi «bajardi». Qisman — bir marta, "
+                               "bajarmagan — ikki marta bosing.", reply_markup=K.homework_kb(lid, rows))
+    else:
+        from app.bot.homework import ask_homework
+        await ask_homework(c.message, lid)
 
 
 @router.callback_query(F.data.startswith("hw:"))
@@ -254,6 +270,8 @@ async def confirm_hw(c: CallbackQuery) -> None:
         await s.commit()
     DRAFT_ATT.pop(lid, None); DRAFT_HW.pop(lid, None)
     await c.message.edit_text("Vazifa natijalari saqlandi. Coinlar hisoblandi.")
+    from app.bot.homework import ask_homework
+    await ask_homework(c.message, lid)
 
 
 # ---------- ota-ona va o'quvchi ----------

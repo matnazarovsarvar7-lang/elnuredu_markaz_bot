@@ -120,6 +120,10 @@ class Lesson(Base):
     ended_at: Mapped[datetime | None] = mapped_column(DateTime)
     homework_text: Mapped[str | None] = mapped_column(Text)
     no_homework_reason: Mapped[str | None] = mapped_column(String(200))
+    homework_file_id: Mapped[str | None] = mapped_column(String(200))
+    homework_file_kind: Mapped[str | None] = mapped_column(String(10))   # photo | doc
+    homework_at: Mapped[datetime | None] = mapped_column(DateTime)      # vazifa (yoki "yo'q") kiritilgan vaqt
+    homework_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 

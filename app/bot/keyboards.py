@@ -8,6 +8,7 @@ B_SWITCH = "🔄 Rolni almashtirish"
 B_TODAY = "📋 Bugungi darslar"
 B_CHILD = "👦 Farzandim"
 B_ME = "📊 Mening holatim"
+B_HOMEWORK = "📚 Uy vazifasi"
 B_PAY_IN = "💵 To'lov kiritish"
 B_DEBTS = "📒 Qarzdorlar"
 B_PENDING = "⏳ Kutilayotganlar"
@@ -60,12 +61,12 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
 
 
 def parent_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD)], [KeyboardButton(text=B_PARENT_PAY)],
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD), KeyboardButton(text=B_HOMEWORK)], [KeyboardButton(text=B_PARENT_PAY)],
                                          [KeyboardButton(text=B_HELP)]], resize_keyboard=True)
 
 
 def student_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_ME)], [KeyboardButton(text=B_HELP)]],
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_ME), KeyboardButton(text=B_HOMEWORK)], [KeyboardButton(text=B_HELP)]],
                                resize_keyboard=True)
 
 

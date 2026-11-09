@@ -85,11 +85,14 @@ async def evening_report(bot: Bot) -> None:
         groups_today = [g for g in (await s.execute(select(Group).where(Group.active))).scalars() if is_lesson_day(t, g.days)]
         missing = len(groups_today) - sum(1 for l in les if l.confirmed_at)
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+        from app.bot.homework import missing_today
+        no_hw = await missing_today(s, t)
     text = (f"🌙 <b>Kunlik hisobot · {t:%d.%m.%Y}</b>\n"
             f"Tushum: naqd {S.fmt_som(cash)}, karta {S.fmt_som(card)}\n"
             f"Tasdiq kutayotgan to'lovlar: {pending}\n"
             f"Darslar: {len(groups_today)}, davomat olinmagan: {max(0, missing)}\n"
-            f"Darsga kelmaganlar: {absent}")
+            f"Darsga kelmaganlar: {absent}\n"
+            f"Uy vazifasi berilmagan: {len(no_hw)}" + (f" ({', '.join(no_hw)})" if no_hw else " ✅"))
     for b in bosses:
         await send(bot, b, text)
 
@@ -99,6 +102,9 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     sch.add_job(debt_reminders, "cron", hour=10, minute=0, args=[bot])
     sch.add_job(attendance_watch, "cron", minute="*/10", args=[bot])
     sch.add_job(evening_report, "cron", hour=21, minute=0, args=[bot])
+    from app.bot.homework import homework_watch, tomorrow_reminder
+    sch.add_job(homework_watch, "cron", minute="*/10", args=[bot])
+    sch.add_job(tomorrow_reminder, "cron", hour=18, minute=0, args=[bot])
     from app.bot.manage import recurring_job, tasks_job
     sch.add_job(recurring_job, "cron", hour=8, minute=30, args=[bot])
     sch.add_job(tasks_job, "cron", hour=9, minute=0, args=[bot])

@@ -19,6 +19,10 @@ MIGRATIONS = [
     "ALTER TABLE tasks ADD COLUMN done_file_id VARCHAR(200)",
     "ALTER TABLE tasks ADD COLUMN done_file_kind VARCHAR(10)",
     "ALTER TABLE tasks ADD COLUMN recurring_id INTEGER",
+    "ALTER TABLE lessons ADD COLUMN homework_file_id VARCHAR(200)",
+    "ALTER TABLE lessons ADD COLUMN homework_file_kind VARCHAR(10)",
+    "ALTER TABLE lessons ADD COLUMN homework_at TIMESTAMP",
+    "ALTER TABLE lessons ADD COLUMN homework_by INTEGER",
 ]
 
 

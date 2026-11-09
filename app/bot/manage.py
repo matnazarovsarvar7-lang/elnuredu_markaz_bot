@@ -286,6 +286,7 @@ ACTIONS = {
     "vazifa": "vazifa natijalarini kiritdi", "kelmadi_sabab": "kelmaganlik sababini yozdi", "import": "ma'lumot yukladi",
     "ariza": "ariza holatini belgiladi", "royxat": "yangi o'quvchini ro'yxatga oldi",
     "guruhga_qoshdi": "o'quvchini guruhga qo'shdi",
+    "uy_vazifa": "uy vazifasini yubordi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
 }
 HIDE = {"davomat", "vazifa"}  # kundalik ko'p yozuvlar — tarixda ko'rsatilmaydi
 PAGE = 20
