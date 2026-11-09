@@ -36,7 +36,8 @@ class Hw(StatesGroup):
 def prompt_kb(lid: int, given: bool = False) -> IM:
     first = "✏️ Vazifani o'zgartirish" if given else "✍️ Uy vazifasini yozish"
     return IM(inline_keyboard=[[IB(text=first, callback_data=f"hwg:{lid}")],
-                               [IB(text="🚫 Bugun vazifa yo'q", callback_data=f"hwn:{lid}")]])
+                               [IB(text="🚫 Bugun vazifa yo'q", callback_data=f"hwn:{lid}")],
+                               [IB(text="⭐ Baho qo'yish (ixtiyoriy)", callback_data=f"bh:{lid}")]])
 
 
 def responsible_id(g: Group, what: str = "homework") -> int | None:
@@ -290,3 +291,78 @@ async def tomorrow_reminder(bot: Bot) -> None:
                         jobs.append((p, text))
     for tg, text in jobs:
         await send(bot, tg, text)
+
+
+# ---------- baholar (ixtiyoriy) ----------
+GR_ICON = {None: "▫️", "alo": "🌟", "yaxshi": "👍", "qoniqarli": "👌", "yomon": "⚠️"}
+GR_NEXT = {None: "alo", "alo": "yaxshi", "yaxshi": "qoniqarli", "qoniqarli": "yomon", "yomon": None}
+DRAFT_GR: dict[int, dict[int, str | None]] = {}
+
+
+async def _grade_rows(lid: int) -> list[tuple[int, str, str | None]]:
+    from app.db.models import Attendance
+    async with Session() as s:
+        les = await s.get(Lesson, lid)
+        roster = await S.group_roster(s, les.group_id, les.date)
+        atts = {a.enrollment_id: a for a in (await s.execute(select(Attendance).where(Attendance.lesson_id == lid))).scalars()}
+    draft = DRAFT_GR.setdefault(lid, {})
+    rows = []
+    for e in roster:
+        a = atts.get(e.id)
+        if not a or a.mark == "y":
+            continue
+        draft.setdefault(e.id, a.grade)
+        rows.append((e.id, e.student.full_name, draft[e.id]))
+    return rows
+
+
+def _grade_kb(lid: int, rows) -> IM:
+    kb = [[IB(text=f"{GR_ICON[g]} {name}" + (f" — {S.GRADE_NAMES[g]}" if g else ""), callback_data=f"gr:{lid}:{eid}")]
+          for eid, name, g in rows]
+    kb.append([IB(text="💾 Saqlash", callback_data=f"grok:{lid}")])
+    return IM(inline_keyboard=kb)
+
+
+@router.callback_query(F.data.startswith("bh:"))
+async def grade_open(c: CallbackQuery) -> None:
+    lid = int(c.data.split(":")[1])
+    rows = await _grade_rows(lid)
+    if not rows:
+        await c.answer("Davomat olinmagan yoki darsga hech kim kelmagan.", show_alert=True)
+        return
+    await c.answer()
+    await c.message.answer("⭐ <b>Baho qo'yish</b> (ixtiyoriy). Bosgan sari o'zgaradi:\n▫️ bahosiz → 🌟 A'lo → "
+                           "👍 Yaxshi → 👌 Qoniqarli → ⚠️ Yomon. Faqat kerakli o'quvchilarga qo'ying.",
+                           reply_markup=_grade_kb(lid, rows))
+
+
+@router.callback_query(F.data.startswith("gr:"))
+async def grade_toggle(c: CallbackQuery) -> None:
+    _, lid, eid = c.data.split(":")
+    lid, eid = int(lid), int(eid)
+    draft = DRAFT_GR.setdefault(lid, {})
+    draft[eid] = GR_NEXT[draft.get(eid)]
+    await c.message.edit_reply_markup(reply_markup=_grade_kb(lid, await _grade_rows(lid)))
+    await c.answer()
+
+
+@router.callback_query(F.data.startswith("grok:"))
+async def grade_save(c: CallbackQuery, bot: Bot) -> None:
+    lid = int(c.data.split(":")[1])
+    draft = DRAFT_GR.pop(lid, {})
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        les = await s.get(Lesson, lid)
+        g = await s.get(Group, les.group_id)
+        changed = await S.save_grades(s, les, draft, who.staff)
+        await s.commit()
+        notes = []
+        for sid, gr in changed:
+            stu = await s.get(Student, sid)
+            for t in await S.parent_tg_ids(s, sid):
+                notes.append((t, f"⭐ {stu.full_name} · {g.name} · {les.date:%d.%m}\nBaho: <b>{S.GRADE_NAMES[gr]}</b>"))
+    n = sum(1 for v in draft.values() if v)
+    await c.message.edit_text(f"Baholar saqlandi: {n} ta o'quvchi." + (" «A'lo» uchun coin yozildi." if
+                              any(v == "alo" for v in draft.values()) else ""))
+    for t, text in notes:
+        await send(bot, t, text)

@@ -276,14 +276,10 @@ async def confirm_hw(c: CallbackQuery) -> None:
 
 # ---------- ota-ona va o'quvchi ----------
 async def student_summary(s, stu: Student) -> str:
-    await s.refresh(stu, ["enrollments"])
     t = today()
     lines = [f"<b>{stu.full_name}</b>", f"Coin: <b>{stu.coins}</b>"]
     total = 0
-    for e in stu.enrollments:
-        if not e.active:
-            continue
-        e = await s.get(e.__class__, e.id, options=[selectinload(e.__class__.group), selectinload(e.__class__.student)])
+    for e in await S.student_enrollments(s, stu.id):
         st = await S.month_status(s, e, t.year, t.month)
         g = e.group
         when = f"{g.start_time:%H:%M}" if g.start_time else ""
@@ -292,6 +288,13 @@ async def student_summary(s, stu: Student) -> str:
         lines.append(f"\n📘 {g.name} · {days} {when}\n   {t:%m.%Y} uchun: {S.fmt_som(st.payable)}, {pay}")
         total += st.debt
     lines.append("\n✅ Bu oy uchun qarz yo'q" if total == 0 else f"\n<b>Umumiy qarz: {S.fmt_som(total)}</b>")
+    from app.db.models import Attendance, Enrollment as _E
+    grades = (await s.execute(select(Attendance.grade, Lesson.date).join(Lesson, Lesson.id == Attendance.lesson_id)
+                              .join(_E, _E.id == Attendance.enrollment_id)
+                              .where(_E.student_id == stu.id, Attendance.grade.is_not(None))
+                              .order_by(Lesson.date.desc()).limit(5))).all()
+    if grades:
+        lines.append("\n⭐ Oxirgi baholar: " + ", ".join(f"{S.GRADE_NAMES.get(g, g)} ({d:%d.%m})" for g, d in grades))
     return "\n".join(lines)
 
 

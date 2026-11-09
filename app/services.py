@@ -195,6 +195,31 @@ async def save_homework(s: AsyncSession, lesson: Lesson, marks: dict[int, str], 
     await audit(s, by, "vazifa", lesson_id=lesson.id)
 
 
+GRADES = ("alo", "yaxshi", "qoniqarli", "yomon")
+GRADE_NAMES = {"alo": "A'lo", "yaxshi": "Yaxshi", "qoniqarli": "Qoniqarli", "yomon": "Yomon"}
+
+
+async def save_grades(s: AsyncSession, lesson: Lesson, marks: dict[int, str | None], by: Staff) -> list[tuple[int, str]]:
+    """Baholarni saqlaydi; «a'lo» uchun coin (qayta o'zgartirilsa farqi hisoblanadi). Yangi qo'yilgan baholarni qaytaradi."""
+    rules = await get_rules(s)
+    alo = int(rules.get("grade_alo", 1))
+    changed = []
+    for enr_id, g in marks.items():
+        att = (await s.execute(select(Attendance).where(Attendance.lesson_id == lesson.id,
+                                                        Attendance.enrollment_id == enr_id))).scalar_one_or_none()
+        if not att or att.mark == "y" or att.grade == g:
+            continue
+        delta = (alo if g == "alo" else 0) - (alo if att.grade == "alo" else 0)
+        att.grade = g
+        enr = await s.get(Enrollment, enr_id, options=[selectinload(Enrollment.student)])
+        if delta and await coins_allowed(s, enr.student, lesson.date):
+            await add_coins(s, enr.student, delta, "baho", f"Baho {lesson.date:%d.%m}", by)
+        if g:
+            changed.append((enr.student_id, g))
+    await audit(s, by, "baho", lesson_id=lesson.id)
+    return changed
+
+
 # ---------- to'lov va qarz ----------
 async def enrollment_fee(s: AsyncSession, enr: Enrollment, year: int | None = None, month: int | None = None) -> int:
     if enr.price_override:
@@ -309,7 +334,8 @@ async def search_students(s: AsyncSession, q: str, limit: int = 10) -> list[Stud
 
 async def student_enrollments(s: AsyncSession, student_id: int) -> list[Enrollment]:
     q = (select(Enrollment).where(Enrollment.student_id == student_id, Enrollment.active)
-         .options(selectinload(Enrollment.group), selectinload(Enrollment.student)))
+         .options(selectinload(Enrollment.group), selectinload(Enrollment.student))
+         .execution_options(populate_existing=True))
     return list((await s.execute(q)).scalars())
 
 
