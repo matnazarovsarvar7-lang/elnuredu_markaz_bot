@@ -29,6 +29,10 @@ B_TESTS = "📚 Testlar"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
+B_EXPENSE = "🧾 Xarajat"
+B_SERVICES = "🛒 Xizmatlar"
+B_MY_SALARY = "💰 Oyligim"
+B_REPORT = "📈 Hisobot"
 B_MARKET = "🛍 Market"
 B_DELEGATE = "🤝 Yordamchi"
 B_LEAVE = "🛂 Ruxsat"
@@ -59,17 +63,21 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_NEW_STUDENT, B_MARKET])
     if role == "moliya":
         rows.append([B_CASH_CLOSE, B_HANDOVER])
+    if role in ("moliya", "rahbar"):
+        rows.append([B_EXPENSE, B_SERVICES])
     if role == "admin":
         rows.append([B_STUDENT, B_DEBTS])
         rows.append([B_NEW_STUDENT, B_LEADS])
+        rows.append([B_SERVICES])
     if role == "rahbar":
         rows.append([B_PENDING, B_STAFF])
         rows.append([B_TASK_NEW, B_TASKS_ALL])
         rows.append([B_NOW, B_LEADS])
         rows.append([B_DELEGATE, B_LEAVE])
-        rows.append([B_CASH, B_SETTINGS])
+        rows.append([B_CASH, B_REPORT])
+        rows.append([B_SETTINGS])
     else:
-        rows.append([B_MY_TASKS])
+        rows.append([B_MY_TASKS, B_MY_SALARY])
     rows.append([B_HELP] + ([B_SWITCH] if multi else []))
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in r] for r in rows], resize_keyboard=True)
 

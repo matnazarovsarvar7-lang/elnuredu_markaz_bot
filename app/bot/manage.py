@@ -66,6 +66,8 @@ async def settings_menu(m: Message, state: FSMContext) -> None:
         [IB(text="🏷 Narx toifalari", callback_data="set:tiers")],
         [IB(text="🧾 O'zgarishlar tarixi", callback_data="set:audit:0")],
         [IB(text=f"👁 Admin qarzdorlarni ko'radi: {'HA' if on else 'YO`Q'}", callback_data="set:admdebt")],
+        [IB(text="💳 Kichik kassa (shu oy)", callback_data="set:petty")],
+        [IB(text="📐 Moliya foizi va doimiy xarajatlar", callback_data="set:nums")],
     ])
     await m.answer("🛠 <b>Sozlamalar</b>\nHar bir o'zgarish kiritilgan paytdan kuchga kiradi va tarixga yoziladi.",
                    reply_markup=kb)
@@ -294,7 +296,9 @@ ACTIONS = {
     "muzlatish_tugadi": "o'quvchini muzlatishdan qaytardi", "qayta_hisob": "qayta hisobni hal qildi",
     "ketdi": "o'quvchini guruhdan chiqardi", "qaytarish": "pul qaytarishni belgiladi", "ketish_jarima": "ketish jarimasini yozdi",
     "guruh_toxtadi": "guruhni to'xtatdi", "kassa_yopish": "kassani yopdi", "kassa_qaror": "kassa farqi bo'yicha qaror qildi",
-    "inkassatsiya": "kassani topshirdi", "market_buyurtma": "marketdan buyurtma berdi",
+    "inkassatsiya": "kassani topshirdi", "market_buyurtma": "marketdan buyurtma berdi", "xarajat": "xarajat kiritdi", "xarajat_qaror": "xarajatni hal qildi",
+    "kichik_kassa": "kichik kassani belgiladi", "xizmat_sotuv": "xizmat sotdi", "xizmat_narx": "xizmat qo'shdi",
+    "avans_sorov": "avans so'radi", "avans_qaror": "avansni hal qildi", "oylik_berildi": "oylik berdi",
     "market_tasdiq": "buyurtmani tasdiqladi", "market_rad": "buyurtmani rad etdi", "market_sovga": "sovg'ani o'zgartirdi", "inkassatsiya_qaror": "topshirishni tasdiqladi", "yuklash": "yordamchiga ish yukladi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
 }
 HIDE = {"davomat", "vazifa"}  # kundalik ko'p yozuvlar — tarixda ko'rsatilmaydi
@@ -622,3 +626,48 @@ async def recurring_job(bot: Bot) -> None:
         await s.commit()
     for tg, task in made:
         await deliver_task(bot, tg, task, f"🔁 <b>Muntazam vazifa</b>\n{task.text}\nMuddat: {task.due:%d.%m}")
+
+
+class Nums(StatesGroup):
+    val = State()
+
+
+NUMS = {"moliya_pct": ("Moliya bo'limi foizi (barcha tushumdan)", 2), "fixed_costs": ("Oylik doimiy xarajatlar (ijara, kommunal, internet)", 2_000_000)}
+
+
+@router.callback_query(F.data == "set:nums")
+async def nums_menu(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _boss(c.from_user.id):
+        return
+    async with Session() as s:
+        cur = {k: ((await s.get(Setting, k)).value or {}).get("v", d) if await s.get(Setting, k) else d
+               for k, (_, d) in NUMS.items()}
+    await state.set_state(Nums.val)
+    await c.answer()
+    await c.message.answer("📐 Hozirgi qiymatlar:\n" + "\n".join(f"• <code>{k}</code> — {t}: <b>{cur[k]}</b>"
+                                                                for k, (t, _) in NUMS.items())
+                           + "\n\nO'zgartirish uchun yozing: <code>moliya_pct 2</code> yoki <code>fixed_costs 2000000</code>")
+
+
+@router.message(Nums.val)
+async def nums_set(m: Message, state: FSMContext) -> None:
+    parts = (m.text or "").split()
+    if len(parts) != 2 or parts[0] not in NUMS:
+        await m.answer("Masalan: moliya_pct 2")
+        return
+    try:
+        v = float(parts[1].replace(",", "."))
+    except ValueError:
+        await m.answer("Qiymat raqam bo'lsin.")
+        return
+    await state.clear()
+    async with Session() as s:
+        who = await S.who_by_tg(s, m.from_user.id)
+        row = await s.get(Setting, parts[0])
+        if row:
+            row.value = {"v": v}
+        else:
+            s.add(Setting(key=parts[0], value={"v": v}))
+        await S.audit(s, who.staff, "sozlama", key=parts[0], value=v)
+        await s.commit()
+    await m.answer(f"✅ {NUMS[parts[0]][0]}: {v:g}")

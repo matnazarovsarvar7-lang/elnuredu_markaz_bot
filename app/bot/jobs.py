@@ -128,8 +128,47 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     from app.bot.cash import social_job, close_reminder
     sch.add_job(social_job, "cron", hour=7, minute=0, args=[bot])
     sch.add_job(close_reminder, "cron", hour=19, minute=30, args=[bot])
+    from app.bot.salary import payroll_job, negative_notice
+    from app.bot.finance import petty_reminder, printer_reminder
+    sch.add_job(payroll_job, "cron", hour=14, minute=1, args=[bot])
+    sch.add_job(negative_notice, "cron", day=25, hour=10, minute=15, args=[bot])
+    sch.add_job(petty_reminder, "cron", day=1, hour=9, minute=0, args=[bot])
+    sch.add_job(printer_reminder, "cron", day_of_week="mon", hour=10, minute=5, args=[bot])
+    sch.add_job(late_penalties, "cron", hour=20, minute=5, args=[bot])
     from app.bot.manage import recurring_job, tasks_job
     sch.add_job(recurring_job, "cron", hour=8, minute=30, args=[bot])
     sch.add_job(tasks_job, "cron", hour=9, minute=0, args=[bot])
     sch.start()
     return sch
+
+
+async def late_penalties(bot: Bot) -> None:
+    """20:05 — bugun davomat yoki uy vazifasi o'z vaqtida kiritilmagan bo'lsa mas'ulga −1 ball (ruxsatda emas)."""
+    from app.db.models import StaffPoint
+    from app.bot.exams import on_leave
+    from app.bot.homework import responsible_id
+    t = now().date()
+    msgs = []
+    async with Session() as s:
+        for g in (await s.execute(select(Group).where(Group.active))).scalars():
+            if not is_lesson_day(t, g.days) or await S.group_paused(s, g.id, t):
+                continue
+            les = (await s.execute(select(Lesson).where(Lesson.group_id == g.id, Lesson.date == t))).scalar_one_or_none()
+            if les and les.cancelled:
+                continue
+            checks = [("attendance", not (les and les.confirmed_at), "Davomat o'z vaqtida olinmadi"),
+                      ("homework", not (les and les.homework_at), "Uy vazifasi o'z vaqtida berilmadi")]
+            for job, missing, why in checks:
+                if not missing:
+                    continue
+                sid = responsible_id(g, job)
+                st = await s.get(Staff, sid) if sid else None
+                if not st or await on_leave(s, st.id, t):
+                    continue
+                role = "yordamchi" if sid == g.assistant_id and sid != g.teacher_id else "oqituvchi"
+                s.add(StaffPoint(staff_id=st.id, points=-1, role=role, date=t, reason=f"{why}: {g.name} {t:%d.%m}"))
+                if st.tg_id:
+                    msgs.append((st.tg_id, f"⚠️ {why} («{g.name}»): −1 ball."))
+        await s.commit()
+    for tg, text in msgs:
+        await send(bot, tg, text)

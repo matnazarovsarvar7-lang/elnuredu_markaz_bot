@@ -433,3 +433,99 @@ class StockCount(Base):
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
+
+
+class Expense(Base):
+    """Xarajat: kichik kassadan (moliya, limit ichida) yoki asosiy kassadan (rahbar tasdig'i bilan)."""
+    __tablename__ = "expenses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[date] = mapped_column(Date)
+    category: Mapped[str] = mapped_column(String(40))
+    amount: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(String(300))
+    method: Mapped[str] = mapped_column(String(6), default="naqd")    # naqd | karta | bank
+    source: Mapped[str] = mapped_column(String(8), default="kichik")  # kichik | asosiy
+    status: Mapped[str] = mapped_column(String(10), default="tasdiq") # kutilmoqda | tasdiq | rad
+    receipt_file_id: Mapped[str | None] = mapped_column(String(200))
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Service(Base):
+    """Pullik xizmat: kitob (omborli), printer (sahifa), boshqa."""
+    __tablename__ = "services"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    kind: Mapped[str] = mapped_column(String(8))                 # kitob | printer | boshqa
+    price: Mapped[int] = mapped_column(Integer)                  # sotuv narxi (so'm)
+    cost: Mapped[int] = mapped_column(Integer, default=0)        # tannarx (so'm)
+    stock: Mapped[int | None] = mapped_column(Integer)           # kitob uchun
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ServiceSale(Base):
+    __tablename__ = "service_sales"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    service_id: Mapped[int] = mapped_column(ForeignKey("services.id"))
+    qty: Mapped[int] = mapped_column(Integer, default=1)
+    amount: Mapped[int] = mapped_column(Integer)
+    profit: Mapped[int] = mapped_column(Integer, default=0)
+    method: Mapped[str] = mapped_column(String(6), default="naqd")   # naqd | karta
+    status: Mapped[str] = mapped_column(String(8), default="tasdiq") # tasdiq | bekor
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PrinterCount(Base):
+    __tablename__ = "printer_counts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    counter: Mapped[int] = mapped_column(Integer)
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Payout(Base):
+    """Xodimga berilgan pul: avans yoki oylik (bonus ichida)."""
+    __tablename__ = "payouts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    month: Mapped[str] = mapped_column(String(7))
+    kind: Mapped[str] = mapped_column(String(8))                     # avans | oylik
+    amount: Mapped[int] = mapped_column(Integer)
+    method: Mapped[str] = mapped_column(String(6), default="naqd")
+    status: Mapped[str] = mapped_column(String(10), default="kutilmoqda")  # kutilmoqda | tasdiq | berildi | olindi | rad
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    given_at: Mapped[datetime | None] = mapped_column(DateTime)
+    received_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class Payroll(Base):
+    """Oy yopilgandagi oylik hisob (har xodimga bitta)."""
+    __tablename__ = "payrolls"
+    __table_args__ = (UniqueConstraint("staff_id", "month"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    month: Mapped[str] = mapped_column(String(7))
+    lines: Mapped[list] = mapped_column(JSON, default=list)          # [[nomi, summa], ...]
+    gross: Mapped[int] = mapped_column(Integer, default=0)
+    avans: Mapped[int] = mapped_column(Integer, default=0)
+    bonus: Mapped[int] = mapped_column(Integer, default=0)
+    penalty: Mapped[int] = mapped_column(Integer, default=0)
+    net: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class BonusLedger(Base):
+    """Har oy har rol bo'yicha ball natijasi so'mda — 6 oy yig'iladi (dekabr/iyun) yoki har oy beriladi."""
+    __tablename__ = "bonus_ledger"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    month: Mapped[str] = mapped_column(String(7))
+    role: Mapped[str] = mapped_column(String(12))
+    points: Mapped[int] = mapped_column(Integer)
+    value: Mapped[int] = mapped_column(Integer)                      # 1 ball narxi
+    amount: Mapped[int] = mapped_column(Integer)                     # + bonus / − jarima
+    status: Mapped[str] = mapped_column(String(10), default="yigilmoqda")  # yigilmoqda | tolandi | ushlandi
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

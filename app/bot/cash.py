@@ -52,7 +52,15 @@ async def expected_cash(s) -> int | None:
         Payment.method == "naqd", Payment.status == "tasdiq", Payment.created_at >= since))).scalar()
     outs = (await s.execute(select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
         CashHandover.status != "rad", CashHandover.created_at >= since))).scalar()
-    return int(op["amount"]) + int(pays) - int(outs)
+    from app.db.models import Expense, ServiceSale
+    sales = (await s.execute(select(func.coalesce(func.sum(ServiceSale.amount), 0)).where(
+        ServiceSale.method == "naqd", ServiceSale.status == "tasdiq", ServiceSale.created_at >= since))).scalar()
+    spent = (await s.execute(select(func.coalesce(func.sum(Expense.amount), 0)).where(
+        Expense.method == "naqd", Expense.status == "tasdiq", Expense.created_at >= since))).scalar()
+    from app.db.models import Payout
+    paid_out = (await s.execute(select(func.coalesce(func.sum(Payout.amount), 0)).where(
+        Payout.method == "naqd", Payout.status.in_(("berildi", "olindi")), Payout.created_at >= since))).scalar()
+    return int(op["amount"]) + int(pays) + int(sales) - int(outs) - int(spent) - int(paid_out)
 
 
 async def _set_opening(s, amount: int) -> None:
