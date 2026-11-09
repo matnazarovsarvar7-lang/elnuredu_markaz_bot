@@ -294,7 +294,8 @@ ACTIONS = {
     "muzlatish_tugadi": "o'quvchini muzlatishdan qaytardi", "qayta_hisob": "qayta hisobni hal qildi",
     "ketdi": "o'quvchini guruhdan chiqardi", "qaytarish": "pul qaytarishni belgiladi", "ketish_jarima": "ketish jarimasini yozdi",
     "guruh_toxtadi": "guruhni to'xtatdi", "kassa_yopish": "kassani yopdi", "kassa_qaror": "kassa farqi bo'yicha qaror qildi",
-    "inkassatsiya": "kassani topshirdi", "inkassatsiya_qaror": "topshirishni tasdiqladi", "yuklash": "yordamchiga ish yukladi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
+    "inkassatsiya": "kassani topshirdi", "market_buyurtma": "marketdan buyurtma berdi",
+    "market_tasdiq": "buyurtmani tasdiqladi", "market_rad": "buyurtmani rad etdi", "market_sovga": "sovg'ani o'zgartirdi", "inkassatsiya_qaror": "topshirishni tasdiqladi", "yuklash": "yordamchiga ish yukladi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
 }
 HIDE = {"davomat", "vazifa"}  # kundalik ko'p yozuvlar — tarixda ko'rsatilmaydi
 PAGE = 20

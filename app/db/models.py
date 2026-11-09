@@ -395,3 +395,41 @@ class CashHandover(Base):
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Product(Base):
+    """Market sovg'asi."""
+    __tablename__ = "products"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100))
+    coins: Mapped[int] = mapped_column(Integer)
+    cost: Mapped[int] = mapped_column(Integer, default=0)          # xarid narxi, so'm
+    stock: Mapped[int] = mapped_column(Integer, default=0)
+    photo_file_id: Mapped[str | None] = mapped_column(String(200))
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Order(Base):
+    __tablename__ = "orders"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"))
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    coins: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(12), default="band")   # band | tasdiq | rad | topshirildi
+    from_tg: Mapped[int | None] = mapped_column(BigInteger)
+    reason: Mapped[str | None] = mapped_column(String(200))
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class StockCount(Base):
+    """Oylik ombor sanog'i."""
+    __tablename__ = "stock_counts"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
+    expected: Mapped[int] = mapped_column(Integer)
+    counted: Mapped[int] = mapped_column(Integer)
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+

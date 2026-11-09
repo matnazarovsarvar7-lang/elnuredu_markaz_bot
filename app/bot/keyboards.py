@@ -29,6 +29,7 @@ B_TESTS = "📚 Testlar"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
+B_MARKET = "🛍 Market"
 B_DELEGATE = "🤝 Yordamchi"
 B_LEAVE = "🛂 Ruxsat"
 B_PARENT_PAY = "💳 To'lov chekini yuborish"
@@ -54,10 +55,10 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_DELEGATE])
     if role in ("moliya", "rahbar"):
         rows.append([B_PAY_IN, B_DEBTS])
+        rows.append([B_STUDENT, B_GROUPS])
+        rows.append([B_NEW_STUDENT, B_MARKET])
     if role == "moliya":
         rows.append([B_CASH_CLOSE, B_HANDOVER])
-        rows.append([B_STUDENT, B_GROUPS])
-        rows.append([B_NEW_STUDENT])
     if role == "admin":
         rows.append([B_STUDENT, B_DEBTS])
         rows.append([B_NEW_STUDENT, B_LEADS])
@@ -66,8 +67,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_TASK_NEW, B_TASKS_ALL])
         rows.append([B_NOW, B_LEADS])
         rows.append([B_DELEGATE, B_LEAVE])
-        rows.append([B_CASH])
-        rows.append([B_SETTINGS])
+        rows.append([B_CASH, B_SETTINGS])
     else:
         rows.append([B_MY_TASKS])
     rows.append([B_HELP] + ([B_SWITCH] if multi else []))
@@ -75,12 +75,14 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
 
 
 def parent_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD), KeyboardButton(text=B_HOMEWORK)], [KeyboardButton(text=B_PARENT_PAY)],
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD), KeyboardButton(text=B_HOMEWORK)],
+                                         [KeyboardButton(text=B_PARENT_PAY), KeyboardButton(text=B_MARKET)],
                                          [KeyboardButton(text=B_HELP)]], resize_keyboard=True)
 
 
 def student_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_ME), KeyboardButton(text=B_HOMEWORK)], [KeyboardButton(text=B_HELP)]],
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_ME), KeyboardButton(text=B_HOMEWORK)],
+                                         [KeyboardButton(text=B_MARKET), KeyboardButton(text=B_HELP)]],
                                resize_keyboard=True)
 
 

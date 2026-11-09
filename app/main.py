@@ -17,6 +17,7 @@ from app.bot.delegate import router as delegate_router
 from app.bot.tests_flow import router as tests_router
 from app.bot.status import router as status_router
 from app.bot.cash import router as cash_router
+from app.bot.market import router as market_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -58,6 +59,7 @@ async def main() -> None:
     dp.include_router(homework_router)
     dp.include_router(status_router)
     dp.include_router(cash_router)
+    dp.include_router(market_router)
     dp.include_router(tests_router)
     dp.include_router(exams_router)
     dp.include_router(delegate_router)
