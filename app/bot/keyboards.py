@@ -24,6 +24,9 @@ B_LEADS = "🧲 Arizalar"
 B_NOW = "📊 Hozirgi holat"
 B_APPLY = "✍️ Kursga yozilish"
 B_NEW_STUDENT = "➕ Yangi o'quvchi"
+B_EXAMS = "📝 Nazoratlar"
+B_DELEGATE = "🤝 Yordamchi"
+B_LEAVE = "🛂 Ruxsat"
 B_PARENT_PAY = "💳 To'lov chekini yuborish"
 
 
@@ -41,7 +44,9 @@ def contact_kb() -> ReplyKeyboardMarkup:
 def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     rows: list[list[str]] = []
     if role in ("oqituvchi", "yordamchi", "rahbar"):
-        rows.append([B_TODAY])
+        rows.append([B_TODAY, B_EXAMS])
+    if role == "oqituvchi":
+        rows.append([B_DELEGATE])
     if role in ("moliya", "rahbar"):
         rows.append([B_PAY_IN, B_DEBTS])
         rows.append([B_STUDENT, B_GROUPS])
@@ -53,6 +58,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_PENDING, B_STAFF])
         rows.append([B_TASK_NEW, B_TASKS_ALL])
         rows.append([B_NOW, B_LEADS])
+        rows.append([B_DELEGATE, B_LEAVE])
         rows.append([B_SETTINGS])
     else:
         rows.append([B_MY_TASKS])

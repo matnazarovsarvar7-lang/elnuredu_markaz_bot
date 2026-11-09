@@ -64,6 +64,9 @@ async def attendance_watch(bot: Bot) -> None:
                 continue
             resp_id = g.assistant_id if (g.delegated or {}).get("attendance") and g.assistant_id else g.teacher_id
             resp = await s.get(Staff, resp_id) if resp_id else None
+            from app.bot.exams import on_leave
+            if resp and await on_leave(s, resp.id, t):
+                continue
             if resp and resp.tg_id:
                 todo.append((resp.tg_id, g.name))
     for tg, name in todo:
@@ -105,6 +108,10 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     from app.bot.homework import homework_watch, tomorrow_reminder
     sch.add_job(homework_watch, "cron", minute="*/10", args=[bot])
     sch.add_job(tomorrow_reminder, "cron", hour=18, minute=0, args=[bot])
+    from app.bot.exams import weekly_plan_job, exam_reminder_job, missed_job
+    sch.add_job(weekly_plan_job, "cron", day_of_week="sun", hour=19, minute=0, args=[bot])
+    sch.add_job(exam_reminder_job, "cron", hour=18, minute=5, args=[bot])
+    sch.add_job(missed_job, "cron", day_of_week="sat", hour=20, minute=30, args=[bot])
     from app.bot.manage import recurring_job, tasks_job
     sch.add_job(recurring_job, "cron", hour=8, minute=30, args=[bot])
     sch.add_job(tasks_job, "cron", hour=9, minute=0, args=[bot])

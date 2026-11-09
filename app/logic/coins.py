@@ -13,6 +13,8 @@ DEFAULT_RULES = {
     "pay_coins": 1,
     "pay_bonus": 5,
     "achievement": 10,
+    "exam_pct": 75,     # nazoratda shu foizdan yuqori bo'lsa
+    "exam_coin": 2,
 }
 
 

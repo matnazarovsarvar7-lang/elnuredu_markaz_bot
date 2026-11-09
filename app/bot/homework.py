@@ -66,6 +66,16 @@ async def lesson_status_text(lid: int) -> tuple[str, bool]:
 async def ask_homework(msg: Message, lid: int) -> None:
     text, given = await lesson_status_text(lid)
     await msg.answer(text, reply_markup=prompt_kb(lid, given))
+    await exam_note(msg, lid)
+
+
+async def exam_note(msg: Message, lid: int) -> None:
+    from app.bot.exams import today_exam_button
+    async with Session() as s:
+        les = await s.get(Lesson, lid)
+    kb = await today_exam_button(les.group_id, les.date)
+    if kb:
+        await msg.answer("📝 Bugun bu guruhda <b>nazorat kuni</b>. O'tkazgach, natijalarni kiriting:", reply_markup=kb)
 
 
 # ---------- o'qituvchi: vazifa yozish ----------
@@ -243,7 +253,8 @@ async def homework_watch(bot: Bot) -> None:
                 continue
             rid = responsible_id(g)
             st = await s.get(Staff, rid) if rid else None
-            if not (st and st.tg_id):
+            from app.bot.exams import on_leave
+            if not (st and st.tg_id) or await on_leave(s, st.id, t):
                 continue
             if not les:
                 les = await S.get_or_create_lesson(s, g.id, t)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time
 
-from sqlalchemy import (JSON, BigInteger, Boolean, Date, DateTime, ForeignKey, Integer, String,
+from sqlalchemy import (JSON, BigInteger, Boolean, Date, DateTime, Float, ForeignKey, Integer, String,
                         Text, Time, UniqueConstraint, func)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
@@ -229,4 +229,71 @@ class Lead(Base):
     note: Mapped[str | None] = mapped_column(Text)
     status: Mapped[str] = mapped_column(String(12), default="yangi")  # yangi | boglanildi | oquvchi | rad
     handled_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Exam(Base):
+    """Haftalik nazorat. Bot oldindan rejalashtiradi; o'tkazilgach natijalar kiritiladi."""
+    __tablename__ = "exams"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
+    date: Mapped[date] = mapped_column(Date)
+    week: Mapped[date] = mapped_column(Date)                      # haftaning dushanbasi
+    slot: Mapped[int] = mapped_column(Integer, default=1)         # 1 yoki 2
+    conductor_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    kind: Mapped[str | None] = mapped_column(String(10))          # internet | yozma | test
+    max_score: Mapped[float | None] = mapped_column(Float)
+    topic: Mapped[str | None] = mapped_column(String(200))
+    status: Mapped[str] = mapped_column(String(10), default="reja")  # reja | otdi | otkazilmadi
+    moved_note: Mapped[str | None] = mapped_column(String(200))
+    done_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ExamResult(Base):
+    __tablename__ = "exam_results"
+    __table_args__ = (UniqueConstraint("exam_id", "enrollment_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id"))
+    enrollment_id: Mapped[int] = mapped_column(ForeignKey("enrollments.id"))
+    score: Mapped[float | None] = mapped_column(Float)            # None = qatnashmadi
+    percent: Mapped[float | None] = mapped_column(Float)
+    answers: Mapped[str | None] = mapped_column(String(400))      # bot testi uchun
+    coins_given: Mapped[int] = mapped_column(Integer, default=0)
+    appeals: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class Appeal(Base):
+    __tablename__ = "appeals"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    result_id: Mapped[int] = mapped_column(ForeignKey("exam_results.id"))
+    from_tg: Mapped[int] = mapped_column(BigInteger)
+    question_no: Mapped[int | None] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(String(10), default="yangi")  # yangi | qabul | rad
+    reply: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class StaffLeave(Base):
+    """Rahbar bergan ruxsat (shu kuni jarima yo'q, nazorat ko'chadi)."""
+    __tablename__ = "staff_leaves"
+    __table_args__ = (UniqueConstraint("staff_id", "date"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    date: Mapped[date] = mapped_column(Date)
+    reason: Mapped[str | None] = mapped_column(String(200))
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+
+
+class StaffPoint(Base):
+    """Xodim bonus/jarima ballari (oylik hisob 2-bosqichda shundan foydalanadi)."""
+    __tablename__ = "staff_points"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
+    points: Mapped[int] = mapped_column(Integer)
+    role: Mapped[str | None] = mapped_column(String(12))
+    reason: Mapped[str] = mapped_column(String(200))
+    date: Mapped[date] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

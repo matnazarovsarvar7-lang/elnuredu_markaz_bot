@@ -151,6 +151,8 @@ async def open_group(c: CallbackQuery) -> None:
             from app.bot.homework import lesson_status_text, prompt_kb
             text, given = await lesson_status_text(les.id)
             await c.message.edit_text("Davomat olingan ✅\n\n" + text, reply_markup=prompt_kb(les.id, given))
+            from app.bot.homework import exam_note
+            await exam_note(c.message, les.id)
             return
         draft = DRAFT_ATT.setdefault(les.id, {})
         rows = await _roster_rows(s, les, draft, "k")

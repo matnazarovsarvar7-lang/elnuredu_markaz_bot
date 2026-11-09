@@ -27,6 +27,7 @@ RULE_TITLES = {
     "hw_done": "Vazifa bajardi", "hw_part": "Vazifa qisman", "hw_none": "Vazifa bajarmadi",
     "grade_alo": "Baho «a'lo»", "pay_unit": "To'lov: necha so'mga", "pay_coins": "To'lov: necha coin",
     "pay_bonus": "5-sanagacha to'lov bonusi", "achievement": "Yutuq (sertifikat, OTM)",
+    "exam_pct": "Nazorat: necha foizdan yuqori", "exam_coin": "Nazorat: coin",
 }
 
 
@@ -286,7 +287,9 @@ ACTIONS = {
     "vazifa": "vazifa natijalarini kiritdi", "kelmadi_sabab": "kelmaganlik sababini yozdi", "import": "ma'lumot yukladi",
     "ariza": "ariza holatini belgiladi", "royxat": "yangi o'quvchini ro'yxatga oldi",
     "guruhga_qoshdi": "o'quvchini guruhga qo'shdi",
-    "uy_vazifa": "uy vazifasini yubordi", "baho": "baho qo'ydi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
+    "uy_vazifa": "uy vazifasini yubordi", "baho": "baho qo'ydi",
+    "nazorat": "nazorat natijalarini kiritdi", "nazorat_kuni": "nazorat kunini o'zgartirdi",
+    "apellyatsiya": "apellyatsiyani hal qildi", "ruxsat": "xodimga ruxsat berdi", "yuklash": "yordamchiga ish yukladi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
 }
 HIDE = {"davomat", "vazifa"}  # kundalik ko'p yozuvlar — tarixda ko'rsatilmaydi
 PAGE = 20
