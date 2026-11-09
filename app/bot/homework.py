@@ -37,7 +37,8 @@ def prompt_kb(lid: int, given: bool = False) -> IM:
     first = "✏️ Vazifani o'zgartirish" if given else "✍️ Uy vazifasini yozish"
     return IM(inline_keyboard=[[IB(text=first, callback_data=f"hwg:{lid}")],
                                [IB(text="🚫 Bugun vazifa yo'q", callback_data=f"hwn:{lid}")],
-                               [IB(text="⭐ Baho qo'yish (ixtiyoriy)", callback_data=f"bh:{lid}")]])
+                               [IB(text="⭐ Baho qo'yish (ixtiyoriy)", callback_data=f"bh:{lid}")],
+                               [IB(text="🔔 Dars tugadi — ota-onalarga xabar", callback_data=f"dz:{lid}")]])
 
 
 def responsible_id(g: Group, what: str = "homework") -> int | None:

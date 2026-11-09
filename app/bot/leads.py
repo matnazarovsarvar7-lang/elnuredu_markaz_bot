@@ -166,8 +166,12 @@ async def now_status(m: Message) -> None:
         new_leads = (await s.execute(select(func.count(Lead.id)).where(Lead.status == "yangi"))).scalar()
         from app.bot.homework import missing_today
         no_hw = await missing_today(s, t)
+        from app.bot.cash import expected_cash
+        exp_cash = await expected_cash(s)
     lines += ["", "<b>Bugungi tushum</b>", f"Naqd: {S.fmt_som(cash)} · Karta: {S.fmt_som(card)}",
-              f"Tasdiq kutayotgan to'lovlar: {pending}", "",
+              f"Tasdiq kutayotgan to'lovlar: {pending}",
+              f"💼 Kassada bo'lishi kerak: {S.fmt_som(exp_cash)}" if exp_cash is not None else "💼 Kassa: boshlang'ich qoldiq kiritilmagan",
+              "",
               f"📝 Ochiq vazifalar: {open_tasks} (muddati o'tgan: {late_tasks})",
               f"📚 Uy vazifasi hali berilmagan: {len(no_hw)}" + (f" ({', '.join(no_hw)})" if no_hw else ""),
               f"🧲 Yangi arizalar: {new_leads}"]

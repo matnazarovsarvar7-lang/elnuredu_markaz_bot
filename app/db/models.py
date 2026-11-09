@@ -124,6 +124,7 @@ class Lesson(Base):
     homework_file_kind: Mapped[str | None] = mapped_column(String(10))   # photo | doc
     homework_at: Mapped[datetime | None] = mapped_column(DateTime)      # vazifa (yoki "yo'q") kiritilgan vaqt
     homework_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    ended_at: Mapped[datetime | None] = mapped_column(DateTime)         # "Dars tugadi" bosilgan vaqt
     cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
@@ -366,4 +367,31 @@ class Freeze(Base):
     reason: Mapped[str | None] = mapped_column(String(200))
     recalc: Mapped[str] = mapped_column(String(12), default="auto")   # auto | kutilmoqda | tasdiq | rad
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CashClose(Base):
+    """Kunlik kassa yopish ("ko'r" usul): moliya sanagan naqdni kiritadi, bot faqat mos/farq deydi."""
+    __tablename__ = "cash_closes"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    date: Mapped[date] = mapped_column(Date)
+    expected: Mapped[int] = mapped_column(Integer)
+    counted: Mapped[int] = mapped_column(Integer)
+    diff: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(10))        # boshlang | mos | farq
+    decision: Mapped[str | None] = mapped_column(String(20))
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class CashHandover(Base):
+    """Inkassatsiya: naqdni rahbarga yoki bankka topshirish."""
+    __tablename__ = "cash_handovers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    amount: Mapped[int] = mapped_column(Integer)
+    to_kind: Mapped[str] = mapped_column(String(8))         # rahbar | bank
+    status: Mapped[str] = mapped_column(String(10), default="kutilmoqda")  # kutilmoqda | tasdiq | rad
+    receipt_file_id: Mapped[str | None] = mapped_column(String(200))
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

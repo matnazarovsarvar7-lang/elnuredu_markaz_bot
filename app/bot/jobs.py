@@ -92,12 +92,21 @@ async def evening_report(bot: Bot) -> None:
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         from app.bot.homework import missing_today
         no_hw = await missing_today(s, t)
+        from app.bot.cash import early_lessons, expected_cash
+        from app.db.models import CashClose
+        early = await early_lessons(s, t)
+        cl = (await s.execute(select(CashClose).where(CashClose.date == t).order_by(CashClose.id.desc()))).scalars().first()
+        exp_cash = await expected_cash(s)
     text = (f"🌙 <b>Kunlik hisobot · {t:%d.%m.%Y}</b>\n"
             f"Tushum: naqd {S.fmt_som(cash)}, karta {S.fmt_som(card)}\n"
             f"Tasdiq kutayotgan to'lovlar: {pending}\n"
             f"Darslar: {len(groups_today)}, davomat olinmagan: {max(0, missing)}\n"
             f"Darsga kelmaganlar: {absent}\n"
-            f"Uy vazifasi berilmagan: {len(no_hw)}" + (f" ({', '.join(no_hw)})" if no_hw else " ✅"))
+            f"Uy vazifasi berilmagan: {len(no_hw)}" + (f" ({', '.join(no_hw)})" if no_hw else " ✅")
+            + (f"\nErta tugagan darslar: {'; '.join(early)}" if early else "")
+            + "\nKassa: " + ({"mos": "✅ yopildi, mos", "farq": "⚠️ yopildi, farq bor", "boshlang": "▫️ boshlang'ich qoldiq"}
+                             .get(cl.status, "") if cl else "❌ yopilmadi")
+            + (f" · kassada bo'lishi kerak {S.fmt_som(exp_cash)}" if exp_cash is not None else ""))
     for b in bosses:
         await send(bot, b, text)
 
@@ -116,6 +125,9 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     sch.add_job(missed_job, "cron", day_of_week="sat", hour=20, minute=30, args=[bot])
     from app.bot.status import risk_job
     sch.add_job(risk_job, "cron", hour=20, minute=40, args=[bot])
+    from app.bot.cash import social_job, close_reminder
+    sch.add_job(social_job, "cron", hour=7, minute=0, args=[bot])
+    sch.add_job(close_reminder, "cron", hour=19, minute=30, args=[bot])
     from app.bot.manage import recurring_job, tasks_job
     sch.add_job(recurring_job, "cron", hour=8, minute=30, args=[bot])
     sch.add_job(tasks_job, "cron", hour=9, minute=0, args=[bot])

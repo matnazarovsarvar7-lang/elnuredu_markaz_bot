@@ -406,7 +406,9 @@ async def pending_payments(s: AsyncSession) -> list[Payment]:
 
 
 async def debtors(s: AsyncSession, year: int, month: int) -> list[MonthStatus]:
-    q = (select(Enrollment).join(Student).where(Enrollment.active, Student.status == "faol")
+    first = date(year, month, 1)
+    q = (select(Enrollment).join(Student)
+         .where(Enrollment.active | (Enrollment.left_date >= first))      # oy ichida ketganlar ham (qarzi qolsa)
          .options(selectinload(Enrollment.group), selectinload(Enrollment.student)))
     out = []
     for e in (await s.execute(q)).scalars():
@@ -456,8 +458,18 @@ class StudentDebt:
         return sum(p.payable for p in self.parts)
 
 
+async def debt_enrollments(s: AsyncSession, student_id: int, year: int, month: int) -> list[Enrollment]:
+    """Shu oy hisobiga kiradigan o'rinlar: faollar + shu oy ichida guruhdan chiqqanlar."""
+    first = date(year, month, 1)
+    q = (select(Enrollment).where(Enrollment.student_id == student_id,
+                                  Enrollment.active | (Enrollment.left_date >= first))
+         .options(selectinload(Enrollment.group), selectinload(Enrollment.student))
+         .execution_options(populate_existing=True))
+    return list((await s.execute(q)).scalars())
+
+
 async def student_debt(s: AsyncSession, student_id: int, year: int, month: int) -> StudentDebt:
-    enrs = await student_enrollments(s, student_id)
+    enrs = await debt_enrollments(s, student_id, year, month)
     parts = [await month_status(s, e, year, month) for e in enrs]
     stu = enrs[0].student if enrs else await s.get(Student, student_id)
     return StudentDebt(stu, parts)
