@@ -289,7 +289,8 @@ ACTIONS = {
     "guruhga_qoshdi": "o'quvchini guruhga qo'shdi",
     "uy_vazifa": "uy vazifasini yubordi", "baho": "baho qo'ydi",
     "nazorat": "nazorat natijalarini kiritdi", "nazorat_kuni": "nazorat kunini o'zgartirdi",
-    "apellyatsiya": "apellyatsiyani hal qildi", "ruxsat": "xodimga ruxsat berdi", "yuklash": "yordamchiga ish yukladi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
+    "apellyatsiya": "apellyatsiyani hal qildi", "test_sorov": "test so'radi", "test_yuklash": "test yukladi",
+    "test_tuzatish": "testni tuzatdi", "test_qaytarish": "testni qaytardi", "test_tasdiq": "testni tasdiqladi", "ruxsat": "xodimga ruxsat berdi", "yuklash": "yordamchiga ish yukladi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
 }
 HIDE = {"davomat", "vazifa"}  # kundalik ko'p yozuvlar — tarixda ko'rsatilmaydi
 PAGE = 20

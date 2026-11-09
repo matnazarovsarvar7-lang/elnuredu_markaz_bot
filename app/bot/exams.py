@@ -41,6 +41,17 @@ def week_lessons(g: Group, mon: date) -> list[date]:
     return [mon + timedelta(days=i) for i in range(6) if is_lesson_day(mon + timedelta(days=i), g.days)]
 
 
+def last_lesson_of_month(g: Group, lessons: list[date]) -> date | None:
+    """Shu haftadagi dars kunlaridan qaysi biri o'z oyining oxirgi darsi bo'lsa — o'sha (oylik nazorat)."""
+    for d in reversed(lessons):
+        nxt = d + timedelta(days=1)
+        while nxt.month == d.month and not is_lesson_day(nxt, g.days):
+            nxt += timedelta(days=1)
+        if nxt.month != d.month:
+            return d
+    return None
+
+
 def conductor_of(g: Group) -> int | None:
     return g.assistant_id or g.teacher_id
 
@@ -87,21 +98,29 @@ async def plan_week(mon: date, notify: Bot | None = None, from_day: date | None 
                                                             Exam.slot >= 1))).first()
             if exists:
                 continue
-            days = [d for d in slots_for(g, week_lessons(g, mon)) if not from_day or d >= from_day]
+            lessons = week_lessons(g, mon)
+            days = [d for d in slots_for(g, lessons) if not from_day or d >= from_day]
+            month_end = last_lesson_of_month(g, lessons)
             for i, d in enumerate(days, 1):
-                ex = Exam(group_id=g.id, date=d, week=mon, slot=i, conductor_id=conductor_of(g))
+                ex = Exam(group_id=g.id, date=d, week=mon, slot=i, conductor_id=conductor_of(g),
+                          monthly=(d == month_end))
+                s.add(ex)
+                created.append((g, ex))
+            if month_end and month_end not in days and (not from_day or month_end >= from_day):
+                ex = Exam(group_id=g.id, date=month_end, week=mon, slot=len(days) + 1,
+                          conductor_id=conductor_of(g), monthly=True)
                 s.add(ex)
                 created.append((g, ex))
         await s.commit()
         if notify:
-            by_group: dict[int, list[date]] = {}
+            by_group: dict[int, list[str]] = {}
             for g, ex in created:
-                by_group.setdefault(g.id, []).append(ex.date)
+                by_group.setdefault(g.id, []).append(fmt_day(ex.date) + (" (oylik nazorat)" if ex.monthly else ""))
             msgs = []
             for g, ex in created:
                 if ex.slot != 1:
                     continue
-                days_txt = " va ".join(fmt_day(d) for d in by_group[g.id])
+                days_txt = " va ".join(by_group[g.id])
                 text = (f"📝 <b>Bu hafta nazorat</b> · {g.name}\n{days_txt}\n"
                         "O'tgan hafta o'tilgan mavzular bo'yicha. Tayyorlanib keling!")
                 for t in await _family_targets(s, g, ex.date):
@@ -192,7 +211,8 @@ async def exams_list(m: Message) -> None:
     if not rows:
         await m.answer("Hozircha nazorat rejasi yo'q. Reja har yakshanba kechqurun tuziladi.")
         return
-    kb = [[IB(text=f"{STATUS[e.status][:1]} {fmt_day(e.date)} · {g.name}", callback_data=f"ex:{e.id}")] for e, g in rows]
+    kb = [[IB(text=f"{STATUS[e.status][:1]} {fmt_day(e.date)} · {g.name}" + (" · oylik" if e.monthly else ""),
+              callback_data=f"ex:{e.id}")] for e, g in rows]
     await m.answer("📝 <b>Nazoratlar</b> (o'tgan, shu va kelasi hafta). Tanlang:", reply_markup=IM(inline_keyboard=kb))
 
 
@@ -202,10 +222,18 @@ async def exam_card(eid: int) -> tuple[str, IM]:
         g = await s.get(Group, ex.group_id)
         st = await s.get(Staff, ex.conductor_id) if ex.conductor_id else None
         res = (await s.execute(select(ExamResult).where(ExamResult.exam_id == eid))).scalars().all()
-    lines = [f"📝 <b>{g.name}</b> · {fmt_day(ex.date)}", f"Holat: {STATUS[ex.status]}",
+    lines = [f"📝 <b>{g.name}</b> · {fmt_day(ex.date)}" + (" · <b>OYLIK</b>" if ex.monthly else ""),
+             f"Holat: {STATUS[ex.status]}",
              f"O'tkazuvchi: {st.full_name if st else '—'}"]
     if ex.moved_note:
         lines.append(f"Izoh: {ex.moved_note}")
+    if ex.test_id:
+        from app.db.models import Test
+        async with Session() as s:
+            t = await s.get(Test, ex.test_id)
+        if t:
+            from app.bot.tests_flow import ST as TST
+            lines.append(f"Test #{t.id}: {TST.get(t.status, t.status)}" + (" · 🖨 chop etildi" if t.printed_at else ""))
     rows = []
     if ex.status == "otdi":
         took = [r for r in res if r.percent is not None]
@@ -285,6 +313,16 @@ class Ex(StatesGroup):
 @router.callback_query(F.data.startswith("exr:"))
 async def res_start(c: CallbackQuery) -> None:
     eid = int(c.data.split(":")[1])
+    from app.db.models import TestPaper
+    async with Session() as s:
+        ex = await s.get(Exam, eid)
+        has_papers = ex.test_id and (await s.execute(select(TestPaper.id).where(TestPaper.test_id == ex.test_id))).first()
+    if has_papers:
+        from app.bot.tests_flow import entry_menu
+        text, kb = await entry_menu(ex.test_id)
+        await c.message.answer(text, reply_markup=kb)
+        await c.answer()
+        return
     kb = [[IB(text=v, callback_data=f"exk:{eid}:{k}")] for k, v in KINDS.items()]
     await c.message.edit_text("Nazorat qanday o'tkazildi?", reply_markup=IM(inline_keyboard=kb))
 
@@ -482,9 +520,14 @@ async def appeal_text(m: Message, state: FSMContext, bot: Bot) -> None:
     await m.answer("✅ Apellyatsiya ustozga yuborildi. Javob shu yerga keladi.")
     kb = IM(inline_keyboard=[[IB(text="✅ To'g'ri — natijani o'zgartirish", callback_data=f"apa:{apid}")],
                              [IB(text="❌ Rad etish", callback_data=f"apr:{apid}")]])
+    detail = ""
+    if qn:
+        from app.bot.tests_flow import paper_question_info
+        info = await paper_question_info(d["rid"], int(qn.group()))
+        detail = f"\n\n{info}" if info else ""
     for t in tgs:
         await send(bot, t, f"📝 <b>Apellyatsiya</b> · {g.name} · {ex.date:%d.%m}\n{stu.full_name}: "
-                           f"{r.score:g}/{ex.max_score:g}\n\n«{text[:900]}»", reply_markup=kb)
+                           f"{r.score:g}/{ex.max_score:g}\n\n«{text[:900]}»{detail}", reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith(("apa:", "apr:")))

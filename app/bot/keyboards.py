@@ -25,6 +25,7 @@ B_NOW = "📊 Hozirgi holat"
 B_APPLY = "✍️ Kursga yozilish"
 B_NEW_STUDENT = "➕ Yangi o'quvchi"
 B_EXAMS = "📝 Nazoratlar"
+B_TESTS = "📚 Testlar"
 B_DELEGATE = "🤝 Yordamchi"
 B_LEAVE = "🛂 Ruxsat"
 B_PARENT_PAY = "💳 To'lov chekini yuborish"
@@ -45,6 +46,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     rows: list[list[str]] = []
     if role in ("oqituvchi", "yordamchi", "rahbar"):
         rows.append([B_TODAY, B_EXAMS])
+        rows.append([B_TESTS])
     if role == "oqituvchi":
         rows.append([B_DELEGATE])
     if role in ("moliya", "rahbar"):

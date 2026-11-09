@@ -246,6 +246,8 @@ class Exam(Base):
     topic: Mapped[str | None] = mapped_column(String(200))
     status: Mapped[str] = mapped_column(String(10), default="reja")  # reja | otdi | otkazilmadi
     moved_note: Mapped[str | None] = mapped_column(String(200))
+    monthly: Mapped[bool] = mapped_column(Boolean, default=False)
+    test_id: Mapped[int | None] = mapped_column(Integer)
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -297,3 +299,57 @@ class StaffPoint(Base):
     reason: Mapped[str] = mapped_column(String(200))
     date: Mapped[date] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Test(Base):
+    """Nazorat testi: o'qituvchi so'rovi -> rahbar yuklaydi -> o'qituvchi tasdiqlaydi -> varaqlar."""
+    __tablename__ = "tests"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
+    exam_id: Mapped[int | None] = mapped_column(ForeignKey("exams.id"))
+    topic: Mapped[str] = mapped_column(String(200))
+    n_questions: Mapped[int] = mapped_column(Integer, default=20)
+    n_variants: Mapped[int] = mapped_column(Integer, default=4)
+    common: Mapped[int] = mapped_column(Integer, default=0)
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    photos: Mapped[list] = mapped_column(JSON, default=list)          # so'rov rasmlari (file_id)
+    status: Mapped[str] = mapped_column(String(12), default="sorov")  # sorov | korib | qaytarildi | tasdiq
+    source: Mapped[str] = mapped_column(String(10), default="rahbar") # rahbar | oqituvchi
+    version: Mapped[int] = mapped_column(Integer, default=0)
+    requested_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    review_note: Mapped[str | None] = mapped_column(Text)
+    printed_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class TestQuestion(Base):
+    __tablename__ = "test_questions"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    test_id: Mapped[int] = mapped_column(ForeignKey("tests.id"))
+    qid: Mapped[int] = mapped_column(Integer)
+    variant: Mapped[str] = mapped_column(String(8))
+    level: Mapped[str] = mapped_column(String(8))
+    source: Mapped[str | None] = mapped_column(String(120))
+    text: Mapped[str] = mapped_column(Text)
+    options: Mapped[list] = mapped_column(JSON)
+    answer: Mapped[str] = mapped_column(String(1))
+
+
+class TestPaper(Base):
+    """Bitta o'quvchining varag'i: variant, tartib, kalit, javoblar."""
+    __tablename__ = "test_papers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    test_id: Mapped[int] = mapped_column(ForeignKey("tests.id"))
+    enrollment_id: Mapped[int] = mapped_column(ForeignKey("enrollments.id"))
+    code: Mapped[str] = mapped_column(String(16))
+    variant: Mapped[str] = mapped_column(String(1))
+    qids: Mapped[list] = mapped_column(JSON)
+    perms: Mapped[list] = mapped_column(JSON)
+    key: Mapped[str] = mapped_column(String(100))
+    answers: Mapped[str | None] = mapped_column(String(100))
+    correct: Mapped[int | None] = mapped_column(Integer)
+    absent: Mapped[bool] = mapped_column(Boolean, default=False)
+    entered_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    scanned: Mapped[bool] = mapped_column(Boolean, default=False)

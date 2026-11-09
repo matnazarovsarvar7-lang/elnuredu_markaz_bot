@@ -23,6 +23,8 @@ MIGRATIONS = [
     "ALTER TABLE lessons ADD COLUMN homework_file_kind VARCHAR(10)",
     "ALTER TABLE lessons ADD COLUMN homework_at TIMESTAMP",
     "ALTER TABLE lessons ADD COLUMN homework_by INTEGER",
+    "ALTER TABLE exams ADD COLUMN monthly BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE exams ADD COLUMN test_id INTEGER",
 ]
 
 
