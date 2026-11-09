@@ -122,16 +122,24 @@ async def today_lessons(m: Message) -> None:
         who = await S.who_by_tg(s, m.from_user.id)
         if not who.staff:
             return
-        groups = [g for g in S.todays_groups(await S.teacher_groups(s, who.staff, who.staff.current_role), today())
-                  if not await S.group_paused(s, g.id, today())]
-    if not groups:
-        await m.answer("Bugun sizda dars yo'q.")
-        return
+        mine = await S.teacher_groups(s, who.staff, who.staff.current_role)
+        t = today()
+        lessons = {l.group_id: l for l in (await s.execute(select(Lesson).where(
+            Lesson.date == t, Lesson.group_id.in_([g.id for g in mine] or [0])))).scalars()}
+        groups = []
+        for g in mine:
+            l = lessons.get(g.id)
+            regular = g in S.todays_groups([g], t) and not await S.group_paused(s, g.id, t)
+            if (regular and not (l and l.cancelled)) or (l and l.extra):
+                groups.append((g, l))
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-    kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(
-        text=f"{g.start_time:%H:%M} · {g.name}" if g.start_time else g.name, callback_data=f"grp:{g.id}")]
-        for g in groups])
-    await m.answer("Bugungi darslaringiz. Guruhni tanlang:", reply_markup=kb)
+    rows = [[InlineKeyboardButton(text=(f"{g.start_time:%H:%M} · " if g.start_time else "") + g.name
+                                  + (" · qo'shimcha dars" if l and l.extra else ""), callback_data=f"grp:{g.id}")]
+            for g, l in groups]
+    if who.staff.current_role in ("oqituvchi", "rahbar"):
+        rows.append([InlineKeyboardButton(text="❌ Darsni bekor qilish / 📅 qo'shimcha dars", callback_data="lc:menu")])
+    await m.answer("Bugungi darslaringiz. Guruhni tanlang:" if groups else "Bugun sizda dars yo'q.",
+                   reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
 async def _roster_rows(s, lesson: Lesson, draft: dict[int, str], default: str):

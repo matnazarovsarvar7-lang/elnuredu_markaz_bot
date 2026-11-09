@@ -171,11 +171,11 @@ async def _student_card(sid: int, role: str) -> tuple[str, IM]:
                     for e in enrs) or "—"
     text = (f"<b>{stu.full_name}</b>\nHolat: {stu.status}\nCoin: {stu.coins}\nOta-ona telefoni: {par}\n"
             f"O'quvchi telefoni: {stu.phone or '—'}\n\nGuruhlar:\n{grp}")
-    rows = [[IB(text="📞 Ota-ona raqami qo'shish", callback_data=f"spp:{sid}")],
+    rows = [[IB(text="📞 Ota-ona raqami qo'shish", callback_data=f"spa:{sid}")],
             [IB(text="📱 O'quvchi raqami", callback_data=f"sph:{sid}")],
             [IB(text="➕ Guruhga qo'shish", callback_data=f"sag:{sid}")]]
     if role in ("moliya", "rahbar"):
-        rows.append([IB(text="🏷 Chegirma", callback_data=f"sd:{sid}")])
+        rows.append([IB(text="🏷 Chegirma", callback_data=f"sd:{sid}"), IB(text="🪙 Qo'lda coin", callback_data=f"mcn:{sid}")])
     if role in ("rahbar", "admin", "moliya", "oqituvchi"):
         rows += [[IB(text=f"⚙️ {e.group.name}: muzlatish / chiqarish", callback_data=f"en:{e.id}")] for e in enrs]
     return text, IM(inline_keyboard=rows)
@@ -188,10 +188,10 @@ async def student_card(c: CallbackQuery) -> None:
     await c.message.edit_text(text, reply_markup=kb)
 
 
-@router.callback_query(F.data.startswith(("spp:", "sph:")))
+@router.callback_query(F.data.startswith(("spa:", "sph:")))
 async def phone_ask(c: CallbackQuery, state: FSMContext) -> None:
     kind, sid = c.data.split(":")
-    await state.set_state(Ed.par_phone if kind == "spp" else Ed.st_phone)
+    await state.set_state(Ed.par_phone if kind == "spa" else Ed.st_phone)
     await state.update_data(sid=int(sid))
     await c.message.answer("Telefon raqamini yozing: +998901234567")
 

@@ -298,7 +298,8 @@ ACTIONS = {
     "ketdi": "o'quvchini guruhdan chiqardi", "qaytarish": "pul qaytarishni belgiladi", "ketish_jarima": "ketish jarimasini yozdi",
     "guruh_toxtadi": "guruhni to'xtatdi", "kassa_yopish": "kassani yopdi", "kassa_qaror": "kassa farqi bo'yicha qaror qildi",
     "inkassatsiya": "kassani topshirdi", "market_buyurtma": "marketdan buyurtma berdi", "xarajat": "xarajat kiritdi", "xarajat_qaror": "xarajatni hal qildi",
-    "kichik_kassa": "kichik kassani belgiladi", "xizmat_sotuv": "xizmat sotdi", "xizmat_narx": "xizmat qo'shdi", "printer_ichki": "ichki chop etishni qayd etdi",
+    "kichik_kassa": "kichik kassani belgiladi", "xizmat_sotuv": "xizmat sotdi", "xizmat_narx": "xizmat qo'shdi", "printer_ichki": "ichki chop etishni qayd etdi", "qolda_coin": "qo'lda coin berdi",
+    "dars_bekor": "darsni bekor qildi", "qoshimcha_dars": "qo'shimcha dars belgiladi", "ombor_sanoq": "omborni sanadi",
     "avans_sorov": "avans so'radi", "yutuq": "yutuq kiritdi", "yutuq_qaror": "yutuqni hal qildi", "sozlama": "sozlamani o'zgartirdi", "pin": "PIN-kodni o'rnatdi", "avans_qaror": "avansni hal qildi", "oylik_berildi": "oylik berdi",
     "market_tasdiq": "buyurtmani tasdiqladi", "market_rad": "buyurtmani rad etdi", "market_sovga": "sovg'ani o'zgartirdi", "inkassatsiya_qaror": "topshirishni tasdiqladi", "yuklash": "yordamchiga ish yukladi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
 }

@@ -27,6 +27,12 @@ MIGRATIONS = [
     "ALTER TABLE exams ADD COLUMN test_id INTEGER",
     "ALTER TABLE lessons ADD COLUMN ended_at TIMESTAMP",
     "ALTER TABLE students ADD COLUMN region VARCHAR(80)",
+    "ALTER TABLE lessons ADD COLUMN cancel_reason VARCHAR(200)",
+    "ALTER TABLE lessons ADD COLUMN cancel_status VARCHAR(10)",
+    "ALTER TABLE lessons ADD COLUMN makeup_date DATE",
+    "ALTER TABLE lessons ADD COLUMN extra BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE lessons ADD COLUMN makeup_penalized BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE lessons ADD COLUMN cancelled BOOLEAN DEFAULT FALSE",
 ]
 
 

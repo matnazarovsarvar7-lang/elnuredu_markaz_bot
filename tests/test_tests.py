@@ -58,3 +58,15 @@ def test_menus_have_core_buttons():
     assert {K.B_STUDENT, K.B_CASH_CLOSE, K.B_HANDOVER, K.B_MARKET, K.B_SWITCH} <= fin
     assert {K.B_TODAY, K.B_EXAMS, K.B_TESTS, K.B_DELEGATE} <= flat(K.staff_menu("oqituvchi", False))
     assert K.B_MARKET in flat(K.parent_menu()) and K.B_MARKET in flat(K.student_menu())
+
+
+def test_callback_prefixes_unique():
+    """Bir xil callback prefiksi ikki modulda bo'lmasin (bir tugma boshqa bo'limni ochib yubormasin)."""
+    import re, pathlib
+    owners = {}
+    for f in pathlib.Path("app/bot").glob("*.py"):
+        for m in re.finditer(r'callback_query\(F\.data\.startswith\(\(?([^)]*)\)', f.read_text()):
+            for p in re.findall(r'"([a-z0-9]+:)"', m.group(1)):
+                owners.setdefault(p, set()).add(f.name)
+    clash = {p: o for p, o in owners.items() if len(o) > 1}
+    assert not clash, clash

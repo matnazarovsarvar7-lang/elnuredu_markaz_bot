@@ -217,6 +217,9 @@ async def kpi_points(s, st: Staff, role: str, month: str) -> tuple[int, list[str
             StaffPoint.staff_id == st.id, StaffPoint.date >= d1, StaffPoint.date <= d2,
             StaffPoint.reason.like("%o'z vaqtida%")))).scalar()
         add(late == 0, 3, "davomat va vazifa o'z vaqtida")
+        from app.bot.extra import survey_avg
+        avg, cnt = await survey_avg(s, st.id, month)
+        add(avg is not None and cnt >= 3 and avg >= 9, 2, f"so'rovnoma o'rtachasi {avg:.1f}" if avg else "so'rovnoma 9+")
         add(pen == 0, 3, "jarimasiz oy")
     elif role == "yordamchi":
         gids = list((await s.execute(select(Group.id).where(Group.assistant_id == st.id))).scalars())

@@ -118,7 +118,6 @@ class Lesson(Base):
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
     date: Mapped[date] = mapped_column(Date)
     confirmed_at: Mapped[datetime | None] = mapped_column(DateTime)
-    ended_at: Mapped[datetime | None] = mapped_column(DateTime)
     homework_text: Mapped[str | None] = mapped_column(Text)
     no_homework_reason: Mapped[str | None] = mapped_column(String(200))
     homework_file_id: Mapped[str | None] = mapped_column(String(200))
@@ -127,6 +126,11 @@ class Lesson(Base):
     homework_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime)         # "Dars tugadi" bosilgan vaqt
     cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
+    cancel_reason: Mapped[str | None] = mapped_column(String(200))
+    cancel_status: Mapped[str | None] = mapped_column(String(10))      # sorov | tasdiq | rad
+    makeup_date: Mapped[date | None] = mapped_column(Date)             # bekor darsning o'rniga
+    extra: Mapped[bool] = mapped_column(Boolean, default=False)        # qo'shimcha (o'rniga) dars
+    makeup_penalized: Mapped[bool] = mapped_column(Boolean, default=False)
 
 
 class Attendance(Base):
@@ -562,4 +566,18 @@ class PrinterUse(Base):
     staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))   # kimning hujjati (o'qituvchi)
     test_id: Mapped[int | None] = mapped_column(Integer)
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class SurveyAnswer(Base):
+    """Ota-onalar so'rovnomasi: o'qituvchi ishiga 1–10 baho (o'qituvchiga anonim)."""
+    __tablename__ = "survey_answers"
+    __table_args__ = (UniqueConstraint("month", "student_id", "group_id"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    month: Mapped[str] = mapped_column(String(7))
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"))
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
+    teacher_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    score: Mapped[int] = mapped_column(Integer)
+    comment: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

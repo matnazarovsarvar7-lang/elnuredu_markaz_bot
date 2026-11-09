@@ -137,6 +137,11 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     sch.add_job(late_penalties, "cron", hour=20, minute=5, args=[bot])
     from app.bot.achieve import alumni_job
     sch.add_job(alumni_job, "cron", month=8, day=5, hour=10, minute=0, args=[bot])
+    from app.bot.extra import makeup_job, survey_job, weekly_report, stock_reminder
+    sch.add_job(makeup_job, "cron", hour=21, minute=10, args=[bot])
+    sch.add_job(survey_job, "cron", day=20, hour=11, minute=0, args=[bot])
+    sch.add_job(weekly_report, "cron", day_of_week="sat", hour=18, minute=0, args=[bot])
+    sch.add_job(stock_reminder, "cron", hour=17, minute=0, args=[bot])
     from app.bot.manage import recurring_job, tasks_job
     sch.add_job(recurring_job, "cron", hour=8, minute=30, args=[bot])
     sch.add_job(tasks_job, "cron", hour=9, minute=0, args=[bot])
