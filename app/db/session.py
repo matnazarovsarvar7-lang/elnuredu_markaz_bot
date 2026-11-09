@@ -26,6 +26,7 @@ MIGRATIONS = [
     "ALTER TABLE exams ADD COLUMN monthly BOOLEAN DEFAULT FALSE",
     "ALTER TABLE exams ADD COLUMN test_id INTEGER",
     "ALTER TABLE lessons ADD COLUMN ended_at TIMESTAMP",
+    "ALTER TABLE students ADD COLUMN region VARCHAR(80)",
 ]
 
 

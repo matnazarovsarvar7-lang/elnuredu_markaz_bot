@@ -20,6 +20,7 @@ from app.bot.cash import router as cash_router
 from app.bot.market import router as market_router
 from app.bot.finance import router as finance_router
 from app.bot.salary import router as salary_router
+from app.bot.achieve import router as achieve_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -64,6 +65,7 @@ async def main() -> None:
     dp.include_router(market_router)
     dp.include_router(finance_router)
     dp.include_router(salary_router)
+    dp.include_router(achieve_router)
     dp.include_router(tests_router)
     dp.include_router(exams_router)
     dp.include_router(delegate_router)

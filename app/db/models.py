@@ -60,6 +60,7 @@ class Student(Base):
     birth: Mapped[date | None] = mapped_column(Date)
     gender: Mapped[str | None] = mapped_column(String(6))
     school: Mapped[str | None] = mapped_column(String(60))
+    region: Mapped[str | None] = mapped_column(String(80))             # viloyat, tuman
     phone: Mapped[str | None] = mapped_column(String(20))
     tg_id: Mapped[int | None] = mapped_column(BigInteger)
     status: Mapped[str] = mapped_column(String(10), default="faol")  # faol | muzlatilgan | ketgan
@@ -528,4 +529,24 @@ class BonusLedger(Base):
     value: Mapped[int] = mapped_column(Integer)                      # 1 ball narxi
     amount: Mapped[int] = mapped_column(Integer)                     # + bonus / − jarima
     status: Mapped[str] = mapped_column(String(10), default="yigilmoqda")  # yigilmoqda | tolandi | ushlandi
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Achievement(Base):
+    """O'quvchi yutug'i (sertifikat, OTM, maktab, olimpiada) — hujjat bilan, rahbar tasdig'idan keyin."""
+    __tablename__ = "achievements"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("students.id"))
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))
+    teacher_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    kind: Mapped[str] = mapped_column(String(20))
+    level: Mapped[str | None] = mapped_column(String(20))
+    detail: Mapped[str | None] = mapped_column(String(200))
+    region: Mapped[str | None] = mapped_column(String(80))
+    file_id: Mapped[str | None] = mapped_column(String(200))
+    points: Mapped[int] = mapped_column(Integer, default=0)
+    year: Mapped[str] = mapped_column(String(9))                 # o'quv yili: "2026-2027"
+    status: Mapped[str] = mapped_column(String(10), default="kutilmoqda")   # kutilmoqda | tasdiq | rad
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

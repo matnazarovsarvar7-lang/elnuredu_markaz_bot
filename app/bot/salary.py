@@ -213,8 +213,16 @@ async def year_prizes(s, month: str, prs: list[Payroll]) -> list[str]:
     rows = (await s.execute(select(BonusLedger).where(BonusLedger.month.in_(months),
                                                       BonusLedger.role != "qoldiq"))).scalars().all()
     score: dict[tuple[int, str], list[int]] = {}
+    extra: dict[int, int] = {}
     for r in rows:
+        if r.role == "yutuq":
+            extra[r.staff_id] = extra.get(r.staff_id, 0) + r.points
+            continue
         score.setdefault((r.staff_id, r.role), []).append(r.points)
+    for (sid, role), v in score.items():          # yutuq ballari o'qituvchilik natijasiga qo'shiladi
+        if role == "oqituvchi" and sid in extra:
+            v.append(0)
+            v[-1] = extra.pop(sid)
     ranked = sorted(((sum(v) / (PR.MX * len(v)), -sum(1 for x in v if x < 0), k) for k, v in score.items()
                      if len(v) >= 8), reverse=True)
     people = len({k[0] for k in score})
@@ -346,7 +354,7 @@ async def profit_report(s, month: str, final: bool = False) -> str:
         Expense.status == "tasdiq", Expense.date >= first, Expense.date < nxt).group_by(Expense.category))).all()
     expenses = sum(int(v) for _, v in exp_rows)
     bonus = int((await s.execute(select(func.coalesce(func.sum(BonusLedger.amount), 0)).where(
-        BonusLedger.month == month, BonusLedger.amount > 0))).scalar())
+        BonusLedger.month == month, BonusLedger.amount > 0, BonusLedger.role != "yutuq"))).scalar())
     pool = round(tushum * PR.BONUS_SHARE)
     before = tushum - teachers - okl - mol - rew - expenses
     after = before - bonus
