@@ -341,7 +341,10 @@ async def leave_save(c: CallbackQuery, bot: Bot) -> None:
 
 
 @router.callback_query(F.data.startswith("rf:"))
-async def refund(c: CallbackQuery) -> None:
+async def refund(c: CallbackQuery, state: FSMContext) -> None:
+    from app.bot.pin import need_pin
+    if not c.data.startswith("rf:0") and await need_pin(c, state):
+        return
     _, eid, amount = c.data.split(":")
     if eid == "0":
         await c.message.edit_text(c.message.html_text + "\n\n❌ Qaytarilmaydi.")

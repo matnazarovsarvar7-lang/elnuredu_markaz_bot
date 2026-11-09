@@ -68,6 +68,7 @@ async def settings_menu(m: Message, state: FSMContext) -> None:
         [IB(text=f"👁 Admin qarzdorlarni ko'radi: {'HA' if on else 'YO`Q'}", callback_data="set:admdebt")],
         [IB(text="💳 Kichik kassa (shu oy)", callback_data="set:petty")],
         [IB(text="📐 Moliya foizi va doimiy xarajatlar", callback_data="set:nums")],
+        [IB(text="🔐 PIN-kod (pul amallari)", callback_data="set:pin")],
     ])
     await m.answer("🛠 <b>Sozlamalar</b>\nHar bir o'zgarish kiritilgan paytdan kuchga kiradi va tarixga yoziladi.",
                    reply_markup=kb)
@@ -284,7 +285,7 @@ ACTIONS = {
     "chegirma": "chegirma berdi", "otaona_tel": "ota-ona raqamini qo'shdi", "oquvchi_tel": "o'quvchi raqamini o'zgartirdi",
     "guruh_vaqt": "dars vaqtini o'zgartirdi", "guruh_kunlar": "dars kunlarini o'zgartirdi",
     "xodim_qoshish": "xodim qo'shdi", "xodim_chiqarish": "xodimni chiqardi", "oylik_shart": "oylik shartini o'zgartirdi",
-    "coin_qoida": "coin qoidasini o'zgartirdi", "narx_toifa": "narx toifasini o'zgartirdi", "sozlama": "sozlamani o'zgartirdi",
+    "coin_qoida": "coin qoidasini o'zgartirdi", "narx_toifa": "narx toifasini o'zgartirdi", "sozlama": "sozlamani o'zgartirdi", "pin": "PIN-kodni o'rnatdi",
     "vazifa_berildi": "vazifa berdi", "vazifa_bajarildi": "vazifani bajardi", "davomat": "davomat oldi",
     "vazifa": "vazifa natijalarini kiritdi", "kelmadi_sabab": "kelmaganlik sababini yozdi", "import": "ma'lumot yukladi",
     "ariza": "ariza holatini belgiladi", "royxat": "yangi o'quvchini ro'yxatga oldi",
@@ -298,7 +299,7 @@ ACTIONS = {
     "guruh_toxtadi": "guruhni to'xtatdi", "kassa_yopish": "kassani yopdi", "kassa_qaror": "kassa farqi bo'yicha qaror qildi",
     "inkassatsiya": "kassani topshirdi", "market_buyurtma": "marketdan buyurtma berdi", "xarajat": "xarajat kiritdi", "xarajat_qaror": "xarajatni hal qildi",
     "kichik_kassa": "kichik kassani belgiladi", "xizmat_sotuv": "xizmat sotdi", "xizmat_narx": "xizmat qo'shdi",
-    "avans_sorov": "avans so'radi", "yutuq": "yutuq kiritdi", "yutuq_qaror": "yutuqni hal qildi", "sozlama": "sozlamani o'zgartirdi", "avans_qaror": "avansni hal qildi", "oylik_berildi": "oylik berdi",
+    "avans_sorov": "avans so'radi", "yutuq": "yutuq kiritdi", "yutuq_qaror": "yutuqni hal qildi", "sozlama": "sozlamani o'zgartirdi", "pin": "PIN-kodni o'rnatdi", "avans_qaror": "avansni hal qildi", "oylik_berildi": "oylik berdi",
     "market_tasdiq": "buyurtmani tasdiqladi", "market_rad": "buyurtmani rad etdi", "market_sovga": "sovg'ani o'zgartirdi", "inkassatsiya_qaror": "topshirishni tasdiqladi", "yuklash": "yordamchiga ish yukladi", "uy_vazifa_yoq": "«bugun vazifa yo'q» deb belgiladi",
 }
 HIDE = {"davomat", "vazifa"}  # kundalik ko'p yozuvlar — tarixda ko'rsatilmaydi

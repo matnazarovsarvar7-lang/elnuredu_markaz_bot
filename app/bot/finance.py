@@ -173,7 +173,10 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
 
 
 @router.callback_query(F.data.startswith(("xy:", "xn:")))
-async def exp_decide(c: CallbackQuery, bot: Bot) -> None:
+async def exp_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
+    from app.bot.pin import need_pin
+    if c.data.startswith("xy:") and await need_pin(c, state):
+        return
     kind, eid = c.data.split(":")
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)

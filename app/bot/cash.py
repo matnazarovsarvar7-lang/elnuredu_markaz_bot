@@ -142,7 +142,10 @@ async def close_save(m: Message, state: FSMContext, bot: Bot) -> None:
 
 
 @router.callback_query(F.data.startswith("cf:"))
-async def close_decide(c: CallbackQuery, bot: Bot) -> None:
+async def close_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
+    from app.bot.pin import need_pin
+    if await need_pin(c, state):
+        return
     _, cid, act = c.data.split(":")
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
@@ -249,7 +252,10 @@ async def _ho_save(msg: Message, state: FSMContext, bot: Bot, tg: int, to: str, 
 
 
 @router.callback_query(F.data.startswith(("hoy:", "hon:")))
-async def ho_decide(c: CallbackQuery, bot: Bot) -> None:
+async def ho_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
+    from app.bot.pin import need_pin
+    if await need_pin(c, state):
+        return
     kind, hid = c.data.split(":")
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)

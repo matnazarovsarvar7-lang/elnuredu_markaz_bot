@@ -21,6 +21,7 @@ from app.bot.market import router as market_router
 from app.bot.finance import router as finance_router
 from app.bot.salary import router as salary_router
 from app.bot.achieve import router as achieve_router
+from app.bot.pin import router as pin_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -55,6 +56,7 @@ async def main() -> None:
     top = Router()
     top.message.register(start_handler, CommandStart())
     dp.include_router(top)
+    dp.include_router(pin_router)
     dp.include_router(pay_router)
     dp.include_router(manage_router)
     dp.include_router(leads_router)
