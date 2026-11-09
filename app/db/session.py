@@ -46,3 +46,35 @@ async def init_db() -> None:
                 await conn.execute(text(sql))
         except Exception:
             pass  # ustun allaqachon bor
+    # Qisqa matn ustunlarini kengaytirish (Postgres uzunlikni qat'iy tekshiradi)
+    if engine.dialect.name == "postgresql":
+        async with engine.begin() as conn:
+            rows = (await conn.execute(text(
+                "SELECT table_name, column_name FROM information_schema.columns "
+                "WHERE table_schema = current_schema() AND data_type = 'character varying' "
+                "AND character_maximum_length < 20"))).all()
+        for tname, cname in rows:
+            try:
+                async with engine.begin() as conn:
+                    await conn.execute(text(
+                        f'ALTER TABLE "{tname}" ALTER COLUMN "{cname}" TYPE VARCHAR(20)'))
+            except Exception:
+                pass
+    await _one_time_fixes()
+
+
+async def _one_time_fixes() -> None:
+    """Rahbar qarorlarini bir marta qo'llash (keyin rahbar sozlamadan o'zgartirsa — qayta tegilmaydi)."""
+    from sqlalchemy import select
+    from app.db.models import Setting, Staff
+    async with Session() as s:
+        if await s.get(Setting, "fix_2026_11_pay"):
+            return
+        for st in (await s.execute(select(Staff))).scalars():
+            roles = (st.roles or "").split(",")
+            if "moliya" in roles and st.oklad:
+                st.oklad = 0            # moliya bo'limi okladi o'rniga barcha tushumning 2%
+            if "rahbar" in roles and st.percent == 70:
+                st.percent = 50         # rahbarning o'qituvchilik ulushi 50%
+        s.add(Setting(key="fix_2026_11_pay", value={"done": True}))
+        await s.commit()

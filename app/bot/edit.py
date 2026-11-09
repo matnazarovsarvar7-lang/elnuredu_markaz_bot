@@ -123,6 +123,7 @@ async def group_days(c: CallbackQuery) -> None:
     gid = int(c.data.split(":")[1])
     kb = IM(inline_keyboard=[[IB(text=v, callback_data=f"gds:{gid}:{k}")] for k, v in DAYS.items()])
     await c.message.edit_reply_markup(reply_markup=kb)
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("gds:"))
@@ -244,6 +245,7 @@ async def disc_pick_enr(c: CallbackQuery) -> None:
         enrs = await S.student_enrollments(s, sid)
     kb = IM(inline_keyboard=[[IB(text=e.group.name, callback_data=f"sde:{e.id}")] for e in enrs])
     await c.message.edit_reply_markup(reply_markup=kb)
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("sde:"))
@@ -257,6 +259,7 @@ async def disc_kind(c: CallbackQuery) -> None:
             return
     kb = IM(inline_keyboard=[[IB(text=v, callback_data=f"sdk:{eid}:{k}")] for k, v in DISC.items()])
     await c.message.edit_reply_markup(reply_markup=kb)
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("sdk:"))
@@ -337,14 +340,35 @@ async def staff_add_set(m: Message, state: FSMContext) -> None:
 
 
 @router.callback_query(F.data.startswith("sfo:"))
+async def staff_off_ask(c: CallbackQuery) -> None:
+    sid = int(c.data.split(":")[1])
+    async with Session() as s:
+        st = await s.get(Staff, sid)
+    await c.answer()
+    await c.message.answer(
+        f"⚠️ <b>{st.full_name}</b> botdan chiqarilsinmi? U endi botga kira olmaydi.",
+        reply_markup=IM(inline_keyboard=[[IB(text="✅ Ha, chiqarish", callback_data=f"sfy:{sid}"),
+                                          IB(text="❌ Yo'q", callback_data="sfn")]]))
+
+
+@router.callback_query(F.data == "sfn")
+async def staff_off_no(c: CallbackQuery) -> None:
+    await c.answer("Bekor qilindi")
+    await c.message.edit_text("Bekor qilindi.")
+
+
+@router.callback_query(F.data.startswith("sfy:"))
 async def staff_off(c: CallbackQuery, bot: Bot) -> None:
     sid = int(c.data.split(":")[1])
     async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        if not who.staff or who.staff.current_role != "rahbar":
+            await c.answer("Ruxsat yo'q", show_alert=True)
+            return
         st = await s.get(Staff, sid)
         st.active = False
         tg = st.tg_id
         st.tg_id = None
-        who = await S.who_by_tg(s, c.from_user.id)
         await S.audit(s, who.staff, "xodim_chiqarish", name=st.full_name)
         await s.commit()
     await c.answer(f"{st.full_name} botdan chiqarildi", show_alert=True)

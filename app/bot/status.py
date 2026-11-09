@@ -246,6 +246,9 @@ async def fz_return(c: CallbackQuery, bot: Bot) -> None:
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
         f = await s.get(Freeze, int(c.data.split(":")[1]))
+        if not who.staff or not f:
+            await c.answer("Ruxsat yo'q yoki allaqachon hal qilingan.", show_alert=True)
+            return
         e = await s.get(Enrollment, f.enrollment_id, options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])
         new_end = t - timedelta(days=1)
         if new_end < f.start:
@@ -320,7 +323,7 @@ async def leave_save(c: CallbackQuery, bot: Bot) -> None:
         fam = await _family(s, e.student_id)
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         teacher = await s.get(Staff, e.group.teacher_id) if e.group.teacher_id else None
-        name, gname, refund, sid = e.student.full_name, e.group.name, st.paid - st.payable, e.student_id
+        name, gname, refund = e.student.full_name, e.group.name, st.paid - st.payable
     await c.message.edit_text(f"✅ {name} «{gname}» guruhidan chiqarildi ({t:%d.%m.%Y}). Coinlari va tarixi saqlanadi.")
     for x in fam:
         await send(bot, x, f"{name} «{gname}» guruhidagi o'qishini yakunladi. Biz bilan o'qiganingiz uchun rahmat! "

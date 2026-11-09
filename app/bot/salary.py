@@ -9,6 +9,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton as IB, InlineKeyboardMarkup as IM, Message
 from sqlalchemy import func, select
+import logging
 
 from app.bot import keyboards as K
 from app.bot.notify import send
@@ -18,6 +19,7 @@ from app.db.session import Session
 from app import payroll as PR
 from app import services as S
 
+log = logging.getLogger(__name__)
 router = Router()
 TZ = ZoneInfo(settings.timezone)
 SPLIT = {"ehson": 0.05, "yostiq": 0.20, "rivoj": 0.25, "egasi": 0.50}
@@ -202,9 +204,11 @@ async def got_money(c: CallbackQuery) -> None:
 
 # ================= oyni yopish (so'nggi kun 14:00) =================
 async def payroll_job(bot: Bot) -> None:
+    """Har soatda tekshiradi: yopilish vaqti o'tgan, lekin hali yopilmagan oy bo'lsa — yopadi
+    (bot 14:00 da ishlamay qolgan bo'lsa ham keyinroq yopiladi)."""
     n = now()
     cm = PR.close_moment(n.year, n.month)
-    if n.date() != cm.date():
+    if n.replace(tzinfo=None) < cm:
         return
     await close_and_report(bot, f"{n:%Y-%m}")
 
@@ -249,12 +253,21 @@ async def year_prizes(s, month: str, prs: list[Payroll]) -> list[str]:
 
 async def close_and_report(bot: Bot, month: str) -> None:
     async with Session() as s:
+        done = await s.get(Setting, f"closed_{month}")
+        if done:                       # oy bir marta yopiladi (fondlar ikki marta yozilmasin)
+            log.warning("Oy %s allaqachon yopilgan", month)
+            return
+        s.add(Setting(key=f"closed_{month}", value={"at": f"{now():%Y-%m-%d %H:%M}"}))
         prs = await PR.close_month(s, month)
         rep = await profit_report(s, month, final=True)
         if month.endswith("-06"):
             winners = await year_prizes(s, month, prs)
             if winners:
                 rep += "\n\n🏆 <b>Yil g'oliblari</b>\n" + "\n".join(winners)
+        fines = sum(pr.penalty or 0 for pr in prs)
+        if fines:                      # oylikdan ushlangan jarimalar yillik fondga
+            await _fund_add(s, "yillik", fines)
+            rep += f"\n\nUshlangan jarimalar yillik fondga: {S.fmt_som(fines)}"
         await s.commit()
         slips = []
         for pr in prs:

@@ -212,7 +212,7 @@ async def _confirm(msg: Message, state: FSMContext, join: date) -> None:
         fee = (await S.get_tier_prices(s, join.year, join.month))[tier]
     first = first_month_due(fee, join, g.days)
     deadline = new_student_deadline(max(join, t), g.days)
-    lines = [f"<b>Tekshiring:</b>", f"O'quvchi: {name}"]
+    lines = ["<b>Tekshiring:</b>", f"O'quvchi: {name}"]
     if not d.get("sid"):
         grade = d["grade"]
         lines += [f"Sinf: {grade if grade <= 11 else 'bitirgan'}", f"Ota-ona tel: {d['phone']}"]

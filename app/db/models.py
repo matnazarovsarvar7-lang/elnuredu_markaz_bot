@@ -23,11 +23,11 @@ class Staff(Base):
     tg_id: Mapped[int | None] = mapped_column(BigInteger, unique=True)
     roles: Mapped[str] = mapped_column(String(120), default="")  # "rahbar,oqituvchi"
     current_role: Mapped[str | None] = mapped_column(String(20))
-    pay_type: Mapped[str | None] = mapped_column(String(10))     # foiz | fiksal | ikkalasi
+    pay_type: Mapped[str | None] = mapped_column(String(20))     # foiz | fiksal | ikkalasi
     percent: Mapped[int | None] = mapped_column(Integer)
     oklad: Mapped[int | None] = mapped_column(Integer)
     birth: Mapped[date | None] = mapped_column(Date)
-    gender: Mapped[str | None] = mapped_column(String(6))
+    gender: Mapped[str | None] = mapped_column(String(20))
     active: Mapped[bool] = mapped_column(Boolean, default=True)
 
     def role_list(self) -> list[str]:
@@ -42,7 +42,7 @@ class Group(Base):
     teacher_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     assistant_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     delegated: Mapped[dict] = mapped_column(JSON, default=dict)  # {"attendance": true, ...}
-    days: Mapped[str] = mapped_column(String(6), default="toq")  # toq | juft | har
+    days: Mapped[str] = mapped_column(String(20), default="toq")  # toq | juft | har
     start_time: Mapped[time | None] = mapped_column(Time)
     end_time: Mapped[time | None] = mapped_column(Time)
     room: Mapped[str | None] = mapped_column(String(30))
@@ -58,12 +58,12 @@ class Student(Base):
     tier: Mapped[int] = mapped_column(Integer, default=2)        # 1=200k, 2=300k, 3=350k
     grade: Mapped[int | None] = mapped_column(Integer)
     birth: Mapped[date | None] = mapped_column(Date)
-    gender: Mapped[str | None] = mapped_column(String(6))
+    gender: Mapped[str | None] = mapped_column(String(20))
     school: Mapped[str | None] = mapped_column(String(60))
     region: Mapped[str | None] = mapped_column(String(80))             # viloyat, tuman
     phone: Mapped[str | None] = mapped_column(String(20))
     tg_id: Mapped[int | None] = mapped_column(BigInteger)
-    status: Mapped[str] = mapped_column(String(10), default="faol")  # faol | muzlatilgan | ketgan
+    status: Mapped[str] = mapped_column(String(20), default="faol")  # faol | muzlatilgan | ketgan
     coins: Mapped[int] = mapped_column(Integer, default=0)
     source: Mapped[str | None] = mapped_column(String(60))
     opening_balance: Mapped[int | None] = mapped_column(Integer)   # eski tizimdagi balans (ma'lumot uchun)
@@ -81,7 +81,7 @@ class Parent(Base):
     full_name: Mapped[str | None] = mapped_column(String(120))
     phone: Mapped[str] = mapped_column(String(20), unique=True)
     tg_id: Mapped[int | None] = mapped_column(BigInteger)
-    lang: Mapped[str] = mapped_column(String(5), default="uz")
+    lang: Mapped[str] = mapped_column(String(20), default="uz")
     bot_blocked_at: Mapped[datetime | None] = mapped_column(DateTime)
     children: Mapped[list[Student]] = relationship(secondary="student_parents", back_populates="parents")
 
@@ -103,7 +103,7 @@ class Enrollment(Base):
     registered_at: Mapped[date] = mapped_column(Date)
     price_override: Mapped[int | None] = mapped_column(Integer)   # faqat istisno narx
     tier: Mapped[int | None] = mapped_column(Integer)             # 1/2/3 — narx toifadan (tarix bilan)
-    discount_kind: Mapped[str] = mapped_column(String(10), default="none")
+    discount_kind: Mapped[str] = mapped_column(String(20), default="none")
     discount_percent: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     left_date: Mapped[date | None] = mapped_column(Date)
@@ -121,13 +121,13 @@ class Lesson(Base):
     homework_text: Mapped[str | None] = mapped_column(Text)
     no_homework_reason: Mapped[str | None] = mapped_column(String(200))
     homework_file_id: Mapped[str | None] = mapped_column(String(200))
-    homework_file_kind: Mapped[str | None] = mapped_column(String(10))   # photo | doc
+    homework_file_kind: Mapped[str | None] = mapped_column(String(20))   # photo | doc
     homework_at: Mapped[datetime | None] = mapped_column(DateTime)      # vazifa (yoki "yo'q") kiritilgan vaqt
     homework_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     ended_at: Mapped[datetime | None] = mapped_column(DateTime)         # "Dars tugadi" bosilgan vaqt
     cancelled: Mapped[bool] = mapped_column(Boolean, default=False)
     cancel_reason: Mapped[str | None] = mapped_column(String(200))
-    cancel_status: Mapped[str | None] = mapped_column(String(10))      # sorov | tasdiq | rad
+    cancel_status: Mapped[str | None] = mapped_column(String(20))      # sorov | tasdiq | rad
     makeup_date: Mapped[date | None] = mapped_column(Date)             # bekor darsning o'rniga
     extra: Mapped[bool] = mapped_column(Boolean, default=False)        # qo'shimcha (o'rniga) dars
     makeup_penalized: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -139,8 +139,8 @@ class Attendance(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     lesson_id: Mapped[int] = mapped_column(ForeignKey("lessons.id"))
     enrollment_id: Mapped[int] = mapped_column(ForeignKey("enrollments.id"))
-    mark: Mapped[str | None] = mapped_column(String(1))       # k | l | y
-    homework: Mapped[str | None] = mapped_column(String(4))   # done | part | none
+    mark: Mapped[str | None] = mapped_column(String(20))       # k | l | y
+    homework: Mapped[str | None] = mapped_column(String(20))   # done | part | none
     grade: Mapped[str | None] = mapped_column(String(20))
     absence_reason: Mapped[str | None] = mapped_column(String(120))
 
@@ -149,10 +149,10 @@ class Payment(Base):
     __tablename__ = "payments"
     id: Mapped[int] = mapped_column(primary_key=True)
     enrollment_id: Mapped[int] = mapped_column(ForeignKey("enrollments.id"))
-    month: Mapped[str] = mapped_column(String(7))            # "2026-12"
+    month: Mapped[str] = mapped_column(String(20))            # "2026-12"
     amount: Mapped[int] = mapped_column(Integer)
-    method: Mapped[str] = mapped_column(String(5))           # naqd | karta | ijtimoiy
-    status: Mapped[str] = mapped_column(String(10), default="tasdiq")  # kutilmoqda | tasdiq | rad
+    method: Mapped[str] = mapped_column(String(20))           # naqd | karta | ijtimoiy
+    status: Mapped[str] = mapped_column(String(20), default="tasdiq")  # kutilmoqda | tasdiq | rad
     paid_date: Mapped[date] = mapped_column(Date)
     receipt_file_id: Mapped[str | None] = mapped_column(String(200))
     receipt_hash: Mapped[str | None] = mapped_column(String(64))
@@ -168,7 +168,7 @@ class CoinTx(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"))
     amount: Mapped[int] = mapped_column(Integer)
-    kind: Mapped[str] = mapped_column(String(12))   # davomat | vazifa | tolov | bonus | qolda | market
+    kind: Mapped[str] = mapped_column(String(20))   # davomat | vazifa | tolov | bonus | qolda | market
     reason: Mapped[str] = mapped_column(String(200))
     by_staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -198,14 +198,14 @@ class Task(Base):
     created_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     text: Mapped[str] = mapped_column(Text)
     due: Mapped[date] = mapped_column(Date)
-    status: Mapped[str] = mapped_column(String(10), default="ochiq")   # ochiq | bajarildi | bekor
+    status: Mapped[str] = mapped_column(String(20), default="ochiq")   # ochiq | bajarildi | bekor
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
     done_note: Mapped[str | None] = mapped_column(Text)
     overdue_notified: Mapped[bool] = mapped_column(Boolean, default=False)
     file_id: Mapped[str | None] = mapped_column(String(200))
-    file_kind: Mapped[str | None] = mapped_column(String(10))      # photo | doc
+    file_kind: Mapped[str | None] = mapped_column(String(20))      # photo | doc
     done_file_id: Mapped[str | None] = mapped_column(String(200))
-    done_file_kind: Mapped[str | None] = mapped_column(String(10))
+    done_file_kind: Mapped[str | None] = mapped_column(String(20))
     recurring_id: Mapped[int | None] = mapped_column(ForeignKey("recurring_tasks.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -217,7 +217,7 @@ class RecurringTask(Base):
     staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
     created_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     text: Mapped[str] = mapped_column(Text)
-    kind: Mapped[str] = mapped_column(String(8))        # weekly | monthly
+    kind: Mapped[str] = mapped_column(String(20))        # weekly | monthly
     day: Mapped[int] = mapped_column(Integer)           # haftada: 0=Du..6=Ya; oyda: 1..28
     due_days: Mapped[int] = mapped_column(Integer, default=0)
     active: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -233,7 +233,7 @@ class Lead(Base):
     child_name: Mapped[str] = mapped_column(String(120))
     subject: Mapped[str | None] = mapped_column(String(60))
     note: Mapped[str | None] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(12), default="yangi")  # yangi | boglanildi | oquvchi | rad
+    status: Mapped[str] = mapped_column(String(20), default="yangi")  # yangi | boglanildi | oquvchi | rad
     handled_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -247,10 +247,10 @@ class Exam(Base):
     week: Mapped[date] = mapped_column(Date)                      # haftaning dushanbasi
     slot: Mapped[int] = mapped_column(Integer, default=1)         # 1 yoki 2
     conductor_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
-    kind: Mapped[str | None] = mapped_column(String(10))          # internet | yozma | test
+    kind: Mapped[str | None] = mapped_column(String(20))          # internet | yozma | test
     max_score: Mapped[float | None] = mapped_column(Float)
     topic: Mapped[str | None] = mapped_column(String(200))
-    status: Mapped[str] = mapped_column(String(10), default="reja")  # reja | otdi | otkazilmadi
+    status: Mapped[str] = mapped_column(String(20), default="reja")  # reja | otdi | otkazilmadi
     moved_note: Mapped[str | None] = mapped_column(String(200))
     monthly: Mapped[bool] = mapped_column(Boolean, default=False)
     test_id: Mapped[int | None] = mapped_column(Integer)
@@ -278,7 +278,7 @@ class Appeal(Base):
     from_tg: Mapped[int] = mapped_column(BigInteger)
     question_no: Mapped[int | None] = mapped_column(Integer)
     text: Mapped[str] = mapped_column(Text)
-    status: Mapped[str] = mapped_column(String(10), default="yangi")  # yangi | qabul | rad
+    status: Mapped[str] = mapped_column(String(20), default="yangi")  # yangi | qabul | rad
     reply: Mapped[str | None] = mapped_column(Text)
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -301,7 +301,7 @@ class StaffPoint(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
     points: Mapped[int] = mapped_column(Integer)
-    role: Mapped[str | None] = mapped_column(String(12))
+    role: Mapped[str | None] = mapped_column(String(20))
     reason: Mapped[str] = mapped_column(String(200))
     date: Mapped[date] = mapped_column(Date)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -319,8 +319,8 @@ class Test(Base):
     common: Mapped[int] = mapped_column(Integer, default=0)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     photos: Mapped[list] = mapped_column(JSON, default=list)          # so'rov rasmlari (file_id)
-    status: Mapped[str] = mapped_column(String(12), default="sorov")  # sorov | korib | qaytarildi | tasdiq
-    source: Mapped[str] = mapped_column(String(10), default="rahbar") # rahbar | oqituvchi
+    status: Mapped[str] = mapped_column(String(20), default="sorov")  # sorov | korib | qaytarildi | tasdiq
+    source: Mapped[str] = mapped_column(String(20), default="rahbar") # rahbar | oqituvchi
     version: Mapped[int] = mapped_column(Integer, default=0)
     requested_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     uploaded_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
@@ -335,12 +335,12 @@ class TestQuestion(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     test_id: Mapped[int] = mapped_column(ForeignKey("tests.id"))
     qid: Mapped[int] = mapped_column(Integer)
-    variant: Mapped[str] = mapped_column(String(8))
-    level: Mapped[str] = mapped_column(String(8))
+    variant: Mapped[str] = mapped_column(String(20))
+    level: Mapped[str] = mapped_column(String(20))
     source: Mapped[str | None] = mapped_column(String(120))
     text: Mapped[str] = mapped_column(Text)
     options: Mapped[list] = mapped_column(JSON)
-    answer: Mapped[str] = mapped_column(String(1))
+    answer: Mapped[str] = mapped_column(String(20))
 
 
 class TestPaper(Base):
@@ -349,8 +349,8 @@ class TestPaper(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     test_id: Mapped[int] = mapped_column(ForeignKey("tests.id"))
     enrollment_id: Mapped[int] = mapped_column(ForeignKey("enrollments.id"))
-    code: Mapped[str] = mapped_column(String(16))
-    variant: Mapped[str] = mapped_column(String(1))
+    code: Mapped[str] = mapped_column(String(20))
+    variant: Mapped[str] = mapped_column(String(20))
     qids: Mapped[list] = mapped_column(JSON)
     perms: Mapped[list] = mapped_column(JSON)
     key: Mapped[str] = mapped_column(String(100))
@@ -370,7 +370,7 @@ class Freeze(Base):
     start: Mapped[date] = mapped_column(Date)
     end: Mapped[date] = mapped_column(Date)
     reason: Mapped[str | None] = mapped_column(String(200))
-    recalc: Mapped[str] = mapped_column(String(12), default="auto")   # auto | kutilmoqda | tasdiq | rad
+    recalc: Mapped[str] = mapped_column(String(20), default="auto")   # auto | kutilmoqda | tasdiq | rad
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -383,7 +383,7 @@ class CashClose(Base):
     expected: Mapped[int] = mapped_column(Integer)
     counted: Mapped[int] = mapped_column(Integer)
     diff: Mapped[int] = mapped_column(Integer)
-    status: Mapped[str] = mapped_column(String(10))        # boshlang | mos | farq
+    status: Mapped[str] = mapped_column(String(20))        # boshlang | mos | farq
     decision: Mapped[str | None] = mapped_column(String(20))
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -394,8 +394,8 @@ class CashHandover(Base):
     __tablename__ = "cash_handovers"
     id: Mapped[int] = mapped_column(primary_key=True)
     amount: Mapped[int] = mapped_column(Integer)
-    to_kind: Mapped[str] = mapped_column(String(8))         # rahbar | bank
-    status: Mapped[str] = mapped_column(String(10), default="kutilmoqda")  # kutilmoqda | tasdiq | rad
+    to_kind: Mapped[str] = mapped_column(String(20))         # rahbar | bank
+    status: Mapped[str] = mapped_column(String(20), default="kutilmoqda")  # kutilmoqda | tasdiq | rad
     receipt_file_id: Mapped[str | None] = mapped_column(String(200))
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
@@ -420,7 +420,7 @@ class Order(Base):
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"))
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id"))
     coins: Mapped[int] = mapped_column(Integer)
-    status: Mapped[str] = mapped_column(String(12), default="band")   # band | tasdiq | rad | topshirildi
+    status: Mapped[str] = mapped_column(String(20), default="band")   # band | tasdiq | rad | topshirildi
     from_tg: Mapped[int | None] = mapped_column(BigInteger)
     reason: Mapped[str | None] = mapped_column(String(200))
     decided_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
@@ -448,9 +448,9 @@ class Expense(Base):
     category: Mapped[str] = mapped_column(String(40))
     amount: Mapped[int] = mapped_column(Integer)
     note: Mapped[str | None] = mapped_column(String(300))
-    method: Mapped[str] = mapped_column(String(6), default="naqd")    # naqd | karta | bank
-    source: Mapped[str] = mapped_column(String(8), default="kichik")  # kichik | asosiy
-    status: Mapped[str] = mapped_column(String(10), default="tasdiq") # kutilmoqda | tasdiq | rad
+    method: Mapped[str] = mapped_column(String(20), default="naqd")    # naqd | karta | bank
+    source: Mapped[str] = mapped_column(String(20), default="kichik")  # kichik | asosiy
+    status: Mapped[str] = mapped_column(String(20), default="tasdiq") # kutilmoqda | tasdiq | rad
     receipt_file_id: Mapped[str | None] = mapped_column(String(200))
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
@@ -462,7 +462,7 @@ class Service(Base):
     __tablename__ = "services"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
-    kind: Mapped[str] = mapped_column(String(8))                 # kitob | printer | boshqa
+    kind: Mapped[str] = mapped_column(String(20))                 # kitob | printer | boshqa
     price: Mapped[int] = mapped_column(Integer)                  # sotuv narxi (so'm)
     cost: Mapped[int] = mapped_column(Integer, default=0)        # tannarx (so'm)
     stock: Mapped[int | None] = mapped_column(Integer)           # kitob uchun
@@ -476,8 +476,8 @@ class ServiceSale(Base):
     qty: Mapped[int] = mapped_column(Integer, default=1)
     amount: Mapped[int] = mapped_column(Integer)
     profit: Mapped[int] = mapped_column(Integer, default=0)
-    method: Mapped[str] = mapped_column(String(6), default="naqd")   # naqd | karta
-    status: Mapped[str] = mapped_column(String(8), default="tasdiq") # tasdiq | bekor
+    method: Mapped[str] = mapped_column(String(20), default="naqd")   # naqd | karta
+    status: Mapped[str] = mapped_column(String(20), default="tasdiq") # tasdiq | bekor
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -495,11 +495,11 @@ class Payout(Base):
     __tablename__ = "payouts"
     id: Mapped[int] = mapped_column(primary_key=True)
     staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
-    month: Mapped[str] = mapped_column(String(7))
-    kind: Mapped[str] = mapped_column(String(8))                     # avans | oylik
+    month: Mapped[str] = mapped_column(String(20))
+    kind: Mapped[str] = mapped_column(String(20))                     # avans | oylik
     amount: Mapped[int] = mapped_column(Integer)
-    method: Mapped[str] = mapped_column(String(6), default="naqd")
-    status: Mapped[str] = mapped_column(String(10), default="kutilmoqda")  # kutilmoqda | tasdiq | berildi | olindi | rad
+    method: Mapped[str] = mapped_column(String(20), default="naqd")
+    status: Mapped[str] = mapped_column(String(20), default="kutilmoqda")  # kutilmoqda | tasdiq | berildi | olindi | rad
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     given_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -512,7 +512,7 @@ class Payroll(Base):
     __table_args__ = (UniqueConstraint("staff_id", "month"),)
     id: Mapped[int] = mapped_column(primary_key=True)
     staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
-    month: Mapped[str] = mapped_column(String(7))
+    month: Mapped[str] = mapped_column(String(20))
     lines: Mapped[list] = mapped_column(JSON, default=list)          # [[nomi, summa], ...]
     gross: Mapped[int] = mapped_column(Integer, default=0)
     avans: Mapped[int] = mapped_column(Integer, default=0)
@@ -527,12 +527,12 @@ class BonusLedger(Base):
     __tablename__ = "bonus_ledger"
     id: Mapped[int] = mapped_column(primary_key=True)
     staff_id: Mapped[int] = mapped_column(ForeignKey("staff.id"))
-    month: Mapped[str] = mapped_column(String(7))
-    role: Mapped[str] = mapped_column(String(12))
+    month: Mapped[str] = mapped_column(String(20))
+    role: Mapped[str] = mapped_column(String(20))
     points: Mapped[int] = mapped_column(Integer)
     value: Mapped[int] = mapped_column(Integer)                      # 1 ball narxi
     amount: Mapped[int] = mapped_column(Integer)                     # + bonus / − jarima
-    status: Mapped[str] = mapped_column(String(10), default="yigilmoqda")  # yigilmoqda | tolandi | ushlandi
+    status: Mapped[str] = mapped_column(String(20), default="yigilmoqda")  # yigilmoqda | tolandi | ushlandi
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -549,8 +549,8 @@ class Achievement(Base):
     region: Mapped[str | None] = mapped_column(String(80))
     file_id: Mapped[str | None] = mapped_column(String(200))
     points: Mapped[int] = mapped_column(Integer, default=0)
-    year: Mapped[str] = mapped_column(String(9))                 # o'quv yili: "2026-2027"
-    status: Mapped[str] = mapped_column(String(10), default="kutilmoqda")   # kutilmoqda | tasdiq | rad
+    year: Mapped[str] = mapped_column(String(20))                 # o'quv yili: "2026-2027"
+    status: Mapped[str] = mapped_column(String(20), default="kutilmoqda")   # kutilmoqda | tasdiq | rad
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
@@ -560,7 +560,7 @@ class PrinterUse(Base):
     """Bepul (ichki) chop etish: test varaqlari, markaz hujjatlari, o'qituvchi hujjatlari, texnik xato/isrof."""
     __tablename__ = "printer_uses"
     id: Mapped[int] = mapped_column(primary_key=True)
-    category: Mapped[str] = mapped_column(String(10))            # test | markaz | oqituvchi | isrof
+    category: Mapped[str] = mapped_column(String(20))            # test | markaz | oqituvchi | isrof
     pages: Mapped[int] = mapped_column(Integer)
     note: Mapped[str | None] = mapped_column(String(200))
     staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))   # kimning hujjati (o'qituvchi)
@@ -574,7 +574,7 @@ class SurveyAnswer(Base):
     __tablename__ = "survey_answers"
     __table_args__ = (UniqueConstraint("month", "student_id", "group_id"),)
     id: Mapped[int] = mapped_column(primary_key=True)
-    month: Mapped[str] = mapped_column(String(7))
+    month: Mapped[str] = mapped_column(String(20))
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"))
     group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"))
     teacher_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))

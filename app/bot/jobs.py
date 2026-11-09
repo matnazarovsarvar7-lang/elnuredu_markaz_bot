@@ -130,7 +130,7 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     sch.add_job(close_reminder, "cron", hour=19, minute=30, args=[bot])
     from app.bot.salary import payroll_job, negative_notice
     from app.bot.finance import petty_reminder, printer_reminder
-    sch.add_job(payroll_job, "cron", hour=14, minute=1, args=[bot])
+    sch.add_job(payroll_job, "cron", minute=1, args=[bot])
     sch.add_job(negative_notice, "cron", day=25, hour=10, minute=15, args=[bot])
     sch.add_job(petty_reminder, "cron", day=1, hour=9, minute=0, args=[bot])
     sch.add_job(printer_reminder, "cron", day_of_week="mon", hour=10, minute=5, args=[bot])

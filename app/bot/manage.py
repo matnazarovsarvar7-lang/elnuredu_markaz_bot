@@ -169,6 +169,7 @@ async def pay_type_pick(c: CallbackQuery) -> None:
     sid = int(c.data.split(":")[1])
     await c.message.edit_reply_markup(reply_markup=IM(
         inline_keyboard=[[IB(text=v, callback_data=f"spts:{sid}:{k}")] for k, v in PAY_TYPES.items()]))
+    await c.answer()
 
 
 @router.callback_query(F.data.startswith("spts:"))

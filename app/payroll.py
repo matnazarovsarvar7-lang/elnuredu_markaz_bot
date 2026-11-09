@@ -289,7 +289,10 @@ async def close_month(s, month: str) -> list[Payroll]:
     slots = role_slots(staff)
     value = int(tushum * BONUS_SHARE / (MX * max(1, len(slots)))) if slots else 0
     # ballar -> daftar
-    await s.execute(BonusLedger.__table__.delete().where(BonusLedger.month == month, BonusLedger.status == "yigilmoqda"))
+    # faqat shu oyning rol ballari qayta yoziladi (yutuq va o'tgan oydan qolgan qoldiq saqlanadi)
+    await s.execute(BonusLedger.__table__.delete().where(
+        BonusLedger.month == month, BonusLedger.status == "yigilmoqda",
+        BonusLedger.role.notin_(("yutuq", "qoldiq"))))
     for st, r in slots:
         pts, _ = await kpi_points(s, st, r, month)
         s.add(BonusLedger(staff_id=st.id, month=month, role=r, points=pts, value=value, amount=pts * value))
