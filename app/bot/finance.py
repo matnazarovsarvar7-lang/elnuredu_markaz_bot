@@ -13,7 +13,7 @@ from sqlalchemy import func, select
 from app.bot import keyboards as K
 from app.bot.notify import send, send_photo
 from app.config import settings
-from app.db.models import Expense, PrinterCount, Service, ServiceSale, Setting, Staff, StaffPoint
+from app.db.models import Expense, PrinterCount, PrinterUse, Service, ServiceSale, Setting, Staff, StaffPoint
 from app.db.session import Session
 from app import services as S
 
@@ -268,11 +268,13 @@ async def svc_menu(m: Message) -> None:
     rows = [[IB(text=f"{'📕' if v.kind == 'kitob' else '🖨' if v.kind == 'printer' else '🧩'} {v.name} — "
                      f"{S.fmt_som(v.price)}" + (f" · {v.stock} ta" if v.kind == "kitob" else ""),
                 callback_data=f"sv:{v.id}")] for v in svcs]
+    rows.append([IB(text="🖨 Ichki chop etish (bepul)", callback_data="pu")])
     rows.append([IB(text="🖨 Printer hisoblagichi", callback_data="svp")])
     if who.staff.current_role == "rahbar":
         rows.append([IB(text="➕ Xizmat/kitob qo'shish", callback_data="svn")])
-    await m.answer("🛒 <b>Pullik xizmatlar</b>\nSotuvni kiritish uchun xizmatni tanlang. (Xizmatlar o'quvchi hisobiga "
-                   "yozilmaydi va qarzga sotilmaydi.)", reply_markup=IM(inline_keyboard=rows))
+    await m.answer("🛒 <b>Xizmatlar</b>\n• Pullik sotuv — xizmatni tanlang (o'quvchi hisobiga yozilmaydi, qarzga "
+                   "sotilmaydi).\n• Pul olinmaydigan chop etish (test, markaz va o'qituvchi hujjatlari, texnik isrof) — "
+                   "«🖨 Ichki chop etish».", reply_markup=IM(inline_keyboard=rows))
 
 
 @router.callback_query(F.data.startswith("sv:"))
@@ -377,24 +379,102 @@ async def printer_save(m: Message, state: FSMContext, bot: Bot) -> None:
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
         prev = (await s.execute(select(PrinterCount).order_by(PrinterCount.id.desc()))).scalars().first()
+        if prev and cnt < prev.counter:
+            await m.answer(f"Oldingi ko'rsatkich {prev.counter} edi — kichik raqam bo'lishi mumkin emas. Qayta yozing.")
+            return
         s.add(PrinterCount(counter=cnt, by_id=who.staff.id))
-        sold = 0
-        if prev:
-            sold = int((await s.execute(select(func.coalesce(func.sum(ServiceSale.qty), 0)).join(
-                Service, Service.id == ServiceSale.service_id).where(Service.kind == "printer",
-                ServiceSale.status == "tasdiq", ServiceSale.created_at >= prev.created_at))).scalar())
+        rep = await printer_summary(s, prev.created_at if prev else None) if prev else None
         await s.commit()
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
     if not prev:
-        await m.answer("✅ Boshlang'ich ko'rsatkich qayd etildi.")
+        await m.answer("✅ Boshlang'ich ko'rsatkich qayd etildi. Keyingi haftadan bot solishtiradi.")
         return
     printed = cnt - prev.counter
-    diff = printed - sold
-    await m.answer(f"✅ Qayd etildi. Shu davrda chop etilgan: {printed}, sotuvda kiritilgan: {sold}.")
-    if printed > 0 and abs(diff) > printed * 0.10:
-        for b in bosses:
-            await send(bot, b, f"🖨 <b>Printer farqi</b>: hisoblagich bo'yicha {printed} sahifa, sotuvda {sold} "
-                               f"(farq {diff}, {abs(diff) / printed * 100:.0f}%).")
+    paid, internal, by_cat = rep
+    diff = printed - paid - internal
+    text = (f"🖨 <b>Printer · haftalik solishtirish</b>\nHisoblagich bo'yicha: {printed} sahifa\n"
+            f"• Pullik (sotuvda): {paid}\n• Ichki (bepul): {internal}\n"
+            + "".join(f"   – {PU_CATS[k]}: {v}\n" for k, v in by_cat.items() if v)
+            + f"Hisobsiz farq: <b>{diff}</b>" + (f" ({abs(diff) / printed * 100:.0f}%)" if printed else ""))
+    waste = by_cat.get("isrof", 0)
+    alert = printed > 0 and (abs(diff) > printed * 0.10 or waste > printed * 0.05)
+    await m.answer("✅ Qayd etildi." + (" ⚠️ Farq bor — rahbarga yuborildi." if alert else ""))
+    for b in bosses:
+        await send(bot, b, text + ("\n⚠️ Farq 10% dan oshdi!" if printed and abs(diff) > printed * 0.10 else "")
+                   + ("\n⚠️ Isrof 5% dan oshdi!" if printed and waste > printed * 0.05 else ""))
+
+
+PU_CATS = {"test": "Test va nazorat varaqlari", "markaz": "Markaz hujjatlari", "oqituvchi": "O'qituvchilar uchun hujjatlar",
+           "isrof": "Texnik xato / isrof"}
+
+
+async def printer_summary(s, since: datetime) -> tuple[int, int, dict[str, int]]:
+    paid = int((await s.execute(select(func.coalesce(func.sum(ServiceSale.qty), 0)).join(
+        Service, Service.id == ServiceSale.service_id).where(Service.kind == "printer", ServiceSale.status == "tasdiq",
+                                                             ServiceSale.created_at >= since))).scalar())
+    rows = (await s.execute(select(PrinterUse.category, func.sum(PrinterUse.pages)).where(
+        PrinterUse.created_at >= since).group_by(PrinterUse.category))).all()
+    by_cat = {k: int(v) for k, v in rows}
+    return paid, sum(by_cat.values()), by_cat
+
+
+class Pu(StatesGroup):
+    pages = State()
+    note = State()
+
+
+@router.callback_query(F.data == "pu")
+async def pu_start(c: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await c.answer()
+    await c.message.answer("🖨 Ichki (bepul) chop etish — turini tanlang:", reply_markup=IM(inline_keyboard=[
+        [IB(text=v, callback_data=f"puc:{k}")] for k, v in PU_CATS.items()]))
+
+
+@router.callback_query(F.data.startswith("puc:"))
+async def pu_cat(c: CallbackQuery, state: FSMContext) -> None:
+    cat = c.data.split(":")[1]
+    await state.update_data(cat=cat)
+    if cat == "oqituvchi":
+        async with Session() as s:
+            ts = [x for x in (await s.execute(select(Staff).where(Staff.active).order_by(Staff.full_name))).scalars()
+                  if any(r in (x.roles or "") for r in ("oqituvchi", "yordamchi"))]
+        await c.message.edit_text("Kim uchun?", reply_markup=IM(inline_keyboard=[
+            [IB(text=x.full_name, callback_data=f"put:{x.id}")] for x in ts]))
+        return
+    await state.set_state(Pu.pages)
+    await c.message.edit_text(f"{PU_CATS[cat]}: necha sahifa?")
+
+
+@router.callback_query(F.data.startswith("put:"))
+async def pu_teacher(c: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(staff=int(c.data.split(":")[1]))
+    await state.set_state(Pu.pages)
+    await c.message.edit_text("Necha sahifa?")
+
+
+@router.message(Pu.pages)
+async def pu_pages(m: Message, state: FSMContext) -> None:
+    if not (m.text or "").strip().isdigit() or int(m.text) <= 0:
+        await m.answer("Sahifalar sonini yozing: 12")
+        return
+    await state.update_data(pages=int(m.text))
+    await state.set_state(Pu.note)
+    d = await state.get_data()
+    await m.answer("Qisqa izoh (nima chop etildi" + (", nima sababdan isrof bo'ldi" if d["cat"] == "isrof" else "") + "):")
+
+
+@router.message(Pu.note)
+async def pu_save(m: Message, state: FSMContext) -> None:
+    d = await state.get_data()
+    await state.clear()
+    async with Session() as s:
+        who = await S.who_by_tg(s, m.from_user.id)
+        s.add(PrinterUse(category=d["cat"], pages=d["pages"], note=(m.text or "").strip()[:200], staff_id=d.get("staff"),
+                         by_id=who.staff.id))
+        await S.audit(s, who.staff, "printer_ichki", category=d["cat"], pages=d["pages"])
+        await s.commit()
+    await m.answer(f"✅ Qayd etildi: {PU_CATS[d['cat']]} — {d['pages']} sahifa (pul olinmaydi).")
 
 
 async def printer_reminder(bot: Bot) -> None:

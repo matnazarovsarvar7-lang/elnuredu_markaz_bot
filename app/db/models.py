@@ -550,3 +550,16 @@ class Achievement(Base):
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PrinterUse(Base):
+    """Bepul (ichki) chop etish: test varaqlari, markaz hujjatlari, o'qituvchi hujjatlari, texnik xato/isrof."""
+    __tablename__ = "printer_uses"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    category: Mapped[str] = mapped_column(String(10))            # test | markaz | oqituvchi | isrof
+    pages: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str | None] = mapped_column(String(200))
+    staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))   # kimning hujjati (o'qituvchi)
+    test_id: Mapped[int | None] = mapped_column(Integer)
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

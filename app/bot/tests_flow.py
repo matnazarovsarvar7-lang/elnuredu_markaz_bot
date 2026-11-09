@@ -487,6 +487,11 @@ async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
         return
     b_pdf = SH.booklets_pdf(booklets, settings.center_name)
     a_pdf = SH.answer_sheets_pdf(sheets_, settings.center_name)
+    pages = sum(x.count(b"/Type /Page") - x.count(b"/Type /Pages") for x in (b_pdf, a_pdf))
+    async with Session() as s:
+        t = await s.get(Test, tid)
+        t.meta = {**(t.meta or {}), "pages": pages}
+        await s.commit()
     cap = (f"🖨 <b>Chop etish: {g.name}</b> · nazorat {day:%d.%m}\n{len(booklets)} ta o'quvchi · "
            f"{t.n_questions} savol\n1) Savollar varaqlari  2) Javob varaqlari (skaner uchun — 100% masshtabda, "
            "bir tomonlama chop eting). Chop etib, o'qituvchiga bering.")
@@ -507,12 +512,19 @@ async def printed(c: CallbackQuery, bot: Bot) -> None:
     tid = int(c.data.split(":")[1])
     async with Session() as s:
         t = await s.get(Test, tid)
+        if t.printed_at:
+            await c.answer("Allaqachon belgilangan.")
+            return
         t.printed_at = now().replace(tzinfo=None)
         g = await s.get(Group, t.group_id)
+        from app.db.models import PrinterUse
+        who = await S.who_by_tg(s, c.from_user.id)
+        s.add(PrinterUse(category="test", pages=int((t.meta or {}).get("pages", 0)), note=f"Test #{tid} · {g.name}",
+                         test_id=tid, by_id=who.staff.id if who.staff else None))
         ex = await s.get(Exam, t.exam_id) if t.exam_id else None
         cond = await s.get(Staff, ex.conductor_id) if ex and ex.conductor_id else None
         await s.commit()
-    await c.answer("Belgilandi")
+    await c.answer("Belgilandi (test varaqlari printerda bepul chop etish sifatida qayd etildi)")
     await c.message.edit_reply_markup(reply_markup=None)
     if cond and cond.tg_id:
         await send(bot, cond.tg_id, f"🖨 «{g.name}» nazorati uchun varaqlar chop etildi — admindan olib keting.")
