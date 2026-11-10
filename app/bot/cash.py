@@ -342,30 +342,103 @@ async def social_job(bot: Bot | None = None) -> int:
 
 
 # ================= 🔔 Dars tugadi =================
+DZ_SEL: dict[tuple[int, int], set[int]] = {}
+
+
+async def _present(s, lid: int) -> list[tuple[Attendance, str]]:
+    rows = (await s.execute(select(Attendance, Student.full_name).join(Enrollment, Enrollment.id == Attendance.enrollment_id)
+                            .join(Student, Student.id == Enrollment.student_id)
+                            .where(Attendance.lesson_id == lid, Attendance.mark != "y")
+                            .order_by(Student.full_name))).all()
+    return [(a, n) for a, n in rows]
+
+
 @router.callback_query(F.data.startswith("dz:"))
-async def lesson_end(c: CallbackQuery, bot: Bot) -> None:
+async def lesson_end(c: CallbackQuery) -> None:
     lid = int(c.data.split(":")[1])
-    n = now()
     async with Session() as s:
         les = await s.get(Lesson, lid)
-        if les.ended_at:
-            await c.answer(f"Allaqachon belgilangan: {les.ended_at:%H:%M}", show_alert=True)
-            return
+        rows = await _present(s, lid)
+    left = [(a, n) for a, n in rows if not a.left_at]
+    if not rows:
+        await c.answer("Avval davomatni oling.", show_alert=True)
+        return
+    if not left:
+        await c.answer(f"Hamma o'quvchi uchun xabar yuborilgan ({les.ended_at:%H:%M})." if les.ended_at
+                       else "Hamma uchun xabar yuborilgan.", show_alert=True)
+        return
+    done = len(rows) - len(left)
+    await c.answer()
+    await c.message.answer("🔔 Dars tugadi — kimlar chiqdi?" + (f"\n({done} ta o'quvchi uchun avval yuborilgan)" if done else ""),
+                           reply_markup=IM(inline_keyboard=[
+                               [IB(text=f"🔔 Hammasi chiqdi ({len(left)} ta)", callback_data=f"dza:{lid}")],
+                               [IB(text="✅ Tanlab belgilash (bir qismi chiqdi)", callback_data=f"dzp:{lid}")]]))
+
+
+def _dz_kb(lid: int, left, sel: set[int]) -> IM:
+    kb = [[IB(text=f"{'✅' if a.id in sel else '▫️'} {n}", callback_data=f"dzt:{lid}:{a.id}")] for a, n in left]
+    kb.append([IB(text=f"🔔 Tanlanganlarga xabar ({len(sel)} ta)", callback_data=f"dzk:{lid}")])
+    return IM(inline_keyboard=kb)
+
+
+@router.callback_query(F.data.startswith("dzp:"))
+async def lesson_end_pick(c: CallbackQuery) -> None:
+    lid = int(c.data.split(":")[1])
+    async with Session() as s:
+        left = [(a, n) for a, n in await _present(s, lid) if not a.left_at]
+    DZ_SEL[(c.from_user.id, lid)] = set()
+    await c.answer()
+    await c.message.edit_text("Darsdan chiqqan o'quvchilarni belgilang:", reply_markup=_dz_kb(lid, left, set()))
+
+
+@router.callback_query(F.data.startswith("dzt:"))
+async def lesson_end_toggle(c: CallbackQuery) -> None:
+    _, lid, aid = c.data.split(":")
+    key = (c.from_user.id, int(lid))
+    if key not in DZ_SEL:
+        await c.answer("Qaytadan oching.", show_alert=True)
+        return
+    DZ_SEL[key] ^= {int(aid)}
+    async with Session() as s:
+        left = [(a, n) for a, n in await _present(s, int(lid)) if not a.left_at]
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=_dz_kb(int(lid), left, DZ_SEL[key]))
+
+
+@router.callback_query(F.data.startswith(("dza:", "dzk:")))
+async def lesson_end_send(c: CallbackQuery, bot: Bot) -> None:
+    kind, lid = c.data.split(":")
+    lid = int(lid)
+    n = now()
+    sel = DZ_SEL.pop((c.from_user.id, lid), set()) if kind == "dzk" else None
+    if kind == "dzk" and not sel:
+        await c.answer("Kamida bitta o'quvchini belgilang.", show_alert=True)
+        return
+    async with Session() as s:
+        les = await s.get(Lesson, lid)
         g = await s.get(Group, les.group_id)
-        les.ended_at = n.replace(tzinfo=None)
-        present = (await s.execute(select(Attendance).where(Attendance.lesson_id == lid,
-                                                            Attendance.mark != "y"))).scalars().all()
+        rows = await _present(s, lid)
         msgs = []
-        for a in present:
+        for a, _ in rows:
+            if a.left_at or (sel is not None and a.id not in sel):
+                continue
+            a.left_at = n.replace(tzinfo=None)
             e = await s.get(Enrollment, a.enrollment_id, options=[selectinload(Enrollment.student)])
             for t in await S.parent_tg_ids(s, e.student_id):
                 msgs.append((t, f"🔔 {e.student.full_name}: «{g.name}» darsi {n:%H:%M} da tugadi, uyga chiqdi."))
+        rest = sum(1 for a, _ in rows if not a.left_at)
+        if not rest and not les.ended_at:            # hamma chiqdi — dars yakunlandi
+            les.ended_at = n.replace(tzinfo=None)
         await s.commit()
-        early = g.end_time and (datetime.combine(n.date(), g.end_time, TZ) - n) > timedelta(minutes=EARLY_MIN)
+        early = (not rest) and g.end_time and (datetime.combine(n.date(), g.end_time, TZ) - n) > timedelta(minutes=EARLY_MIN)
     await c.answer("Ota-onalarga xabar yuborildi")
-    await c.message.answer(f"🔔 Dars tugadi ({n:%H:%M}). {len(msgs)} ta ota-onaga xabar yuborildi."
-                           + (f"\n⚠️ Jadvaldagidan {EARLY_MIN} daqiqadan ko'proq oldin tugadi — rahbar hisobotida "
-                              "ko'rinadi." if early else ""))
+    await c.message.edit_text(f"🔔 {n:%H:%M}: {len(msgs)} ta ota-onaga «uyga chiqdi» xabari yuborildi."
+                              + (f"\nHali darsda: {rest} ta o'quvchi — chiqqanda yana «🔔 Dars tugadi» ni bosing." if rest else
+                                 "\nDars yakunlandi ✅")
+                              + (f"\n⚠️ Jadvaldagidan {EARLY_MIN} daqiqadan ko'proq oldin tugadi — rahbar hisobotida "
+                                 "ko'rinadi." if early else ""),
+                              reply_markup=IM(inline_keyboard=[[IB(text="🔔 Qolganlar ham chiqdi", callback_data=f"dz:{lid}")]])
+                              if rest else None)
     for t, text in msgs:
         await send(bot, t, text)
 

@@ -30,6 +30,7 @@ MIGRATIONS = [
     "ALTER TABLE tests ADD COLUMN students JSON",
     "ALTER TABLE enrollments ADD COLUMN discount_amount INTEGER",
     "ALTER TABLE lessons ADD COLUMN homework_parts JSON",
+    "ALTER TABLE attendance ADD COLUMN left_at TIMESTAMP",
     "ALTER TABLE payments ADD COLUMN void_of INTEGER",
     "ALTER TABLE payments ADD COLUMN void_reason VARCHAR(300)",
     "ALTER TABLE payments ADD COLUMN void_req_by INTEGER",

@@ -145,6 +145,7 @@ class Attendance(Base):
     homework: Mapped[str | None] = mapped_column(String(20))   # done | part | none
     grade: Mapped[str | None] = mapped_column(String(20))
     absence_reason: Mapped[str | None] = mapped_column(String(120))
+    left_at: Mapped[datetime | None] = mapped_column(DateTime)          # "dars tugadi, uyga chiqdi" xabari yuborilgan vaqt
 
 
 class Payment(Base):
