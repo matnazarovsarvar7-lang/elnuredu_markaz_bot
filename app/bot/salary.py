@@ -22,9 +22,7 @@ from app import services as S
 log = logging.getLogger(__name__)
 router = Router()
 TZ = ZoneInfo(settings.timezone)
-SPLIT = {"ehson": 0.05, "yostiq": 0.20, "rivoj": 0.25, "egasi": 0.50}
-FUND_NAMES = {"ehson": "Ehson", "yostiq": "Moliyaviy yostiq", "rivoj": "Rivojlanish va filial", "egasi": "Egasining daromadi",
-              "yillik": "Yillik bonus fondi"}
+from app.bot.funds import FUNDS as FUND_NAMES, SPLIT   # noqa: E402  (bitta joyda)
 PROFIT_MIN = 0.30
 
 
@@ -38,16 +36,9 @@ def _amount(text: str | None) -> int | None:
 
 
 async def _fund(s, key: str) -> int:
-    row = await s.get(Setting, f"fund_{key}")
-    return int((row.value or {}).get("v", 0)) if row else 0
-
-
-async def _fund_add(s, key: str, delta: int) -> None:
-    row = await s.get(Setting, f"fund_{key}")
-    if row:
-        row.value = {"v": int((row.value or {}).get("v", 0)) + delta}
-    else:
-        s.add(Setting(key=f"fund_{key}", value={"v": delta}))
+    """Fond qoldig'i — haqiqiy pul (oy yakuni taqsimotidan, app/bot/funds.py)."""
+    from app.bot.funds import balance
+    return await balance(s, key)
 
 
 # ================= 💰 Oyligim =================
@@ -357,7 +348,8 @@ async def year_prizes(s, month: str, prs: list[Payroll]) -> list[str]:
             pr.lines = pr.lines + [[f"🏆 Yil g'olibi ({len(out) + 1}-o'rin)", amt]]
             pr.net += amt
         out.append(f"{len(out) + 1}-o'rin: {st.full_name} ({S.ROLE_TITLES.get(role, role)}, {res * 100:.0f}%) — {S.fmt_som(amt)}")
-        await _fund_add(s, "yillik", -amt)
+        from app.bot.funds import fund_move     # mukofot oylik bilan beriladi: yillik fonddan oylik zaxirasiga
+        await fund_move(s, "yillik", "oylik", amt, f"Yil g'olibi: {st.full_name}")
     return out
 
 
@@ -375,9 +367,9 @@ async def close_and_report(bot: Bot, month: str) -> None:
             if winners:
                 rep += "\n\n🏆 <b>Yil g'oliblari</b>\n" + "\n".join(winners)
         fines = sum(pr.penalty or 0 for pr in prs)
-        if fines:                      # oylikdan ushlangan jarimalar yillik fondga
-            await _fund_add(s, "yillik", fines)
-            rep += f"\n\nUshlangan jarimalar yillik fondga: {S.fmt_som(fines)}"
+        if fines:                      # oylikdan ushlangan jarimalar yillik fondga (1-sanadagi taqsimotda)
+            rep += f"\n\nUshlangan jarimalar yillik fondga o'tadi: {S.fmt_som(fines)}"
+        rep += "\n\n🏦 Ertaga (1-sana) 09:10 da kassangizdagi pul fondlarga taqsimlanadi."
         await s.commit()
         slips = []
         for pr in prs:
@@ -418,7 +410,14 @@ async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     from app.bot.vault import boss_can_pay
     async with Session() as s:
         pr = await s.get(Payroll, int(c.data.split(":")[1]))
-        why = await boss_can_pay(s, pr.net) if pr else None
+        from_fund = bool(pr and await s.get(Setting, f"dist_{pr.month}"))
+        if from_fund:                  # oy taqsimlangan — oylik "Oylik zaxirasi" fondidan
+            from app.bot.funds import balance
+            fb = await balance(s, "oylik")
+            why = None if pr.net <= fb else (f"Oylik zaxirasida pul yetarli emas. Qoldiq: {S.fmt_som(fb)}, "
+                                             f"kerak: {S.fmt_som(pr.net)}. Fondlar → ➖ yoki kassadan to'ldiring.")
+        else:
+            why = await boss_can_pay(s, pr.net) if pr else None
     if why:
         await c.answer(why, show_alert=True)
         return
@@ -435,9 +434,14 @@ async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         if exists:
             await c.answer("Allaqachon berilgan.", show_alert=True)
             return
+        fund_paid = bool(await s.get(Setting, f"dist_{pr.month}"))
         p = Payout(staff_id=pr.staff_id, month=pr.month, kind="oylik", amount=pr.net, status="berildi",
-                   approved_by=who.staff.id, given_at=now().replace(tzinfo=None))
+                   approved_by=who.staff.id, given_at=now().replace(tzinfo=None), method="fond" if fund_paid else "naqd")
         s.add(p)
+        if fund_paid:
+            from app.bot.funds import fund_move
+            stf = await s.get(Staff, pr.staff_id)
+            await fund_move(s, "oylik", None, pr.net, f"Oylik {pr.month}: {stf.full_name}", who.staff.id)
         await s.flush()
         await S.audit(s, who.staff, "oylik_berildi", staff=pr.staff_id, amount=pr.net)
         await s.commit()
@@ -505,17 +509,11 @@ async def profit_report(s, month: str, final: bool = False) -> str:
     if tushum and pct < PROFIT_MIN * 100:
         lines.append(f"⚠️ Foyda {PROFIT_MIN * 100:.0f}% dan past!")
     if after > 0:
-        lines.append("")
+        lines += ["", "<i>Foyda bo'yicha ulushlar (hisob). Haqiqiy pul 1-sanada kassangizdagi qoldiqdan taqsimlanadi:</i>"]
         for k, share in SPLIT.items():
-            v = round(after * share)
-            lines.append(f"{FUND_NAMES[k]} ({share * 100:.0f}%): {S.fmt_som(v)}")
-            if final:
-                await _fund_add(s, k, v)
-    elif final:
-        lines.append("Zarar oyi: sof foyda taqsimlanmaydi, kamomad moliyaviy yostiqdan.")
-        await _fund_add(s, "yostiq", after)
-    if final:
-        await _fund_add(s, "yillik", max(0, pool - bonus))
+            lines.append(f"{FUND_NAMES[k]} ({share * 100:.0f}%): {S.fmt_som(round(after * share))}")
+    elif tushum:
+        lines.append("Zarar oyi: sof foyda yo'q — yetmagan pul moliyaviy yostiqdan olinadi.")
     # zararsizlik: 1 o'quvchi o'rtacha qancha qoldiradi
     per = (tushum - teachers) / max(1, (await _active_seats(s)))
     fixed = okl + expenses
@@ -523,7 +521,7 @@ async def profit_report(s, month: str, final: bool = False) -> str:
         lines.append(f"\nZararsizlik nuqtasi: ~{int(fixed / per) + 1} to'lovchi o'rin (hozir {await _active_seats(s)})")
     if final:
         lines += ["", "<b>Fondlar qoldig'i</b>"] + [f"{FUND_NAMES[k]}: {S.fmt_som(await _fund(s, k))}"
-                                                     for k in ("ehson", "yostiq", "rivoj", "yillik")]
+                                                     for k in FUND_NAMES]
     return "\n".join(lines)
 
 
@@ -542,7 +540,7 @@ async def report_view(m: Message) -> None:
         from app.bot.reports import payers_block, report_kb, today as _today
         payers = await payers_block(s, _today())
         text = await profit_report(s, PR.current_month(now()))
-        funds = [f"{FUND_NAMES[k]}: {S.fmt_som(await _fund(s, k))}" for k in ("ehson", "yostiq", "rivoj", "yillik")]
+        funds = [f"{FUND_NAMES[k]}: {S.fmt_som(await _fund(s, k))}" for k in FUND_NAMES]
         await s.rollback()
     full = payers + "\n\n" + text + "\n\n<b>Fondlar qoldig'i</b>\n" + "\n".join(funds)
     while len(full) > 3900:                       # uzun ro'yxat bo'lsa — bo'lib yuboriladi

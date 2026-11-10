@@ -350,7 +350,7 @@ async def cash_view(m: Message) -> None:
             Payment.method == "ijtimoiy", Payment.month == f"{t:%Y-%m}"))).scalar()
     from app.bot import vault as V
     async with Session() as s:
-        bi = await V.boss_info(s)
+        bi = await V.boss_month_info(s)
         pb = await V.petty_balance(s)
     lines = ["💼 <b>Kassalar</b>", ""]
     if bi:

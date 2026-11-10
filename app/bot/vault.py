@@ -39,24 +39,51 @@ async def _sum(s, q) -> int:
     return int((await s.execute(q)).scalar() or 0)
 
 
-async def boss_info(s) -> dict | None:
-    st = await start_at(s)
-    if st is None:
+async def boss_info(s, until: datetime | None = None, since: datetime | None = None) -> dict | None:
+    """Rahbar kassasi. until (UTC) — shu paytgacha bo'lgan holat (oy yakuni taqsimoti uchun).
+    since (UTC) — faqat shu paytdan keyingi harakatlar; "opening" — o'sha paytdagi qoldiq."""
+    st0 = await start_at(s)
+    if st0 is None:
         return None
-    moves = await _sum(s, select(func.coalesce(func.sum(KassaMove.amount), 0)).where(KassaMove.kassa == "rahbar"))
-    to_petty = -await _sum(s, select(func.coalesce(func.sum(KassaMove.amount), 0)).where(
-        KassaMove.kassa == "rahbar", KassaMove.kind == "kichikka"))
-    taken = -await _sum(s, select(func.coalesce(func.sum(KassaMove.amount), 0)).where(
-        KassaMove.kassa == "rahbar", KassaMove.kind.in_(("egasi", "fond", "chiqim"))))
-    other = moves + to_petty + taken          # ochilish, tuzatish, kirim
+    opening = 0
+    if since:
+        opening = (await boss_info(s, until=since))["balance"]
+    st = max(st0, since) if since else st0
+
+    def upto(col):
+        lo = col >= since if since else True
+        return (col < until) & lo if until and since else (col < until if until else lo)
+
+    async def moves(*kinds):
+        q = select(func.coalesce(func.sum(KassaMove.amount), 0)).where(KassaMove.kassa == "rahbar", upto(KassaMove.created_at))
+        if kinds:
+            q = q.where(KassaMove.kind.in_(kinds))
+        return await _sum(s, q)
+
+    total = await moves()
+    to_petty = -await moves("kichikka")
+    to_funds = -await moves("fond")
+    taken = -await moves("egasi", "chiqim")
+    other = total + to_petty + to_funds + taken          # ochilish, tuzatish, kirim
     hand = await _sum(s, select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
-        CashHandover.to_kind == "rahbar", CashHandover.status == "tasdiq", CashHandover.created_at >= st))
+        CashHandover.to_kind == "rahbar", CashHandover.status == "tasdiq", CashHandover.created_at >= st,
+        upto(CashHandover.created_at)))
     paid = await _sum(s, select(func.coalesce(func.sum(Payout.amount), 0)).where(
-        Payout.method == "naqd", Payout.status.in_(("berildi", "olindi")), Payout.given_at >= st + SHIFT))
+        Payout.method == "naqd", Payout.status.in_(("berildi", "olindi")), Payout.given_at >= st + SHIFT,
+        (Payout.given_at < until + SHIFT) if until else True))
     spent = await _sum(s, select(func.coalesce(func.sum(Expense.amount), 0)).where(
-        Expense.source == "asosiy", Expense.method == "naqd", Expense.status == "tasdiq", Expense.created_at >= st))
-    return {"start": st + SHIFT, "base": other, "hand": hand, "paid": paid, "spent": spent, "to_petty": to_petty,
-            "taken": taken, "balance": other + hand - paid - spent - to_petty - taken}
+        Expense.source == "asosiy", Expense.method == "naqd", Expense.status == "tasdiq", Expense.created_at >= st,
+        upto(Expense.created_at)))
+    return {"start": st + SHIFT, "since": since + SHIFT if since else None, "opening": opening, "base": other,
+            "hand": hand, "paid": paid, "spent": spent, "to_petty": to_petty, "to_funds": to_funds, "taken": taken,
+            "balance": opening + other + hand - paid - spent - to_petty - to_funds - taken}
+
+
+async def boss_month_info(s) -> dict | None:
+    """Kassa: oxirgi oy yakuni taqsimotidan keyingi harakatlar (oy boshidan)."""
+    last = (await s.execute(select(func.max(KassaMove.created_at)).where(
+        KassaMove.kassa == "rahbar", KassaMove.kind == "fond"))).scalar()
+    return await boss_info(s, since=last + timedelta(microseconds=1) if last else None)
 
 
 async def boss_balance(s) -> int | None:
@@ -85,16 +112,24 @@ async def boss_can_pay(s, amount: int) -> str | None:
 
 
 def boss_text(b: dict) -> str:
-    lines = [f"Ochilish/tuzatish/kirim: {S.fmt_som(b['base'])}",
-             f"+ Moliyadan qabul qilingan: {S.fmt_som(b['hand'])}"]
+    lines = []
+    if b.get("since"):
+        lines.append(f"Oy boshida (taqsimotdan keyin, {b['since']:%d.%m}): {S.fmt_som(b['opening'])}")
+        if b["base"]:
+            lines.append(f"+ Kirim/tuzatish: {S.fmt_som(b['base'])}")
+    else:
+        lines.append(f"Ochilish/tuzatish/kirim: {S.fmt_som(b['base'])}")
+    lines.append(f"+ Moliyadan qabul qilingan: {S.fmt_som(b['hand'])}")
     if b["paid"]:
         lines.append(f"− Oylik va avanslar: {S.fmt_som(b['paid'])}")
     if b["spent"]:
         lines.append(f"− Xarajatlar (sizning): {S.fmt_som(b['spent'])}")
     if b["to_petty"]:
         lines.append(f"− Kichik kassaga berilgan: {S.fmt_som(b['to_petty'])}")
+    if b["to_funds"]:
+        lines.append(f"− Oy yakunida fondlarga taqsimlangan: {S.fmt_som(b['to_funds'])}")
     if b["taken"]:
-        lines.append(f"− Egasi olgan / fondga / boshqa chiqim: {S.fmt_som(b['taken'])}")
+        lines.append(f"− Egasi olgan / boshqa chiqim: {S.fmt_som(b['taken'])}")
     lines.append(f"= <b>Qoldiq: {S.fmt_som(b['balance'])}</b>")
     return "\n".join(lines)
 
@@ -107,6 +142,7 @@ def kassa_kb(opened: bool) -> IM:
                                [IB(text="➕ Kassamga kirim", callback_data="kv:in"),
                                 IB(text="➖ Kassamdan chiqim", callback_data="kv:out")],
                                [IB(text="✏️ Qoldiqni tuzatish (sanab ko'rdim)", callback_data="kv:fix")],
+                               [IB(text="🏦 Fondlar", callback_data="fd")],
                                [IB(text="📋 Kassam harakatlari", callback_data="kv:list"),
                                 IB(text="📋 Naqd to'lovlar", callback_data="cnl")]])
 
@@ -318,7 +354,7 @@ async def kv_list(c: CallbackQuery) -> None:
         rows: list[tuple[datetime, str, int]] = []
         for x in (await s.execute(select(KassaMove).where(KassaMove.kassa == "rahbar"))).scalars():
             name = {"boshlang": "Ochilish", "tuzatish": "Tuzatish", "kirim": "Kirim", "chiqim": "Chiqim",
-                    "egasi": "Egasi oldi", "kichikka": "Kichik kassaga", "fond": "Fondga"}.get(x.kind, x.kind)
+                    "egasi": "Egasi oldi", "kichikka": "Kichik kassaga", "fond": "Fondlarga taqsimot"}.get(x.kind, x.kind)
             rows.append((x.created_at, name + (f" · {x.note}" if x.note and x.kind not in ("kichikka", "boshlang") else ""), x.amount))
         for h in (await s.execute(select(CashHandover).where(
                 CashHandover.to_kind == "rahbar", CashHandover.status == "tasdiq", CashHandover.created_at >= st))).scalars():

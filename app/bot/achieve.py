@@ -184,8 +184,8 @@ async def ac_decide(c: CallbackQuery, bot: Bot) -> None:
             if a.teacher_id and a.points and not finished:
                 s.add(BonusLedger(staff_id=a.teacher_id, month=f"{today():%Y-%m}", role="yutuq", points=a.points,
                                   value=BALL_SOM, amount=a.points * BALL_SOM))
-                from app.bot.salary import _fund_add
-                await _fund_add(s, "rivoj", -a.points * BALL_SOM)
+                from app.bot.funds import fund_move     # yutuq bali oylik bilan beriladi: rivojdan oylik zaxirasiga
+                await fund_move(s, "rivoj", "oylik", a.points * BALL_SOM, f"Yutuq bali: {stu.full_name}")
                 t = await s.get(Staff, a.teacher_id)
                 parts.append(f"{t.full_name}: +{a.points} ball ({S.fmt_som(a.points * BALL_SOM)})")
                 if t.tg_id:
@@ -198,7 +198,7 @@ async def ac_decide(c: CallbackQuery, bot: Bot) -> None:
                     for f in await S.staff_with_role(s, "moliya"):
                         s.add(BonusLedger(staff_id=f.id, month=f"{y}-{mth:02d}", role="yutuq", points=2, value=BALL_SOM,
                                           amount=2 * BALL_SOM))
-                        await _fund_add(s, "rivoj", -2 * BALL_SOM)
+                        await fund_move(s, "rivoj", "oylik", 2 * BALL_SOM, f"Yutuq (moliya): {stu.full_name}")
                         parts.append(f"{f.full_name}: +2 ball")
             elif finished:
                 parts.append("Xodimlarga ball yo'q (o'quvchi avval sertifikat bilan tugatgan)")
