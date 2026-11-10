@@ -33,15 +33,60 @@ class Hw(StatesGroup):
     text = State()
 
 
-def hw_for(les: Lesson, eid: int) -> tuple[str | None, str | None, str | None, str | None] | None:
-    """O'quvchining (enrollment) shu darsdagi vazifasi: (matn, fayl, fayl turi, kichik guruh nomi).
+def files_of(fid: str | None, kind: str | None, files: list | None = None) -> list[list[str]]:
+    """Vazifa fayllari ro'yxati [[turi, file_id], ...]. Eski yozuvlarda bitta fayl (fid, kind) bo'ladi."""
+    if files:
+        return [list(x) for x in files]
+    return [[kind or "photo", fid]] if fid else []
+
+
+def hw_for(les: Lesson, eid: int) -> tuple[str | None, list[list[str]], str | None] | None:
+    """O'quvchining (enrollment) shu darsdagi vazifasi: (matn, fayllar, kichik guruh nomi).
     Kichik guruhga alohida berilgan bo'lsa — o'sha, aks holda umumiy vazifa."""
     for i, p in enumerate(les.homework_parts or []):
         if eid in p.get("students", []):
-            return p.get("text"), p.get("fid"), p.get("kind"), p.get("title") or f"{i + 1}-kichik guruh"
-    if les.homework_text or les.homework_file_id:
-        return les.homework_text, les.homework_file_id, les.homework_file_kind, None
+            return (p.get("text"), files_of(p.get("fid"), p.get("kind"), p.get("files")),
+                    p.get("title") or f"{i + 1}-kichik guruh")
+    if les.homework_text or les.homework_file_id or les.homework_files:
+        return les.homework_text, files_of(les.homework_file_id, les.homework_file_kind, les.homework_files), None
     return None
+
+
+async def send_hw(bot: Bot, chat: int, text: str, files: list[list[str]]) -> bool:
+    """Vazifani yuboradi: matn + barcha rasmlar/fayllar. Bir nechta bo'lsa — albom (bitta to'plam) qilib."""
+    from aiogram.types import InputMediaDocument, InputMediaPhoto, InputMediaVideo
+    try:
+        if len(files) == 1:
+            k, f = files[0]
+            cap = text if len(text) <= 1024 else None
+            if k == "photo":
+                await bot.send_photo(chat, f, caption=cap)
+            elif k == "video":
+                await bot.send_video(chat, f, caption=cap)
+            else:
+                await bot.send_document(chat, f, caption=cap)
+            if cap is None:
+                await bot.send_message(chat, text)
+            return True
+        await bot.send_message(chat, text + (f"\n\n📎 {len(files)} ta rasm/fayl ⬇️" if files else ""))
+        media = [x for x in files if x[0] in ("photo", "video")]
+        docs = [x for x in files if x[0] not in ("photo", "video")]
+        for group in (media, docs):
+            for i in range(0, len(group), 10):   # Telegram albomida ko'pi bilan 10 ta
+                chunk = group[i:i + 10]
+                if len(chunk) == 1:
+                    k, f = chunk[0]
+                    await (bot.send_photo(chat, f) if k == "photo" else bot.send_video(chat, f) if k == "video"
+                           else bot.send_document(chat, f))
+                    continue
+                await bot.send_media_group(chat, [
+                    InputMediaPhoto(media=f) if k == "photo" else InputMediaVideo(media=f) if k == "video"
+                    else InputMediaDocument(media=f) for k, f in chunk])
+        return True
+    except Exception as ex:
+        if "forbidden" in str(ex).lower() or "blocked" in str(ex).lower():
+            await mark_blocked(bot, chat)
+        return False
 
 
 def _part_ids(les: Lesson) -> set[int]:
@@ -116,45 +161,103 @@ async def hw_write(c: CallbackQuery, state: FSMContext) -> None:
         les = await s.get(Lesson, lid)
     who_for = "<b>qolgan o'quvchilar</b> (alohida vazifa berilmaganlar) uchun " if les.homework_parts else ""
     await state.set_state(Hw.text)
-    await state.update_data(lid=lid, part=None)
+    await state.update_data(lid=lid, part=None, text=None, files=[], fid=None, kind=None)
+    BUF.pop(c.from_user.id, None)
     await c.answer()
-    await c.message.answer(f"Uy vazifasini {who_for}yozing. Rasm yoki fayl ham yuborish mumkin (izohiga matn yozing).\n"
+    await c.message.answer(f"Uy vazifasini {who_for}yozing. Bir nechta rasm yoki fayl ham yuborish mumkin — "
+                           "hammasi <b>bitta vazifa</b> bo'lib ketadi.\n"
                            "<i>Masalan: 45-bet, 3–7-misollar. Yangi so'zlarni yod olish.</i>\n\nBekor qilish: /start")
+
+
+# bir nechta rasm (albom) alohida-alohida xabar bo'lib keladi — ularni bitta vazifaga yig'amiz
+BUF: dict[int, dict] = {}
+WAIT = 1.5   # oxirgi rasm kelgandan keyin shuncha soniya kutib, bitta "Tekshiring" chiqaramiz
+MAX_FILES = 20
+
+
+def _preview_kb() -> IM:
+    return IM(inline_keyboard=[[IB(text="✅ Yuborish", callback_data="hwsend"),
+                                IB(text="✏️ Qayta yozish", callback_data="hwagain")]])
+
+
+async def _show_preview(uid: int, m: Message, state: FSMContext, token: int) -> None:
+    import asyncio
+    await asyncio.sleep(WAIT)
+    b = BUF.get(uid)
+    if not b or b["token"] != token:
+        return   # yangi rasm keldi — keyingisi chiqaradi
+    await state.update_data(text=b["text"], files=b["files"], fid=None, kind=None)
+    if b.get("msg"):
+        try:
+            await m.bot.delete_message(m.chat.id, b["msg"])
+        except Exception:
+            pass
+    n = len(b["files"])
+    ph = sum(1 for k, _ in b["files"] if k == "photo")
+    what = (f"\n📎 {n} ta fayl biriktirilgan" + (f" ({ph} ta rasm)" if ph and ph != n else "") if n else "")
+    tip = ("\n\n<i>Yana rasm/fayl yoki matn yuborsangiz — shu vazifaga qo'shiladi.</i>" if n < MAX_FILES else "")
+    sent = await m.answer(f"<b>Tekshiring:</b>\n\n{b['text'] or '(matnsiz, faqat fayl)'}{what}{tip}",
+                          reply_markup=_preview_kb())
+    b["msg"] = sent.message_id
 
 
 @router.message(Hw.text)
 async def hw_got(m: Message, state: FSMContext) -> None:
+    import asyncio
     text = (m.text or m.caption or "").strip()
     fid = kind = None
     if m.photo:
         fid, kind = m.photo[-1].file_id, "photo"
+    elif m.video:
+        fid, kind = m.video.file_id, "video"
     elif m.document:
         fid, kind = m.document.file_id, "doc"
     if not text and not fid:
         await m.answer("Vazifa matnini yozing yoki rasm/fayl yuboring.")
         return
-    if len(text) > 900:
-        await m.answer("Matn juda uzun (900 belgidan oshmasin). Qisqartirib yuboring.")
-        return
-    await state.update_data(text=text or None, fid=fid, kind=kind)
-    preview = text or "(matnsiz, faqat fayl)"
-    await m.answer(f"<b>Tekshiring:</b>\n\n{preview}" + ("\n📎 fayl biriktirilgan" if fid else ""),
-                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Yuborish", callback_data="hwsend"),
-                                                     IB(text="✏️ Qayta yozish", callback_data="hwagain")]]))
+    uid = m.from_user.id
+    b = BUF.setdefault(uid, {"text": None, "files": [], "raw": [], "token": 0, "msg": None})
+    if fid:
+        if len(b["files"]) >= MAX_FILES:
+            await m.answer(f"Ko'pi bilan {MAX_FILES} ta fayl. «✅ Yuborish» ni bosing.")
+            return
+        b["raw"].append((m.message_id, kind, fid))
+        b["files"] = [[k, f] for _, k, f in sorted(b["raw"])]   # albom tartibi saqlansin
+    if text:
+        new = f"{b['text']}\n{text}" if b["text"] and text not in b["text"] else (b["text"] or text)
+        if len(new) > 900:
+            await m.answer("Matn juda uzun (900 belgidan oshmasin). Qisqartirib yuboring.")
+            return
+        b["text"] = new
+    b["token"] += 1
+    asyncio.create_task(_show_preview(uid, m, state, b["token"]))
 
 
 @router.callback_query(F.data == "hwagain")
 async def hw_again(c: CallbackQuery, state: FSMContext) -> None:
+    d = await state.get_data()
+    if not d.get("lid"):
+        await c.answer("Ma'lumot eskirgan, qaytadan boshlang.", show_alert=True)
+        return
+    BUF.pop(c.from_user.id, None)
     await state.set_state(Hw.text)
-    await c.message.edit_text("Uy vazifasini qaytadan yozing:")
+    await state.update_data(text=None, files=[], fid=None, kind=None)
+    await c.message.edit_text("Uy vazifasini qaytadan yozing (rasmlar ham qaytadan yuboriladi):")
 
 
 @router.callback_query(F.data == "hwsend")
 async def hw_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     d = await state.get_data()
+    b = BUF.get(c.from_user.id)
     if not d.get("lid"):
-        await c.answer("Ma'lumot eskirgan, qaytadan boshlang.", show_alert=True)
+        await c.answer("Bu vazifa allaqachon yuborilgan yoki eskirgan.", show_alert=True)
         return
+    if b and b.get("msg") and b["msg"] != c.message.message_id:
+        await c.answer("Eng oxirgi «Tekshiring» xabaridagi tugmani bosing.", show_alert=True)
+        return
+    if b:   # kechikib kelgan rasmlar ham kirsin
+        d.update(text=b["text"], files=b["files"])
+    BUF.pop(c.from_user.id, None)
     await state.clear()
     if d.get("part"):
         await _send_part(c, bot, d)
@@ -163,8 +266,10 @@ async def hw_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         who = await S.who_by_tg(s, c.from_user.id)
         les = await s.get(Lesson, d["lid"])
         g = await s.get(Group, les.group_id)
-        resend = bool(les.homework_text or les.homework_file_id)
-        les.homework_text, les.homework_file_id, les.homework_file_kind = d.get("text"), d.get("fid"), d.get("kind")
+        resend = bool(les.homework_text or les.homework_file_id or les.homework_files)
+        files = files_of(d.get("fid"), d.get("kind"), d.get("files"))
+        les.homework_text, les.homework_files = d.get("text"), files or None
+        les.homework_file_id, les.homework_file_kind = (files[0][1], files[0][0]) if files else (None, None)
         les.no_homework_reason = None
         les.homework_at, les.homework_by = now().replace(tzinfo=None), who.staff.id if who.staff else None
         await S.audit(s, who.staff, "uy_vazifa", group=g.name, date=les.date.isoformat())
@@ -186,12 +291,14 @@ async def deliver(bot: Bot, lid: int, corrected: bool = False, part: int | None 
         if part is None:
             taken = _part_ids(les)
             roster = [e for e in roster if e.id not in taken]
-            text_, fid, kind, title = les.homework_text, les.homework_file_id, les.homework_file_kind, None
+            text_, title = les.homework_text, None
+            files = files_of(les.homework_file_id, les.homework_file_kind, les.homework_files)
         else:
             p = les.homework_parts[part]
             only = set(p["students"])
             roster = [e for e in roster if e.id in only]
-            text_, fid, kind, title = p.get("text"), p.get("fid"), p.get("kind"), p.get("title")
+            text_, title = p.get("text"), p.get("title")
+            files = files_of(p.get("fid"), p.get("kind"), p.get("files"))
         targets: dict[int, None] = {}
         missing = 0
         for e in roster:
@@ -207,19 +314,7 @@ async def deliver(bot: Bot, lid: int, corrected: bool = False, part: int | None 
             f"Keyingi dars: {nxt:%d.%m}{when}")
     sent = 0
     for t in targets:
-        if kind == "photo":
-            ok = await send_photo(bot, t, fid, text)
-        elif kind == "doc":
-            try:
-                await bot.send_document(t, fid, caption=text)
-                ok = True
-            except Exception as ex:  # bloklagan bo'lsa belgilaymiz
-                ok = False
-                if "forbidden" in str(ex).lower():
-                    await mark_blocked(bot, t)
-        else:
-            ok = await send(bot, t, text)
-        sent += ok
+        sent += await send_hw(bot, t, text, files)
     return sent, missing
 
 
@@ -280,7 +375,8 @@ async def part_go(c: CallbackQuery, state: FSMContext) -> None:
         return
     sel = [e for e in d["order"] if e in set(d["sel"])]
     await state.set_state(Hw.text)
-    await state.update_data(lid=lid, part=sel)
+    await state.update_data(lid=lid, part=sel, text=None, files=[], fid=None, kind=None)
+    BUF.pop(c.from_user.id, None)
     await c.answer()
     await c.message.edit_text(f"✅ {len(sel)} ta o'quvchi tanlandi.\nEndi ularga vazifani yozing "
                               "(rasm yoki fayl ham bo'ladi, izohiga matn yozing):")
@@ -297,7 +393,9 @@ async def _send_part(c: CallbackQuery, bot: Bot, d: dict) -> None:
         if not students:
             await c.message.edit_text("Bu o'quvchilarga allaqachon alohida vazifa berilgan.")
             return
-        parts.append({"students": students, "text": d.get("text"), "fid": d.get("fid"), "kind": d.get("kind"),
+        files = files_of(d.get("fid"), d.get("kind"), d.get("files"))
+        parts.append({"students": students, "text": d.get("text"), "files": files,
+                      "fid": files[0][1] if files else None, "kind": files[0][0] if files else None,
                       "title": f"{len(parts) + 1}-kichik guruh", "at": now().strftime("%Y-%m-%d %H:%M"),
                       "by": who.staff.id if who.staff else None})
         les.homework_parts = parts
@@ -308,7 +406,7 @@ async def _send_part(c: CallbackQuery, bot: Bot, d: dict) -> None:
         await s.commit()
         idx = len(parts) - 1
         rest = len([e for e in await S.group_roster(s, g.id, les.date) if e.id not in _part_ids(les)])
-        main_given = bool(les.homework_text or les.homework_file_id)
+        main_given = bool(les.homework_text or les.homework_file_id or les.homework_files)
     await c.message.edit_text("⏳ Yuborilmoqda...")
     sent, missing = await deliver(bot, d["lid"], part=idx)
     tail = ("" if main_given or not rest else
@@ -370,12 +468,10 @@ async def hw_view(m: Message, bot: Bot) -> None:
         elif not hw:
             await m.answer(f"{title} · {les.date:%d.%m}\nVazifa hali kiritilmagan.")
         else:
-            text_, fid, kind, part = hw
-            cap = f"{title} · {les.date:%d.%m}\n\n{text_ or ''}"
-            if kind == "photo":
-                await send_photo(bot, m.chat.id, fid, cap)
-            elif kind == "doc":
-                await bot.send_document(m.chat.id, fid, caption=cap)
+            text_, files, part = hw
+            cap = f"{title} · {les.date:%d.%m}" + (f" · {part}" if part else "") + f"\n\n{text_ or ''}"
+            if files:
+                await send_hw(bot, m.chat.id, cap, files)
             else:
                 await m.answer(cap)
 

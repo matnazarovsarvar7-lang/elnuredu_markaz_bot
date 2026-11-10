@@ -1130,6 +1130,9 @@ async def group_assistant_set(c: CallbackQuery, bot: Bot) -> None:
 
 
 # ================= 👥 o'quvchilar ro'yxati va Excel =================
+MONEY_ROLES = ("moliya", "rahbar")
+
+
 async def _list_role(tg: int) -> str | None:
     _, role = await _role(tg)
     return role if role in ("admin", "moliya", "rahbar") else None
@@ -1171,9 +1174,13 @@ async def group_students(c: CallbackQuery) -> None:
             mark = "❄️ muzlatilgan" if frozen else ("✅ to'lagan" if st.debt == 0 else f"qarz {S.fmt_som(st.debt)}")
             tail = labels[e.student_id].split("☎")[-1] if "☎" in labels[e.student_id] else ""
             rows.append((e.student_id, e.student.full_name, tail, mark, e.student.coins))
+    money = role in MONEY_ROLES   # to'lov holati faqat moliya va rahbarga ko'rinadi
     paid = sum(1 for r in rows if r[3].startswith("✅"))
-    lines = [f"👥 <b>{g.name}</b> — {len(rows)} ta o'quvchi (to'lagan {paid}, qarzdor {len(rows) - paid})", ""]
-    lines += [f"{i}. {n}" + (f" · ☎{tl}" if tl else "") + f" · {mk} · 🪙{cn}" for i, (_, n, tl, mk, cn) in enumerate(rows, 1)]
+    lines = [f"👥 <b>{g.name}</b> — {len(rows)} ta o'quvchi"
+             + (f" (to'lagan {paid}, qarzdor {len(rows) - paid})" if money else ""), ""]
+    lines += [f"{i}. {n}" + (f" · ☎{tl}" if tl else "")
+              + (f" · {mk}" if money else (" · ❄️ muzlatilgan" if mk.startswith("❄️") else "")) + f" · 🪙{cn}"
+              for i, (_, n, tl, mk, cn) in enumerate(rows, 1)]
     kb = [[IB(text=f"{i}. {n}", callback_data=f"st:{sid}")] for i, (sid, n, *_r) in enumerate(rows, 1)][:60]
     await c.answer()
     await c.message.answer("\n".join(lines) + "\n\nKartani ochish uchun pastdan tanlang:" if rows else
@@ -1182,7 +1189,8 @@ async def group_students(c: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "stx")
 async def students_excel(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
-    if not await _list_role(c.from_user.id):
+    role = await _list_role(c.from_user.id)
+    if not role:
         await c.answer("Ruxsat yo'q", show_alert=True)
         return
     await state.clear()
@@ -1222,7 +1230,10 @@ async def students_excel(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                    min((e.join_date for e, _ in parts), default=None), sum(st.payable for _, st in parts),
                    sum(st.paid for _, st in parts), sum(st.debt for _, st in parts),
                    "; ".join(f"{e.group.name}: {S.discount_label(e)}" for e, _ in parts if e.discount_kind != "none")])
-    for col in (11, 12, 13):
+    if role not in MONEY_ROLES:   # admin: pul ustunlarisiz (hisob, to'langan, qarz, chegirma)
+        ws.delete_cols(11, 4)
+        head = head[:10]
+    for col in ((11, 12, 13) if role in MONEY_ROLES else ()):
         for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
             for cell in row:
                 cell.number_format = "#,##0"
@@ -1236,4 +1247,5 @@ async def students_excel(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     buf = io.BytesIO()
     wb.save(buf)
     await bot.send_document(c.message.chat.id, BufferedInputFile(buf.getvalue(), f"ELNUR_oquvchilar_{t:%d.%m.%Y}.xlsx"),
-                            caption=f"📥 Barcha o'quvchilar: {len(studs)} ta. Filtr bilan guruh, qarz yoki sinf bo'yicha saralang.")
+                            caption=f"📥 Barcha o'quvchilar: {len(studs)} ta. Filtr bilan guruh"
+                            + (", qarz" if role in MONEY_ROLES else "") + " yoki sinf bo'yicha saralang.")
