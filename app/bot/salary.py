@@ -235,7 +235,7 @@ async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     if why:
         await c.answer(why, show_alert=True)
         return
-    if await need_pin(c, state):
+    if await need_pin(c, state, int(a)):
         return
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
@@ -265,8 +265,11 @@ async def av_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         if why:
             await c.answer(why, show_alert=True)
             return
-    if c.data.startswith("avy:") and await need_pin(c, state):
-        return
+    if c.data.startswith("avy:"):
+        async with Session() as s:
+            p0 = await s.get(Payout, int(c.data.split(":")[1]))
+        if await need_pin(c, state, p0.amount if p0 else None):
+            return
     kind, pid = c.data.split(":")
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
@@ -425,7 +428,7 @@ async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     if why:
         await c.answer(why, show_alert=True)
         return
-    if await need_pin(c, state):
+    if await need_pin(c, state, pr.net if pr else None):
         return
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)

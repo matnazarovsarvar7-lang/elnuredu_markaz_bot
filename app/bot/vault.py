@@ -283,7 +283,8 @@ async def _confirm(m: Message, state: FSMContext, uid: int) -> None:
             "pfix": f"✏️ Xarajat puli <b>{S.fmt_som(a)}</b> deb tenglashtirilsinmi?"}[d["act"]]
     if d.get("note"):
         text += f"\nIzoh: {d['note']}"
-    await m.answer(text + "\n(PIN so'raladi)", reply_markup=IM(inline_keyboard=[[
+    from app.bot.pin import PIN_FROM
+    await m.answer(text + ("\n(PIN so'raladi)" if a >= PIN_FROM else ""), reply_markup=IM(inline_keyboard=[[
         IB(text="✅ Tasdiqlash", callback_data="kvok"), IB(text="❌ Bekor", callback_data="kvno")]]))
 
 
@@ -306,7 +307,7 @@ async def kv_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     if not d.get("act"):
         await c.answer("Ma'lumot eskirgan, qaytadan boshlang.", show_alert=True)
         return
-    if await need_pin(c, state):
+    if await need_pin(c, state, None if d["act"] == "open" else d.get("amount")):
         return
     act = d["act"]
     notify = None
@@ -399,3 +400,67 @@ async def kv_list(c: CallbackQuery) -> None:
     text = "\n".join(lines)
     for i in range(0, len(text), 3900):
         await c.message.answer(text[i:i + 3900])
+
+
+# ---------- 💳 xarajat puli kamaysa — bitta tugma bilan to'ldirish ----------
+LOW = 100_000
+_low_sent: dict[str, bool] = {}
+
+
+async def suggest_topup(s) -> int:
+    """Oxirgi 30 kundagi moliya xarajatlari (yuz minggacha yaxlitlab), kamida 300 000."""
+    since = datetime.utcnow() - timedelta(days=30)
+    spent = await _sum(s, select(func.coalesce(func.sum(Expense.amount), 0)).where(
+        Expense.source == "kichik", Expense.status == "tasdiq", Expense.created_at >= since))
+    return max(300_000, -(-spent // 100_000) * 100_000)
+
+
+def topup_kb(amount: int) -> IM:
+    return IM(inline_keyboard=[[IB(text=f"💳 {S.fmt_som(amount)} berish", callback_data=f"kvq:{amount}")],
+                               [IB(text="Boshqa summa", callback_data="kv:petty")]])
+
+
+async def low_petty_alert(bot: Bot) -> None:
+    """Moliyaning xarajat puli LOW dan kamaysa — rahbarga kuniga bir marta taklif."""
+    async with Session() as s:
+        pb = await petty_balance(s)
+        if pb is None or pb >= LOW:
+            return
+        key = f"{datetime.utcnow() + SHIFT:%Y-%m-%d}"
+        if _low_sent.get(key):
+            return
+        _low_sent[key] = True
+        amt = await suggest_topup(s)
+        bal = await boss_balance(s)
+        bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+    for b in bosses:
+        await send(bot, b, f"💳 Moliyadagi xarajat puli kamaydi: <b>{S.fmt_som(pb)}</b>.\n"
+                           f"Oxirgi oyda xarajat: ~{S.fmt_som(amt)}. Sizda: {S.fmt_som(bal)}.", reply_markup=topup_kb(amt))
+
+
+@router.callback_query(F.data.startswith("kvq:"))
+async def kv_quick_topup(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    from app.bot.pin import need_pin
+    st = await _boss(c.from_user.id)
+    if not st:
+        await c.answer("Faqat rahbar.", show_alert=True)
+        return
+    a = int(c.data.split(":")[1])
+    async with Session() as s:
+        why = await boss_can_pay(s, a)
+    if why:
+        await c.answer(why, show_alert=True)
+        return
+    if await need_pin(c, state, a):
+        return
+    async with Session() as s:
+        s.add(KassaMove(kassa="rahbar", amount=-a, kind="kichikka", note="Moliyaga xarajat puli", by_id=st.id))
+        s.add(KassaMove(kassa="kichik", amount=a, kind="kirim", note="Rahbardan", by_id=st.id))
+        await S.audit(s, st, "kassa_petty", amount=a)
+        await s.commit()
+        pb, bal = await petty_balance(s), await boss_balance(s)
+        fin = [x.tg_id for x in await S.staff_with_role(s, "moliya") if x.tg_id]
+    await c.answer()
+    await c.message.edit_text(f"✅ Moliyaga xarajat puli {S.fmt_som(a)} berildi. Sizda qoldi: {S.fmt_som(bal)}")
+    for t in fin:
+        await send(bot, t, f"💳 Rahbar xarajat uchun <b>{S.fmt_som(a)}</b> berdi — pulni oling. Xarajat pulingiz: {S.fmt_som(pb)}")

@@ -15,6 +15,7 @@ from app import services as S
 
 router = Router()
 TTL = 600
+PIN_FROM = 1_000_000          # shundan kichik summalar PINsiz (kundalik mayda amallar tez bo'lsin)
 _ok: dict[int, float] = {}
 
 
@@ -27,8 +28,11 @@ class Pn(StatesGroup):
     new = State()
 
 
-async def need_pin(c: CallbackQuery, state: FSMContext) -> bool:
-    """True — PIN so'raldi (amal bajarilmasin). PIN o'rnatilmagan bo'lsa — to'xtatmaydi."""
+async def need_pin(c: CallbackQuery, state: FSMContext, amount: int | None = None) -> bool:
+    """True — PIN so'raldi (amal bajarilmasin). PIN o'rnatilmagan bo'lsa — to'xtatmaydi.
+    amount berilsa va PIN_FROM dan kichik bo'lsa — PIN so'ralmaydi."""
+    if amount is not None and amount < PIN_FROM:
+        return False
     async with Session() as s:
         row = await s.get(Setting, f"pin_{c.from_user.id}")
     if not row:

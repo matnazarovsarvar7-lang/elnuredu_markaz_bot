@@ -347,7 +347,7 @@ async def fw_note(m: Message, state: FSMContext) -> None:
     d["note"] = (m.text or "").strip()[:250] or "—"
     PENDING[m.from_user.id] = d
     await state.clear()
-    await m.answer(f"{FUNDS[d['fund']]}: <b>−{S.fmt_som(d['amount'])}</b>\nIzoh: {d['note']}\n(PIN so'raladi)",
+    await m.answer(f"{FUNDS[d['fund']]}: <b>−{S.fmt_som(d['amount'])}</b>\nIzoh: {d['note']}" + ("\n(PIN so'raladi)" if d['amount'] >= 1_000_000 else ""),
                    reply_markup=IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data="fwok"),
                                                      IB(text="❌ Bekor", callback_data="fwno")]]))
 
@@ -367,7 +367,7 @@ async def fw_save(c: CallbackQuery, state: FSMContext) -> None:
     if not st or not d:
         await c.answer("Ma'lumot eskirgan, qaytadan boshlang.", show_alert=True)
         return
-    if await need_pin(c, state):
+    if await need_pin(c, state, d["amount"]):
         return
     async with Session() as s:
         bal = await balance(s, d["fund"])

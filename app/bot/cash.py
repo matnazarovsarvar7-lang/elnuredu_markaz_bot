@@ -171,10 +171,12 @@ async def close_save(m: Message, state: FSMContext, bot: Bot) -> None:
         name = who.staff.full_name
     if status == "boshlang":
         await m.answer("✅ Kassa boshlang'ich qoldig'i qayd etildi. Ertadan bot har kuni solishtiradi.")
-    elif status == "mos":
-        await m.answer("✅ Kassa mos. Rahmat!")
     else:
-        await m.answer("⚠️ Farq bor. Rahbarga xabar berildi.")
+        hand = IM(inline_keyboard=[[IB(text=f"💼 Hammasini rahbarga topshirish — {S.fmt_som(counted)}",
+                                       callback_data=f"hoq:{counted}")]]) if counted > 0 else None
+        await m.answer(("✅ Kassa mos. Rahmat!" if status == "mos" else "⚠️ Farq bor. Rahbarga xabar berildi.")
+                       + ("\n\nPulni konvertga solib rahbarga bering va pastdagi tugmani bosing:" if hand else ""),
+                       reply_markup=hand)
     sign = "+" if diff > 0 else ""
     text = (f"🔐 <b>Kassa yopildi · {t:%d.%m}</b> ({name})\nBo'lishi kerak: {S.fmt_som(exp)}\nSanadi: {S.fmt_som(counted)}\n"
             + ("Boshlang'ich qoldiq sifatida qayd etildi." if status == "boshlang" else
@@ -255,6 +257,29 @@ async def ho_start(m: Message, state: FSMContext) -> None:
                    if exp and exp > 0 else None)
 
 
+_HOQ: dict[int, float] = {}
+
+
+@router.callback_query(F.data.startswith("hoq:"))
+async def ho_quick(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    """Kun yakuni: kassani yopgan zahoti sanalgan pulni bitta tugma bilan rahbarga topshirish."""
+    import time
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+    if not (who.staff and who.staff.current_role == "moliya"):
+        await c.answer()
+        return
+    if time.time() - _HOQ.get(c.from_user.id, 0) < 60:
+        await c.answer("Topshirish yuborilgan.", show_alert=True)
+        return
+    _HOQ[c.from_user.id] = time.time()
+    await state.clear()
+    await state.update_data(amount=int(c.data.split(":")[1]))
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=None)
+    await _ho_save(c.message, state, bot, c.from_user.id, "rahbar", None)
+
+
 @router.callback_query(Ho.amount, F.data.startswith("hoall:"))
 async def ho_all(c: CallbackQuery, state: FSMContext) -> None:
     amt = int(c.data.split(":")[1])
@@ -331,9 +356,15 @@ async def _ho_save(msg: Message, state: FSMContext, bot: Bot, tg: int, to: str, 
 @router.callback_query(F.data.startswith(("hoy:", "hon:")))
 async def ho_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     from app.bot.pin import need_pin
-    if await need_pin(c, state):
-        return
     kind, hid = c.data.split(":")
+    async with Session() as s:
+        h0 = await s.get(CashHandover, int(hid))
+        if not h0 or h0.status != "kutilmoqda":
+            await c.answer("Bu topshirish allaqachon hal qilingan.", show_alert=True)
+            return
+        amt0 = h0.amount
+    if await need_pin(c, state, amt0):
+        return
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
         if not (who.staff and who.staff.current_role == "rahbar"):

@@ -103,6 +103,9 @@ async def evening_report(bot: Bot) -> None:
         exp_cash = await expected_cash(s)
         from app.bot.vault import boss_balance, petty_balance
         bb, pb = await boss_balance(s), await petty_balance(s)
+        from app.db.models import CashHandover
+        pend = (await s.execute(select(CashHandover).where(CashHandover.status == "kutilmoqda",
+                                                           CashHandover.to_kind == "rahbar"))).scalars().all()
         from app.bot.golive import is_test
         test = await is_test(s)
         from app.bot.reports import payers_block
@@ -127,9 +130,15 @@ async def evening_report(bot: Bot) -> None:
         parts.append(text[:cut])
         text = text[cut:].lstrip("\n")
     parts.append(text)
+    kb = None
+    if pend:                    # topshirilgan pulni shu yerning o'zida qabul qilish
+        from aiogram.types import InlineKeyboardButton as IB, InlineKeyboardMarkup as IM
+        parts[-1] += "\n\n💼 <b>Sizga topshirilgan, tasdiqlanmagan:</b>"
+        kb = IM(inline_keyboard=[[IB(text=f"✅ Qabul qildim — {S.fmt_som(h.amount)}", callback_data=f"hoy:{h.id}"),
+                                  IB(text="❌", callback_data=f"hon:{h.id}")] for h in pend[:5]])
     for b in bosses:
-        for part in parts:
-            await send(bot, b, part)
+        for i, part in enumerate(parts):
+            await send(bot, b, part, reply_markup=kb if i == len(parts) - 1 else None)
 
 
 def setup(bot: Bot) -> AsyncIOScheduler:

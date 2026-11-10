@@ -193,6 +193,8 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
                        (" (bank/karta)" if method != "naqd" else "") + "." + tail, reply_markup=AGAIN)
         return
     if status == "tasdiq":
+        from app.bot.vault import low_petty_alert
+        await low_petty_alert(bot)
         await m.answer(f"✅ Xarajat: {d['cat']} · {S.fmt_som(d['amount'])}. "
                        f"Xarajat pulingizda qoldi: {S.fmt_som(left - d['amount'])}.", reply_markup=AGAIN)
         return
@@ -234,7 +236,7 @@ async def exp_topup(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
             await c.answer(f"Sizda pul yetarli emas. Bor: {S.fmt_som(bal or 0)}, kerak: {S.fmt_som(need)}.",
                            show_alert=True)
             return
-    if await need_pin(c, state):
+    if await need_pin(c, state, need):
         return
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
@@ -320,9 +322,11 @@ async def petty_reminder(bot: Bot) -> None:
         if pb is None:
             return
         to = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+        from app.bot.vault import suggest_topup, topup_kb
+        amt = await suggest_topup(s)
     for t in to:
-        await send(bot, t, f"💳 Yangi oy: moliyadagi xarajat puli {S.fmt_som(pb)}. Kerak bo'lsa: "
-                           "💼 Kassa → 💳 Moliyaga xarajat puli berish.")
+        await send(bot, t, f"💳 Yangi oy: moliyadagi xarajat puli {S.fmt_som(pb)}. Oxirgi oyda xarajat: ~{S.fmt_som(amt)}.",
+                   reply_markup=topup_kb(amt))
 
 
 # ================= 🛒 pullik xizmatlar =================
