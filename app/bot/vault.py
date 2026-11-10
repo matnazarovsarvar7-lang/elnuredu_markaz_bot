@@ -86,6 +86,44 @@ async def boss_month_info(s) -> dict | None:
     return await boss_info(s, since=last + timedelta(microseconds=1) if last else None)
 
 
+async def card_info(s, until: datetime | None = None) -> dict | None:
+    """🏦 Markaz kartasi (bank): karta/o'tkazma to'lovlar + bankka topshirilgan naqd − karta orqali oylik/avans
+    − bank orqali xarajatlar − fondlarga taqsimlangan."""
+    st = await start_at(s)
+    if st is None:
+        return None
+
+    def upto(col):
+        return col < until if until else True
+
+    from app.db.models import Payment, ServiceSale
+    base = await _sum(s, select(func.coalesce(func.sum(KassaMove.amount), 0)).where(
+        KassaMove.kassa == "karta", KassaMove.kind != "fond", upto(KassaMove.created_at)))
+    to_funds = -await _sum(s, select(func.coalesce(func.sum(KassaMove.amount), 0)).where(
+        KassaMove.kassa == "karta", KassaMove.kind == "fond", upto(KassaMove.created_at)))
+    inc = await _sum(s, select(func.coalesce(func.sum(Payment.amount), 0)).where(
+        Payment.method.in_(("karta", "kochirish")), Payment.status == "tasdiq", Payment.created_at >= st,
+        upto(Payment.created_at)))
+    inc += await _sum(s, select(func.coalesce(func.sum(ServiceSale.amount), 0)).where(
+        ServiceSale.method == "karta", ServiceSale.status == "tasdiq", ServiceSale.created_at >= st,
+        upto(ServiceSale.created_at)))
+    bank = await _sum(s, select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
+        CashHandover.to_kind == "bank", CashHandover.status == "tasdiq", CashHandover.created_at >= st,
+        upto(CashHandover.created_at)))
+    paid = await _sum(s, select(func.coalesce(func.sum(Payout.amount), 0)).where(
+        Payout.method == "karta", Payout.status.in_(("berildi", "olindi")), Payout.given_at >= st + SHIFT,
+        (Payout.given_at < until + SHIFT) if until else True))
+    spent = await _sum(s, select(func.coalesce(func.sum(Expense.amount), 0)).where(
+        Expense.method == "bank", Expense.status == "tasdiq", Expense.created_at >= st, upto(Expense.created_at)))
+    return {"base": base, "inc": inc, "bank": bank, "paid": paid, "spent": spent, "to_funds": to_funds,
+            "balance": base + inc + bank - paid - spent - to_funds}
+
+
+async def card_balance(s) -> int | None:
+    c = await card_info(s)
+    return c["balance"] if c else None
+
+
 async def boss_balance(s) -> int | None:
     b = await boss_info(s)
     return b["balance"] if b else None
@@ -101,8 +139,15 @@ async def petty_balance(s) -> int | None:
     return given - spent
 
 
-async def boss_can_pay(s, amount: int) -> str | None:
-    """None — pul yetadi. Aks holda rahbarga ko'rsatiladigan sabab."""
+async def boss_can_pay(s, amount: int, method: str = "naqd") -> str | None:
+    """None — pul yetadi. Aks holda rahbarga ko'rsatiladigan sabab. method: naqd | karta."""
+    if method in ("karta", "bank"):
+        cb = await card_balance(s)
+        if cb is None:
+            return "Avval kassani oching: 💼 Kassa → 🧮 Pulni sanab kiritish."
+        if amount > cb:
+            return f"Kartada pul yetarli emas. Bor: {S.fmt_som(cb)}, kerak: {S.fmt_som(amount)}."
+        return None
     bal = await boss_balance(s)
     if bal is None:
         return "Avval kassani oching: 💼 Kassa → 🧮 Pulni sanab kiritish."
@@ -153,14 +198,15 @@ async def _boss(tg: int):
 # ---------- ochish / kirim / chiqim / tuzatish / kichik kassaga berish ----------
 class Kv(StatesGroup):
     boss = State()
+    card = State()
     recv = State()
     petty = State()
     amount = State()
     note = State()
 
 
-ASK = {"open": "🧮 <b>Pulni sanab kiritish</b> (3 ta savol)\n\n"
-               "1/3. 👤 <b>Sizda</b> (qo'lingizda) hozir qancha naqd pul bor?\n<i>Sanab yozing. Yo'q bo'lsa — 0.</i>",
+ASK = {"open": "🧮 <b>Pulni sanab kiritish</b> (4 ta savol)\n\n"
+               "1/4. 👤 <b>Qo'lingizda</b> hozir qancha naqd pul bor?\n<i>Sanab yozing. Yo'q bo'lsa — 0.</i>",
        "petty": "💳 Moliyaga xarajat uchun qancha pul berasiz? Summani yozing:",
        "in": "➕ Sizga qancha pul kirdi? Summani yozing (masalan, o'zingiz qo'shgan pul):",
        "out": "➖ Sizdan qancha pul chiqdi? Summani yozing:",
@@ -196,8 +242,20 @@ async def kv_open_boss(m: Message, state: FSMContext) -> None:
         await m.answer("Summani raqam bilan yozing (yo'q bo'lsa 0).")
         return
     await state.update_data(boss=a)
+    await state.set_state(Kv.card)
+    await m.answer("2/4. 🏦 <b>Markaz kartasida</b> (bank hisobida) hozir qancha pul bor?\n"
+                   "<i>Bank ilovasidan qarab yozing. Yo'q bo'lsa — 0.</i>")
+
+
+@router.message(Kv.card)
+async def kv_open_card(m: Message, state: FSMContext) -> None:
+    a = _amount(m.text)
+    if a is None:
+        await m.answer("Summani raqam bilan yozing (yo'q bo'lsa 0).")
+        return
+    await state.update_data(card=a)
     await state.set_state(Kv.recv)
-    await m.answer("2/3. 📥 <b>Moliyada o'quvchilar to'lagan pul</b> (sizga hali topshirilmagan) qancha?\n"
+    await m.answer("3/4. 📥 <b>Moliyada o'quvchilar to'lagan pul</b> (sizga hali topshirilmagan) qancha?\n"
                    "<i>Moliya sanab aytsin. Yo'q bo'lsa — 0.</i>")
 
 
@@ -209,7 +267,7 @@ async def kv_open_recv(m: Message, state: FSMContext) -> None:
         return
     await state.update_data(recv=a)
     await state.set_state(Kv.petty)
-    await m.answer("3/3. 💳 <b>Moliyada xarajat uchun alohida pul</b> qancha? (o'quvchilar pulidan tashqari)\n"
+    await m.answer("4/4. 💳 <b>Moliyada xarajat uchun alohida pul</b> qancha? (o'quvchilar pulidan tashqari)\n"
                    "<i>Alohida pul yo'q bo'lsa — 0.</i>")
 
 
@@ -221,7 +279,8 @@ async def kv_open_petty(m: Message, state: FSMContext) -> None:
         return
     d = await state.get_data()
     PENDING[m.from_user.id] = {**d, "petty": a, "act": "open"}
-    await m.answer(f"<b>Tekshiring:</b>\n👤 Sizda: <b>{S.fmt_som(d['boss'])}</b>\n"
+    await m.answer(f"<b>Tekshiring:</b>\n👤 Qo'lingizda (naqd): <b>{S.fmt_som(d['boss'])}</b>\n"
+                   f"🏦 Kartada: <b>{S.fmt_som(d.get('card', 0))}</b>\n"
                    f"📥 Moliyada — o'quvchilar puli: <b>{S.fmt_som(d['recv'])}</b>\n"
                    f"💳 Moliyada — xarajat puli: <b>{S.fmt_som(a)}</b>\n\nBot shu paytdan boshlab hisoblaydi.",
                    reply_markup=IM(inline_keyboard=[[IB(text="✅ To'g'ri", callback_data="kvok"),
@@ -318,14 +377,18 @@ async def kv_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                 s.add(Setting(key=START_KEY, value={"at": datetime.utcnow().isoformat()}))
                 s.add(KassaMove(kassa="rahbar", amount=d["boss"], kind="boshlang", note="Sanab kiritildi", by_id=st.id))
                 s.add(KassaMove(kassa="kichik", amount=d["petty"], kind="boshlang", note="Sanab kiritildi", by_id=st.id))
+                s.add(KassaMove(kassa="karta", amount=d.get("card", 0), kind="boshlang", note="Sanab kiritildi", by_id=st.id))
             else:                                  # qayta sanash — farqni tuzatish sifatida
                 bal, pb = await boss_balance(s), await petty_balance(s)
                 if d["boss"] != bal:
                     s.add(KassaMove(kassa="rahbar", amount=d["boss"] - bal, kind="tuzatish", note="Qayta sanaldi", by_id=st.id))
+                cb = await card_balance(s)
+                if d.get("card", 0) != cb:
+                    s.add(KassaMove(kassa="karta", amount=d.get("card", 0) - cb, kind="tuzatish", note="Qayta sanaldi", by_id=st.id))
                 if d["petty"] != pb:
                     s.add(KassaMove(kassa="kichik", amount=d["petty"] - pb, kind="tuzatish", note="Qayta sanaldi", by_id=st.id))
             await _set_opening(s, d["recv"])
-            msg = (f"✅ Saqlandi.\n👤 Sizda: {S.fmt_som(d['boss'])}\n📥 Moliyada — o'quvchilar puli: {S.fmt_som(d['recv'])}\n"
+            msg = (f"✅ Saqlandi.\n👤 Qo'lingizda: {S.fmt_som(d['boss'])}\n🏦 Kartada: {S.fmt_som(d.get('card', 0))}\n📥 Moliyada — o'quvchilar puli: {S.fmt_som(d['recv'])}\n"
                    f"💳 Moliyada — xarajat puli: {S.fmt_som(d['petty'])}")
             notify = (f"🧮 Rahbar kassani sanab kiritdi:\n📥 O'quvchilar puli: <b>{S.fmt_som(d['recv'])}</b>\n"
                       f"💳 Xarajat puli: <b>{S.fmt_som(d['petty'])}</b>\n"
@@ -359,7 +422,7 @@ async def kv_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             else:
                 s.add(KassaMove(kassa="rahbar", amount=a - bal, kind="tuzatish", note=d.get("note"), by_id=st.id))
                 msg = f"✅ Qoldiq {S.fmt_som(a)} ga tenglashtirildi (farq {'+' if a >= bal else ''}{S.fmt_som(a - bal)})."
-        await S.audit(s, st, "kassa_" + act, **{k: v for k, v in d.items() if k in ("amount", "boss", "recv", "petty", "note")})
+        await S.audit(s, st, "kassa_" + act, **{k: v for k, v in d.items() if k in ("amount", "boss", "card", "recv", "petty", "note")})
         await s.commit()
         fin = [x.tg_id for x in await S.staff_with_role(s, "moliya") if x.tg_id] if notify else []
     await state.clear()

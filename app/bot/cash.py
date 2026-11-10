@@ -404,6 +404,7 @@ async def simple_view() -> tuple[str, IM]:
     async with Session() as s:
         bi = await V.boss_month_info(s)
         pb = await V.petty_balance(s)
+        cbal = await V.card_balance(s)
         exp = await expected_cash(s)
         test = await is_test(s)
         pend = (await s.execute(select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
@@ -417,19 +418,20 @@ async def simple_view() -> tuple[str, IM]:
     lines.append("")
     if bi is None:
         lines += ["Kassa hali ochilmagan.", "",
-                  "«🧮 Pulni sanab kiritish» ni bosing — bot 3 ta savol beradi:",
-                  "1. Sizda qancha pul bor?", "2. Moliyada o'quvchilar to'lagan pul qancha?",
-                  "3. Moliyada xarajat uchun pul qancha?"]
+                  "«🧮 Pulni sanab kiritish» ni bosing — bot 4 ta savol beradi:",
+                  "1. Qo'lingizda qancha naqd bor?", "2. Markaz kartasida qancha bor?",
+                  "3. Moliyada o'quvchilar to'lagan pul qancha?", "4. Moliyada xarajat uchun pul qancha?"]
     else:
-        lines += [f"👤 <b>Sizda:</b> {S.fmt_som(bi['balance'])}",
+        lines += [f"👤 <b>Qo'lingizda (naqd):</b> {S.fmt_som(bi['balance'])}",
+                  f"🏦 <b>Kartada:</b> {S.fmt_som(cbal or 0)}",
                   f"📥 <b>Moliyada — o'quvchilar puli:</b> {S.fmt_som(exp or 0)}"
                   + ("  <i>(sizga topshiriladi)</i>" if exp else ""),
                   f"💳 <b>Moliyada — xarajat puli:</b> {S.fmt_som(pb)}", "",
                   f"Bugun o'quvchilardan naqd: {S.fmt_som(int(today_in))}"]
         if pend:
             lines.append(f"⏳ Sizga topshirilgan, tasdiqlanmagan: <b>{S.fmt_som(int(pend))}</b>")
-        lines += ["", "<i>Qoida: oylik, avans va xarajatlaringiz — «Sizda» dan; moliya xarajati — «xarajat puli» dan. "
-                  "Yetmasa, bot to'xtatadi.</i>"]
+        lines += ["", "<i>Oylik, avans, xarajat — naqd bersangiz qo'lingizdagidan, kartadan bersangiz kartadan ayiriladi. "
+                  "Moliya xarajati — xarajat pulidan. Yetmasa, bot to'xtatadi.</i>"]
     kb = V.kassa_kb(bi is not None)
     if test:
         kb.inline_keyboard.append([IB(text="🚀 Haqiqiy ishni boshlash", callback_data="gl")])
@@ -454,8 +456,23 @@ async def cash_detail(c: CallbackQuery) -> None:
         social = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
             Payment.method == "ijtimoiy", Payment.month == f"{t:%Y-%m}"))).scalar()
     lines = ["📋 <b>Tafsilot</b>", ""]
+    ci = None
+    async with Session() as s:
+        ci = await V.card_info(s)
     if bi:
-        lines += ["👤 <b>Sizda</b>", V.boss_text(bi), ""]
+        lines += ["👤 <b>Qo'lingizda (naqd)</b>", V.boss_text(bi), ""]
+    if ci:
+        lines += ["🏦 <b>Kartada</b>", f"Boshida/tuzatish: {S.fmt_som(ci['base'])}",
+                  f"+ Karta/o'tkazma to'lovlar: {S.fmt_som(ci['inc'])}"]
+        if ci["bank"]:
+            lines.append(f"+ Moliya bankka topshirgan: {S.fmt_som(ci['bank'])}")
+        if ci["paid"]:
+            lines.append(f"− Kartadan oylik/avans: {S.fmt_som(ci['paid'])}")
+        if ci["spent"]:
+            lines.append(f"− Bank orqali xarajatlar: {S.fmt_som(ci['spent'])}")
+        if ci["to_funds"]:
+            lines.append(f"− Fondlarga taqsimlangan: {S.fmt_som(ci['to_funds'])}")
+        lines += [f"= <b>Kartada: {S.fmt_som(ci['balance'])}</b>", ""]
         lines += [f"💳 <b>Xarajat puli:</b> {S.fmt_som(pb)}", ""]
     lines += ["📥 <b>Moliyadagi o'quvchilar puli</b>", breakdown_text(br) if br else "—", ""]
     if social:

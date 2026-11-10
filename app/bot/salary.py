@@ -209,9 +209,26 @@ async def av_give_amount(m: Message, state: FSMContext) -> None:
     if free is not None:
         allowed = int(max(0, free) * SPEND_SHARE)
         lock += f"\nKassa qulfi: {S.fmt_som(allowed)} gacha" + (" ✅" if a <= allowed else " — ⚠️ oshadi")
-    await m.answer(f"💸 {st.full_name}: <b>{S.fmt_som(a)}</b> avans berilsinmi?{lock}\n(PIN so'raladi)",
+    await m.answer(f"💸 {st.full_name}: <b>{S.fmt_som(a)}</b> avans berilsinmi?{lock}" + ("\n(PIN so'raladi)" if a >= 1_000_000 else ""),
                    reply_markup=IM(inline_keyboard=[[IB(text="✅ Berildi", callback_data=f"avgy:{d['sid']}:{a}"),
                                                      IB(text="❌ Bekor", callback_data="avgn")]]))
+
+
+def method_kb(prefix: str) -> IM:
+    """Pul qanday berildi: naqd yoki karta."""
+    return IM(inline_keyboard=[[IB(text="💵 Naqd (qo'limdan)", callback_data=f"{prefix}:naqd"),
+                                IB(text="🏦 Kartaga o'tkazdim", callback_data=f"{prefix}:karta")]])
+
+
+async def _ask_method(c: CallbackQuery, new_msg: str | None = None) -> None:
+    await c.answer()
+    if new_msg:                      # ko'p tugmali xabar (oyliklar ro'yxati) buzilmasin — alohida so'raymiz
+        await c.message.answer(new_msg, reply_markup=method_kb(c.data))
+    else:
+        await c.message.edit_reply_markup(reply_markup=method_kb(c.data))
+
+
+MNAME = {"naqd": "naqd", "karta": "kartaga"}
 
 
 @router.callback_query(F.data == "avgn")
@@ -223,7 +240,11 @@ async def av_give_cancel(c: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("avgy:"))
 async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     from app.bot.pin import need_pin
-    _, sid, a = c.data.split(":")
+    parts = c.data.split(":")
+    if len(parts) == 3:
+        await _ask_method(c)
+        return
+    _, sid, a, method = parts
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
     if not (who.staff and who.staff.current_role == "rahbar"):
@@ -231,7 +252,7 @@ async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         return
     from app.bot.vault import boss_can_pay
     async with Session() as s:
-        why = await boss_can_pay(s, int(a))
+        why = await boss_can_pay(s, int(a), method)
     if why:
         await c.answer(why, show_alert=True)
         return
@@ -241,16 +262,16 @@ async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         who = await S.who_by_tg(s, c.from_user.id)
         st = await s.get(Staff, int(sid))
         p = Payout(staff_id=st.id, month=PR.current_month(now()), kind="avans", amount=int(a), status="berildi",
-                   approved_by=who.staff.id, given_at=now().replace(tzinfo=None))
+                   approved_by=who.staff.id, given_at=now().replace(tzinfo=None), method=method)
         s.add(p)
         await s.flush()
         await S.audit(s, who.staff, "avans_berildi_rahbar", staff=st.full_name, amount=int(a))
         await s.commit()
         pid, tg, name = p.id, st.tg_id, st.full_name
     await c.answer("Saqlandi")
-    await c.message.edit_text(f"✅ {name}: {S.fmt_som(int(a))} avans berildi. Oy oxirida oylikdan ushlanadi.")
+    await c.message.edit_text(f"✅ {name}: {S.fmt_som(int(a))} avans {MNAME[method]} berildi. Oy oxirida oylikdan ushlanadi.")
     if tg:
-        await send(bot, tg, f"💸 Sizga {S.fmt_som(int(a))} avans berildi. Qo'lingizga olgach tasdiqlang:",
+        await send(bot, tg, f"💸 Sizga {S.fmt_som(int(a))} avans {MNAME[method]} berildi. Olgach tasdiqlang:",
                    reply_markup=IM(inline_keyboard=[[IB(text="✅ Oldim", callback_data=f"got:{pid}")]]))
 
 
@@ -258,19 +279,22 @@ async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
 async def av_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     from app.bot.pin import need_pin
     from app.bot.vault import boss_can_pay
-    if c.data.startswith("avy:"):
+    parts = c.data.split(":")
+    method = "naqd"
+    if parts[0] == "avy":
+        if len(parts) == 2:
+            await _ask_method(c)
+            return
+        method = parts[2]
         async with Session() as s:
-            p = await s.get(Payout, int(c.data.split(":")[1]))
-            why = await boss_can_pay(s, p.amount) if p and p.status == "kutilmoqda" and p.method == "naqd" else None
+            p = await s.get(Payout, int(parts[1]))
+            why = await boss_can_pay(s, p.amount, method) if p and p.status == "kutilmoqda" else None
         if why:
             await c.answer(why, show_alert=True)
             return
-    if c.data.startswith("avy:"):
-        async with Session() as s:
-            p0 = await s.get(Payout, int(c.data.split(":")[1]))
-        if await need_pin(c, state, p0.amount if p0 else None):
+        if await need_pin(c, state, p.amount if p else None):
             return
-    kind, pid = c.data.split(":")
+    kind, pid = parts[0], parts[1]
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
         if not (who.staff and who.staff.current_role == "rahbar"):
@@ -282,16 +306,18 @@ async def av_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
             return
         if kind == "avy":
             p.status, p.approved_by, p.given_at = "berildi", who.staff.id, now().replace(tzinfo=None)
+            p.method = method
         else:
             p.status, p.approved_by = "rad", who.staff.id
         await S.audit(s, who.staff, "avans_qaror", payout=p.id, status=p.status)
         await s.commit()
         st = await s.get(Staff, p.staff_id)
         amt = p.amount
-    await c.message.edit_text(c.message.html_text + ("\n\n✅ Tasdiqlandi va berildi" if kind == "avy" else "\n\n❌ Rad etildi"))
+    await c.message.edit_text(c.message.html_text + (f"\n\n✅ Tasdiqlandi va {MNAME[method]} berildi" if kind == "avy"
+                                                     else "\n\n❌ Rad etildi"))
     if st.tg_id:
         if kind == "avy":
-            await send(bot, st.tg_id, f"💸 Avans {S.fmt_som(amt)} berildi. Qo'lingizga olgach tasdiqlang:",
+            await send(bot, st.tg_id, f"💸 Avans {S.fmt_som(amt)} {MNAME[method]} berildi. Olgach tasdiqlang:",
                        reply_markup=IM(inline_keyboard=[[IB(text="✅ Oldim", callback_data=f"got:{pid}")]]))
         else:
             await send(bot, st.tg_id, f"💸 Avans so'rovi ({S.fmt_som(amt)}) rad etildi.")
@@ -415,8 +441,16 @@ def _slip(pr: Payroll) -> str:
 async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     from app.bot.pin import need_pin
     from app.bot.vault import boss_can_pay
+    parts = c.data.split(":")
+    if len(parts) == 2:
+        async with Session() as s:
+            pr = await s.get(Payroll, int(parts[1]))
+            st0 = await s.get(Staff, pr.staff_id) if pr else None
+        await _ask_method(c, f"💰 {st0.full_name if st0 else ''}: {S.fmt_som(pr.net if pr else 0)} — qanday berdingiz?")
+        return
+    method = parts[2]
     async with Session() as s:
-        pr = await s.get(Payroll, int(c.data.split(":")[1]))
+        pr = await s.get(Payroll, int(parts[1]))
         from_fund = bool(pr and await s.get(Setting, f"dist_{pr.month}"))
         if from_fund:                  # oy taqsimlangan — oylik "Oylik zaxirasi" fondidan
             from app.bot.funds import balance
@@ -424,7 +458,7 @@ async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
             why = None if pr.net <= fb else (f"Oylik zaxirasida pul yetarli emas. Qoldiq: {S.fmt_som(fb)}, "
                                              f"kerak: {S.fmt_som(pr.net)}. Fondlar → ➖ yoki kassadan to'ldiring.")
         else:
-            why = await boss_can_pay(s, pr.net) if pr else None
+            why = await boss_can_pay(s, pr.net, method) if pr else None
     if why:
         await c.answer(why, show_alert=True)
         return
@@ -435,7 +469,7 @@ async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         if not (who.staff and who.staff.current_role == "rahbar"):
             await c.answer("Faqat rahbar.", show_alert=True)
             return
-        pr = await s.get(Payroll, int(c.data.split(":")[1]))
+        pr = await s.get(Payroll, int(parts[1]))
         exists = (await s.execute(select(Payout.id).where(Payout.staff_id == pr.staff_id, Payout.month == pr.month,
                                                           Payout.kind == "oylik"))).first()
         if exists:
@@ -443,20 +477,25 @@ async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
             return
         fund_paid = bool(await s.get(Setting, f"dist_{pr.month}"))
         p = Payout(staff_id=pr.staff_id, month=pr.month, kind="oylik", amount=pr.net, status="berildi",
-                   approved_by=who.staff.id, given_at=now().replace(tzinfo=None), method="fond" if fund_paid else "naqd")
+                   approved_by=who.staff.id, given_at=now().replace(tzinfo=None), method="fond" if fund_paid else method)
         s.add(p)
         if fund_paid:
             from app.bot.funds import fund_move
             stf = await s.get(Staff, pr.staff_id)
-            await fund_move(s, "oylik", None, pr.net, f"Oylik {pr.month}: {stf.full_name}", who.staff.id)
+            await fund_move(s, "oylik", None, pr.net, f"Oylik {pr.month}: {stf.full_name} ({MNAME[method]})", who.staff.id)
         await s.flush()
         await S.audit(s, who.staff, "oylik_berildi", staff=pr.staff_id, amount=pr.net)
         await s.commit()
         st = await s.get(Staff, pr.staff_id)
         pid, amt = p.id, pr.net
     await c.answer(f"{st.full_name}: berildi")
+    try:
+        await c.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    await c.message.answer(f"✅ {st.full_name}: {pr.month} oyligi {S.fmt_som(amt)} {MNAME[method]} berildi.")
     if st.tg_id:
-        await send(bot, st.tg_id, f"💰 {pr.month} oyligi {S.fmt_som(amt)} berildi. Olgach tasdiqlang:",
+        await send(bot, st.tg_id, f"💰 {pr.month} oyligi {S.fmt_som(amt)} {MNAME[method]} berildi. Olgach tasdiqlang:",
                    reply_markup=IM(inline_keyboard=[[IB(text="✅ Oldim", callback_data=f"got:{pid}")]]))
 
 

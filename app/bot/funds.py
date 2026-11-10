@@ -107,10 +107,13 @@ async def monthly_need(s, month: str) -> int:
 async def plan(s, month: str, until_utc: datetime | None = None) -> dict | None:
     """Taqsimot rejasi (bazaga yozmaydi). until_utc — kassa qaysi paytdagi holati bo'yicha (None — hozir)."""
     from app.bot.vault import boss_info
+    from app.bot.vault import card_info
     bi = await boss_info(s, until_utc)
     if bi is None:
         return None
-    kassa = bi["balance"]
+    ci = await card_info(s, until_utc)
+    cash, card = bi["balance"], (ci["balance"] if ci else 0)
+    kassa = cash + card
     bal = await balances(s)
     unpaid, who = await unpaid_salaries(s, month)
     need_oylik = max(0, unpaid - bal["oylik"])
@@ -134,7 +137,7 @@ async def plan(s, month: str, until_utc: datetime | None = None) -> dict | None:
         parts["rivoj"] = round(rest * SPLIT["rivoj"]) + (want - parts["yostiq"])
         parts["egasi"] = rest - parts["ehson"] - parts["yostiq"] - parts["rivoj"]
     short = max(0, need_oylik - parts["oylik"])
-    return {"month": month, "kassa": kassa, "parts": parts, "from_cushion": from_cushion, "unpaid": unpaid,
+    return {"month": month, "kassa": kassa, "cash": cash, "card": card, "parts": parts, "from_cushion": from_cushion, "unpaid": unpaid,
             "unpaid_list": who, "need_yil": need_yil, "rest": rest, "cap": cap, "short": short,
             "left": kassa + from_cushion - sum(parts.values()), "before": bal}
 
@@ -143,7 +146,8 @@ def plan_text(p: dict, done: bool) -> str:
     pt = p["parts"]
     head = (f"🏦 <b>{month_name(p['month'])} yakuni — taqsimot</b>" if done else
             f"🏦 <b>{month_name(p['month'])} — taqsimot (taxminiy, hozir taqsimlansa)</b>")
-    lines = [head, f"Sizda edi: <b>{S.fmt_som(p['kassa'])}</b>", ""]
+    lines = [head, f"Sizda edi: <b>{S.fmt_som(p['kassa'])}</b> (naqd {S.fmt_som(p.get('cash', p['kassa']))} · "
+                   f"karta {S.fmt_som(p.get('card', 0))})", ""]
     if p["from_cushion"]:
         lines.append(f"⚠️ Oyliklarga yetmadi — yostiqdan olindi: {S.fmt_som(p['from_cushion'])}")
     lines.append(f"1️⃣ {FUNDS['oylik']}: <b>{S.fmt_som(pt['oylik'])}</b>"
@@ -179,8 +183,12 @@ async def distribute(month: str, by_id: int | None = None) -> dict | None:
             if v:
                 s.add(KassaMove(kassa=f"fond_{k}", amount=v, kind="taqsimot", note=note, by_id=by_id))
         moved = sum(p["parts"].values()) - p["from_cushion"]
-        if moved:
-            s.add(KassaMove(kassa="rahbar", amount=-moved, kind="fond", note=note, by_id=by_id))
+        from_cash = min(max(0, p["cash"]), moved) if moved > 0 else moved   # avval naqddan, qolgani kartadan
+        from_card = moved - from_cash
+        if from_cash:
+            s.add(KassaMove(kassa="rahbar", amount=-from_cash, kind="fond", note=note, by_id=by_id))
+        if from_card:
+            s.add(KassaMove(kassa="karta", amount=-from_card, kind="fond", note=note, by_id=by_id))
         s.add(Setting(key=f"dist_{month}", value={"at": f"{now():%Y-%m-%d %H:%M}", "parts": p["parts"],
                                                    "kassa": p["kassa"], "from_cushion": p["from_cushion"]}))
         await s.commit()

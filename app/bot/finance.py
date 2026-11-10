@@ -168,10 +168,10 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
         e = Expense(date=t, category=d["cat"], amount=d["amount"], note=d["note"], receipt_file_id=fid,
                     by_id=who.staff.id, method=method)
         if boss:
-            bal = await boss_balance(s)
-            if method == "naqd" and bal is not None and d["amount"] > bal:
-                await m.answer(f"❌ Sizda pul yetarli emas. Bor: {S.fmt_som(bal)}, xarajat: "
-                               f"{S.fmt_som(d['amount'])}.\nXarajat saqlanmadi.", reply_markup=AGAIN)
+            from app.bot.vault import boss_can_pay
+            why = await boss_can_pay(s, d["amount"], method)
+            if why and "Avval" not in why:
+                await m.answer(f"❌ {why}\nXarajat saqlanmadi.", reply_markup=AGAIN)
                 return
             e.source, e.status, e.approved_by = "asosiy", "tasdiq", who.staff.id
             left = None
