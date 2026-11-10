@@ -143,7 +143,7 @@ def plan_text(p: dict, done: bool) -> str:
     pt = p["parts"]
     head = (f"🏦 <b>{month_name(p['month'])} yakuni — taqsimot</b>" if done else
             f"🏦 <b>{month_name(p['month'])} — taqsimot (taxminiy, hozir taqsimlansa)</b>")
-    lines = [head, f"Kassangizda edi: <b>{S.fmt_som(p['kassa'])}</b>", ""]
+    lines = [head, f"Sizda edi: <b>{S.fmt_som(p['kassa'])}</b>", ""]
     if p["from_cushion"]:
         lines.append(f"⚠️ Oyliklarga yetmadi — yostiqdan olindi: {S.fmt_som(p['from_cushion'])}")
     lines.append(f"1️⃣ {FUNDS['oylik']}: <b>{S.fmt_som(pt['oylik'])}</b>"
@@ -157,7 +157,7 @@ def plan_text(p: dict, done: bool) -> str:
         lines.append(f"   {FUNDS[k]} ({SPLIT[k] * 100:.0f}%): <b>{S.fmt_som(pt[k])}</b>{extra}")
     if p["short"]:
         lines.append(f"\n🔴 Oyliklar uchun yana <b>{S.fmt_som(p['short'])}</b> yetmaydi!")
-    lines.append(f"\n👤 Kassangiz: <b>{S.fmt_som(p['left'] if done else p['kassa'])}</b>"
+    lines.append(f"\n👤 Sizda: <b>{S.fmt_som(p['left'] if done else p['kassa'])}</b>"
                  + (" — yangi oy 0 dan boshlandi." if done and p["left"] == 0 else ""))
     return "\n".join(lines)
 
@@ -216,7 +216,7 @@ async def month_end_reminders(bot: Bot, who: str) -> None:
         else:
             pend = (await s.execute(select(func.count(CashHandover.id)).where(CashHandover.status == "kutilmoqda"))).scalar()
             to = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
-            text = ("📅 Bugun oyning oxirgi kuni. Ertaga 09:10 da kassangizdagi pul fondlarga taqsimlanadi va kassa 0 dan "
+            text = ("📅 Bugun oyning oxirgi kuni. Ertaga 09:10 da sizdagi pul fondlarga taqsimlanadi va kassa 0 dan "
                     "boshlanadi." + (f"\n⚠️ Tasdiqlanmagan topshirishlar: {pend} ta — bugun tasdiqlang." if pend else ""))
     for t in to:
         await send(bot, t, text)
@@ -272,7 +272,7 @@ async def funds_preview(c: CallbackQuery) -> None:
         p = await plan(s, PR.current_month(now()))
     await c.answer()
     if not p:
-        await c.message.answer("Avval kassalarni oching: 💼 Kassa → 🔓 Kassalarni ochish.")
+        await c.message.answer("Avval kassani oching: 💼 Kassa → 🧮 Pulni sanab kiritish.")
         return
     await c.message.answer(plan_text(p, False) + "\n\n<i>Oy yopilgach (1-sana 09:10) bot o'zi taqsimlaydi.</i>")
 

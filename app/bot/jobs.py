@@ -117,7 +117,7 @@ async def evening_report(bot: Bot) -> None:
             + "\nKassa: " + ({"mos": "✅ yopildi, mos", "farq": "⚠️ yopildi, farq bor", "boshlang": "▫️ boshlang'ich qoldiq"}
                              .get(cl.status, "") if cl else "❌ yopilmadi")
             + (f" · kassada bo'lishi kerak {S.fmt_som(exp_cash)}" if exp_cash is not None else "")
-            + (f"\n👤 Sizning kassangiz: {S.fmt_som(bb)} · 💳 Kichik kassa: {S.fmt_som(pb)}" if bb is not None else ""))
+            + (f"\n👤 Sizda: {S.fmt_som(bb)} · 💳 Moliyadagi xarajat puli: {S.fmt_som(pb)}" if bb is not None else ""))
     if test:
         text = "🧪 <i>Sinov rejimi — summalar haqiqiy emas</i>\n" + text
     text += "\n\n" + payers

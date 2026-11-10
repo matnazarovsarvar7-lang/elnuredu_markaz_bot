@@ -65,7 +65,7 @@ async def golive_ask(c: CallbackQuery) -> None:
              "Barcha <b>sinov pul yozuvlari o'chiriladi</b>:"] + [f"• {n}: {k} ta" for n, k in cnt] + [
              "", "Kassalar, fondlar, oy yopilishlari ham 0 dan boshlanadi.",
              "✅ Saqlanadi: o'quvchilar, ota-onalar, guruhlar, xodimlar, chegirmalar, davomat, vazifalar, testlar.", "",
-             "Keyin: 💼 Kassa → 🔓 Kassalarni ochish va haqiqiy to'lovlarni kiritasiz.",
+             "Keyin: 💼 Kassa → 🧮 Pulni sanab kiritish va haqiqiy to'lovlarni kiritasiz.",
              "", "⚠️ <b>Bu amalni qaytarib bo'lmaydi.</b>"]
     await c.answer()
     await c.message.answer("\n".join(lines), reply_markup=IM(inline_keyboard=[
@@ -112,6 +112,6 @@ async def golive_do(c: CallbackQuery, state: FSMContext) -> None:
         await s.commit()
     await c.answer()
     await c.message.edit_text("✅ <b>Bot haqiqiy ishga o'tdi.</b>\nSinov pul yozuvlari o'chirildi.\n\n"
-                              "Endi:\n1. 💼 Kassa → 🔓 Kassalarni ochish (qo'lingizdagi va kichik kassadagi haqiqiy pul).\n"
+                              "Endi:\n1. 💼 Kassa → 🧮 Pulni sanab kiritish (haqiqiy pul).\n"
                               "2. Moliya birinchi «🔐 Kassani yopish» da qabul kassasidagi haqiqiy pulni sanaydi.\n"
                               "3. Haqiqiy to'lovlar kiritiladi.")

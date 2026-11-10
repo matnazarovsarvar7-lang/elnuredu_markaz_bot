@@ -163,8 +163,8 @@ async def av_amount(m: Message, state: FSMContext, bot: Bot) -> None:
     kb = IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data=f"avy:{pid}"), IB(text="❌ Rad", callback_data=f"avn:{pid}")]])
     for b in bosses:
         await send(bot, b, f"💸 <b>Avans so'rovi</b>\n{name}: {S.fmt_som(a)}{lock}"
-                   + (f"\n👤 Kassangizda: {S.fmt_som(bb)}" + (" — ⚠️ yetmaydi" if a > bb else "") if bb is not None else
-                      "\n⚠️ Kassalaringiz hali ochilmagan (💼 Kassa → 🔓 Kassalarni ochish)"), reply_markup=kb)
+                   + (f"\n👤 Sizda: {S.fmt_som(bb)}" + (" — ⚠️ yetmaydi" if a > bb else "") if bb is not None else
+                      "\n⚠️ Kassa hali ochilmagan (💼 Kassa → 🧮 Pulni sanab kiritish)"), reply_markup=kb)
 
 
 class Ag(StatesGroup):
@@ -205,7 +205,7 @@ async def av_give_amount(m: Message, state: FSMContext) -> None:
         from app.bot.vault import boss_balance
         free = await free_cash(s)
         bb = await boss_balance(s)
-    lock = f"\n👤 Kassangizda: {S.fmt_som(bb)}" + (" — ⚠️ yetmaydi" if a > bb else "") if bb is not None else ""
+    lock = f"\n👤 Sizda: {S.fmt_som(bb)}" + (" — ⚠️ yetmaydi" if a > bb else "") if bb is not None else ""
     if free is not None:
         allowed = int(max(0, free) * SPEND_SHARE)
         lock += f"\nKassa qulfi: {S.fmt_som(allowed)} gacha" + (" ✅" if a <= allowed else " — ⚠️ oshadi")
@@ -373,7 +373,7 @@ async def close_and_report(bot: Bot, month: str) -> None:
         fines = sum(pr.penalty or 0 for pr in prs)
         if fines:                      # oylikdan ushlangan jarimalar yillik fondga (1-sanadagi taqsimotda)
             rep += f"\n\nUshlangan jarimalar yillik fondga o'tadi: {S.fmt_som(fines)}"
-        rep += "\n\n🏦 Ertaga (1-sana) 09:10 da kassangizdagi pul fondlarga taqsimlanadi."
+        rep += "\n\n🏦 Ertaga (1-sana) 09:10 da sizdagi pul fondlarga taqsimlanadi."
         await s.commit()
         slips = []
         for pr in prs:
@@ -513,7 +513,7 @@ async def profit_report(s, month: str, final: bool = False) -> str:
     if tushum and pct < PROFIT_MIN * 100:
         lines.append(f"⚠️ Foyda {PROFIT_MIN * 100:.0f}% dan past!")
     if after > 0:
-        lines += ["", "<i>Foyda bo'yicha ulushlar (hisob). Haqiqiy pul 1-sanada kassangizdagi qoldiqdan taqsimlanadi:</i>"]
+        lines += ["", "<i>Foyda bo'yicha ulushlar (hisob). Haqiqiy pul 1-sanada sizdagi puldan taqsimlanadi:</i>"]
         for k, share in SPLIT.items():
             lines.append(f"{FUND_NAMES[k]} ({share * 100:.0f}%): {S.fmt_som(round(after * share))}")
     elif tushum:

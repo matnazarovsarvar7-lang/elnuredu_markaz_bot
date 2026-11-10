@@ -176,18 +176,16 @@ async def close_save(m: Message, state: FSMContext, bot: Bot) -> None:
     else:
         await m.answer("⚠️ Farq bor. Rahbarga xabar berildi.")
     sign = "+" if diff > 0 else ""
-    async with Session() as s:
-        br = await cash_breakdown(s)
-    text = (f"🔐 <b>Kassa yopildi · {t:%d.%m}</b> ({name})\nKutilgan: {S.fmt_som(exp)}\nSanalgan: {S.fmt_som(counted)}\n"
+    text = (f"🔐 <b>Kassa yopildi · {t:%d.%m}</b> ({name})\nBo'lishi kerak: {S.fmt_som(exp)}\nSanadi: {S.fmt_som(counted)}\n"
             + ("Boshlang'ich qoldiq sifatida qayd etildi." if status == "boshlang" else
                "✅ Mos" if status == "mos" else f"⚠️ Farq: <b>{sign}{S.fmt_som(diff)}</b>")
-            + (f"\n\n<b>Kutilgan qanday hisoblandi:</b>\n{breakdown_text(br)}" if br and status != "boshlang" else ""))
+            )
     kb = None
     if status == "farq":
         kb = IM(inline_keyboard=[[IB(text="−2 ball moliyaga", callback_data=f"cf:{cid}:pen")],
                                  [IB(text="Sabab aniqlandi — qoldiqni tuzatish", callback_data=f"cf:{cid}:fix")],
                                  [IB(text="🔄 Qayta sanashga ruxsat", callback_data=f"cf:{cid}:re")],
-                                 [IB(text="📋 Naqd to'lovlar ro'yxati", callback_data="cnl")]])
+                                 [IB(text="📋 Nega? Tafsilot", callback_data="kv:det")]])
     for b in bosses:
         await send(bot, b, text, reply_markup=kb)
 
@@ -247,8 +245,24 @@ async def ho_start(m: Message, state: FSMContext) -> None:
         who = await S.who_by_tg(s, m.from_user.id)
     if not (who.staff and who.staff.current_role == "moliya"):
         return
+    async with Session() as s:
+        exp = await expected_cash(s)
     await state.set_state(Ho.amount)
-    await m.answer("💼 <b>Kassani topshirish</b>\nQancha naqd pul topshiryapsiz? Summani yozing:")
+    await m.answer("💼 <b>Kassani topshirish</b>\n"
+                   + (f"Sizda o'quvchilar puli: <b>{S.fmt_som(exp)}</b> bo'lishi kerak.\n" if exp is not None else "")
+                   + "Qancha topshiryapsiz? Summani yozing:",
+                   reply_markup=IM(inline_keyboard=[[IB(text=f"Hammasini — {S.fmt_som(exp)}", callback_data=f"hoall:{exp}")]])
+                   if exp and exp > 0 else None)
+
+
+@router.callback_query(Ho.amount, F.data.startswith("hoall:"))
+async def ho_all(c: CallbackQuery, state: FSMContext) -> None:
+    amt = int(c.data.split(":")[1])
+    await state.update_data(amount=amt)
+    await c.answer()
+    await c.message.answer(f"{S.fmt_som(amt)} — kimga?", reply_markup=IM(inline_keyboard=[[
+        IB(text="👤 Rahbarga (muhrlangan konvertda)", callback_data="hot:rahbar")],
+        [IB(text="🏦 Bankka", callback_data="hot:bank")]]))
 
 
 @router.message(Ho.amount)
@@ -256,6 +270,13 @@ async def ho_amount(m: Message, state: FSMContext) -> None:
     amt = _amount(m.text)
     if not amt:
         await m.answer("Summani raqam bilan yozing: 2000000")
+        return
+    async with Session() as s:
+        exp = await expected_cash(s)
+    if exp is not None and amt > exp:
+        await m.answer(f"⚠️ Sizda o'quvchilar puli {S.fmt_som(exp)} bo'lishi kerak — {S.fmt_som(amt)} ko'p.\n"
+                       "Xarajat pulini topshirmang. Agar haqiqatan ortiqcha pul bo'lsa — rahbarga ayting: "
+                       "«🧮 Qayta sanash» qiladi.")
         return
     await state.update_data(amount=amt)
     await m.answer(f"{S.fmt_som(amt)} — kimga?", reply_markup=IM(inline_keyboard=[[
@@ -327,7 +348,7 @@ async def ho_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         from app.bot.vault import boss_balance
         bal = await boss_balance(s) if h.to_kind == "rahbar" else None
     await c.message.edit_text(c.message.html_text + ("\n\n✅ Qabul qilindi" if kind == "hoy" else "\n\n❌ Mos emas")
-                              + (f"\n👤 Kassangizda endi: <b>{S.fmt_som(bal)}</b>" if bal is not None and kind == "hoy" else ""))
+                              + (f"\n👤 Sizda endi: <b>{S.fmt_som(bal)}</b>" if bal is not None and kind == "hoy" else ""))
     if mol and mol.tg_id:
         await send(bot, mol.tg_id, f"💼 {S.fmt_som(amt)} topshirish: " +
                    ("✅ rahbar qabul qildi." if kind == "hoy" else "❌ rahbar «mos emas» dedi — bog'laning."))
@@ -336,50 +357,89 @@ async def ho_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
 # ================= 💼 Kassa (rahbar) =================
 @router.message(F.text == K.B_CASH)
 async def cash_view(m: Message) -> None:
-    t = now().date()
+    """Rahbar: oddiy kassa ekrani — 3 ta raqam. Tafsilot alohida tugmada."""
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
         if not (who.staff and who.staff.current_role == "rahbar"):
             return
-        br = await cash_breakdown(s)
-        exp = br["expected"] if br else None
-        closes = (await s.execute(select(CashClose).order_by(CashClose.date.desc(), CashClose.id.desc())
-                                  .limit(7))).scalars().all()
-        pend = (await s.execute(select(CashHandover).where(CashHandover.status == "kutilmoqda"))).scalars().all()
-        social = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
-            Payment.method == "ijtimoiy", Payment.month == f"{t:%Y-%m}"))).scalar()
+    text, kb = await simple_view()
+    await m.answer(text, reply_markup=kb)
+
+
+async def simple_view() -> tuple[str, IM]:
     from app.bot import vault as V
     from app.bot.golive import is_test
+    t = now().date()
     async with Session() as s:
         bi = await V.boss_month_info(s)
         pb = await V.petty_balance(s)
+        exp = await expected_cash(s)
         test = await is_test(s)
-    lines = ["💼 <b>Kassalar</b>", ""]
+        pend = (await s.execute(select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
+            CashHandover.status == "kutilmoqda"))).scalar()
+        start = datetime.combine(t, datetime.min.time()) - timedelta(hours=5)
+        today_in = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.method == "naqd", Payment.status == "tasdiq", Payment.created_at >= start, Payment.amount > 0))).scalar()
+    lines = [f"💼 <b>Kassa · {t:%d.%m}</b>"]
     if test:
-        lines += ["🧪 <b>Sinov rejimi</b>: summalar haqiqiy emas. Oy yopilmaydi, fond taqsimoti va qarz eslatmalari "
-                  "ketmaydi. Sinov tugagach — «🚀 Haqiqiy ishni boshlash».", ""]
-    if bi:
-        lines += ["👤 <b>1. Sizning kassangiz</b> (oylik, avans, xarajatlaringiz shundan)", V.boss_text(bi), "",
-                  f"💳 <b>2. Kichik kassa</b> (moliya xarajatlari faqat shundan): <b>{S.fmt_som(pb)}</b>", ""]
+        lines.append("🧪 <i>Sinov rejimi — summalar haqiqiy emas</i>")
+    lines.append("")
+    if bi is None:
+        lines += ["Kassa hali ochilmagan.", "",
+                  "«🧮 Pulni sanab kiritish» ni bosing — bot 3 ta savol beradi:",
+                  "1. Sizda qancha pul bor?", "2. Moliyada o'quvchilar to'lagan pul qancha?",
+                  "3. Moliyada xarajat uchun pul qancha?"]
     else:
-        lines += ["⚠️ Kassalar hali ochilmagan. «🔓 Kassalarni ochish» ni bosing: qo'lingizdagi pulni va moliyadagi "
-                  "kichik kassa pulini kiritasiz. Shundan keyin oylik/avans faqat kassangizdan, moliya xarajatlari "
-                  "faqat kichik kassadan bo'ladi.", ""]
-    lines += [f"📥 <b>{'3. ' if bi else ''}Qabul kassasi</b> (moliyada, o'quvchilar to'lovi — sizga topshiriladi)",
-              f"Kassada bo'lishi kerak: <b>{S.fmt_som(exp)}</b>\n\n{breakdown_text(br)}\n" if exp is not None else
-              "Boshlang'ich qoldiq hali kiritilmagan (moliya birinchi «🔐 Kassani yopish» da kiritadi).",
-              f"Tasdiq kutayotgan topshirishlar: {len(pend)} ta" + (f" ({S.fmt_som(sum(h.amount for h in pend))})" if pend else ""),
-              f"Ijtimoiy to'lovlar (kassaga kirmaydi) shu oy: {S.fmt_som(int(social))}", "", "<b>Oxirgi yopishlar</b>"]
-    for cl in closes:
-        mark = {"mos": "✅", "farq": "⚠️", "boshlang": "▫️"}[cl.status]
-        lines.append(f"{mark} {cl.date:%d.%m}: {S.fmt_som(cl.counted)}" +
-                     (f" (farq {'+' if cl.diff > 0 else ''}{S.fmt_som(cl.diff)})" if cl.diff else ""))
-    if not closes:
-        lines.append("—")
+        lines += [f"👤 <b>Sizda:</b> {S.fmt_som(bi['balance'])}",
+                  f"📥 <b>Moliyada — o'quvchilar puli:</b> {S.fmt_som(exp or 0)}"
+                  + ("  <i>(sizga topshiriladi)</i>" if exp else ""),
+                  f"💳 <b>Moliyada — xarajat puli:</b> {S.fmt_som(pb)}", "",
+                  f"Bugun o'quvchilardan naqd: {S.fmt_som(int(today_in))}"]
+        if pend:
+            lines.append(f"⏳ Sizga topshirilgan, tasdiqlanmagan: <b>{S.fmt_som(int(pend))}</b>")
+        lines += ["", "<i>Qoida: oylik, avans va xarajatlaringiz — «Sizda» dan; moliya xarajati — «xarajat puli» dan. "
+                  "Yetmasa, bot to'xtatadi.</i>"]
     kb = V.kassa_kb(bi is not None)
     if test:
         kb.inline_keyboard.append([IB(text="🚀 Haqiqiy ishni boshlash", callback_data="gl")])
-    await m.answer("\n".join(lines), reply_markup=kb)
+    return "\n".join(lines), kb
+
+
+@router.callback_query(F.data == "kv:det")
+async def cash_detail(c: CallbackQuery) -> None:
+    """📋 Tafsilot: har bir raqam qanday hisoblangani."""
+    from app.bot import vault as V
+    t = now().date()
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        if not (who.staff and who.staff.current_role == "rahbar"):
+            await c.answer()
+            return
+        br = await cash_breakdown(s)
+        bi = await V.boss_month_info(s)
+        pb = await V.petty_balance(s)
+        closes = (await s.execute(select(CashClose).order_by(CashClose.date.desc(), CashClose.id.desc())
+                                  .limit(5))).scalars().all()
+        social = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
+            Payment.method == "ijtimoiy", Payment.month == f"{t:%Y-%m}"))).scalar()
+    lines = ["📋 <b>Tafsilot</b>", ""]
+    if bi:
+        lines += ["👤 <b>Sizda</b>", V.boss_text(bi), ""]
+        lines += [f"💳 <b>Xarajat puli:</b> {S.fmt_som(pb)}", ""]
+    lines += ["📥 <b>Moliyadagi o'quvchilar puli</b>", breakdown_text(br) if br else "—", ""]
+    if social:
+        lines.append(f"Ijtimoiy to'lovlar (kassaga kirmaydi) shu oy: {S.fmt_som(int(social))}")
+    lines += ["", "<b>Moliya kassani yopishlari</b>"]
+    for cl in closes:
+        mark = {"mos": "✅", "farq": "⚠️", "boshlang": "▫️"}[cl.status]
+        lines.append(f"{mark} {cl.date:%d.%m}: sanadi {S.fmt_som(cl.counted)}" +
+                     (f" (farq {'+' if cl.diff > 0 else ''}{S.fmt_som(cl.diff)})" if cl.diff else ""))
+    if not closes:
+        lines.append("—")
+    await c.answer()
+    await c.message.answer("\n".join(lines)[:3900], reply_markup=IM(inline_keyboard=[
+        [IB(text="📋 Sizdagi pul harakatlari", callback_data="kv:list")],
+        [IB(text="📋 O'quvchilar naqd to'lovlari", callback_data="cnl")]]))
 
 
 @router.callback_query(F.data == "cnl")

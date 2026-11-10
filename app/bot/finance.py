@@ -93,15 +93,15 @@ async def exp_start(m: Message, state: FSMContext, tg_id: int | None = None) -> 
         pb, bb = await petty_balance(s), await boss_balance(s)
     await state.clear()
     if who.staff.current_role == "moliya" and pb is None:
-        await m.answer("💳 Kichik kassa hali ochilmagan. Rahbar «💼 Kassa → 🔓 Kassalarni ochish» ni bosgach, "
-                       "xarajatlar kichik kassadan kiritiladi.")
+        await m.answer("💳 Xarajat puli hali kiritilmagan. Rahbar «💼 Kassa → 🧮 Pulni sanab kiritish» ni bosgach, "
+                       "xarajat kiritiladi.")
         return
     await state.set_state(Ex.cat)
     head = "🧾 <b>Xarajat</b>\n"
     if who.staff.current_role == "moliya":
-        head += f"💳 Kichik kassada: <b>{S.fmt_som(pb)}</b> (xarajat faqat shundan)\n"
+        head += f"💳 Xarajat pulingiz: <b>{S.fmt_som(pb)}</b>\n"
     elif bb is not None:
-        head += f"👤 Kassangizda: <b>{S.fmt_som(bb)}</b>\n"
+        head += f"👤 Sizda: <b>{S.fmt_som(bb)}</b>\n"
     rows = [[IB(text=c, callback_data=f"xc:{i}")] for i, c in enumerate(cats)]
     rows.append([IB(text="📋 Oxirgi xarajatlar / bekor qilish", callback_data="xl")])
     await m.answer(head + "Toifani tanlang:", reply_markup=IM(inline_keyboard=rows))
@@ -127,7 +127,7 @@ async def exp_amount(m: Message, state: FSMContext) -> None:
         who = await S.who_by_tg(s, m.from_user.id)
     if who.staff and who.staff.current_role == "rahbar":
         await m.answer("Qayerdan to'landi?", reply_markup=IM(inline_keyboard=[
-            [IB(text="💵 Naqd — mening kassamdan", callback_data="xm:naqd")],
+            [IB(text="💵 Naqd — qo'limdagi puldan", callback_data="xm:naqd")],
             [IB(text="🏦 Bank / karta orqali", callback_data="xm:bank")]]))
         return
     await state.set_state(Ex.note)
@@ -170,7 +170,7 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
         if boss:
             bal = await boss_balance(s)
             if method == "naqd" and bal is not None and d["amount"] > bal:
-                await m.answer(f"❌ Kassangizda pul yetarli emas. Qoldiq: {S.fmt_som(bal)}, xarajat: "
+                await m.answer(f"❌ Sizda pul yetarli emas. Bor: {S.fmt_som(bal)}, xarajat: "
                                f"{S.fmt_som(d['amount'])}.\nXarajat saqlanmadi.", reply_markup=AGAIN)
                 return
             e.source, e.status, e.approved_by = "asosiy", "tasdiq", who.staff.id
@@ -188,22 +188,22 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
         name = who.staff.full_name
         bb = await boss_balance(s)
     if boss:
-        tail = f"\n👤 Kassangizda: {S.fmt_som(bb)}" if method == "naqd" and bb is not None else ""
+        tail = f"\n👤 Sizda qoldi: {S.fmt_som(bb)}" if method == "naqd" and bb is not None else ""
         await m.answer(f"✅ Xarajat saqlandi: {d['cat']} · {S.fmt_som(d['amount'])}" +
                        (" (bank/karta)" if method != "naqd" else "") + "." + tail, reply_markup=AGAIN)
         return
     if status == "tasdiq":
-        await m.answer(f"✅ Kichik kassadan: {d['cat']} · {S.fmt_som(d['amount'])}. "
-                       f"Kichik kassada qoldi: {S.fmt_som(left - d['amount'])}.", reply_markup=AGAIN)
+        await m.answer(f"✅ Xarajat: {d['cat']} · {S.fmt_som(d['amount'])}. "
+                       f"Xarajat pulingizda qoldi: {S.fmt_som(left - d['amount'])}.", reply_markup=AGAIN)
         return
     need = d["amount"] - left
-    await m.answer(f"⚠️ Kichik kassada pul yetarli emas: bor {S.fmt_som(left)}, kerak {S.fmt_som(d['amount'])}.\n"
-                   f"Rahbardan kichik kassaga {S.fmt_som(need)} so'raldi. Rahbar pul bergach xarajat o'tadi.",
+    await m.answer(f"⚠️ Xarajat pulingiz yetmaydi: bor {S.fmt_som(left)}, kerak {S.fmt_som(d['amount'])}.\n"
+                   f"Rahbardan {S.fmt_som(need)} so'raldi. Rahbar pul bergach xarajat o'tadi.",
                    reply_markup=AGAIN)
-    text = (f"🧾 <b>Kichik kassada pul yetmayapti</b> ({name})\n{d['cat']}: <b>{S.fmt_som(d['amount'])}</b>\n{d['note']}\n"
-            f"Kichik kassada: {S.fmt_som(left)} · yetmayapti: <b>{S.fmt_som(need)}</b>\n"
-            f"Kassangizda: {S.fmt_som(bb)}")
-    kb = IM(inline_keyboard=[[IB(text=f"💳 Kichik kassaga {S.fmt_som(need)} berib tasdiqlash", callback_data=f"xk:{eid}")],
+    text = (f"🧾 <b>Moliyaning xarajat puli yetmayapti</b> ({name})\n{d['cat']}: <b>{S.fmt_som(d['amount'])}</b>\n{d['note']}\n"
+            f"Xarajat pulida: {S.fmt_som(left)} · yetmayapti: <b>{S.fmt_som(need)}</b>\n"
+            f"Sizda: {S.fmt_som(bb)}")
+    kb = IM(inline_keyboard=[[IB(text=f"💳 {S.fmt_som(need)} berib tasdiqlash", callback_data=f"xk:{eid}")],
                              [IB(text="❌ Rad", callback_data=f"xn:{eid}")]])
     for b in bosses:
         if fid:
@@ -231,7 +231,7 @@ async def exp_topup(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         need = max(0, e.amount - (await petty_balance(s) or 0))
         bal = await boss_balance(s)
         if bal is None or need > bal:
-            await c.answer(f"Kassangizda pul yetarli emas. Qoldiq: {S.fmt_som(bal or 0)}, kerak: {S.fmt_som(need)}.",
+            await c.answer(f"Sizda pul yetarli emas. Bor: {S.fmt_som(bal or 0)}, kerak: {S.fmt_som(need)}.",
                            show_alert=True)
             return
     if await need_pin(c, state):
@@ -252,14 +252,14 @@ async def exp_topup(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         by = await s.get(Staff, e.by_id) if e.by_id else None
         info = f"{e.category} · {S.fmt_som(e.amount)}"
         pb, bal = await petty_balance(s), await boss_balance(s)
-    note = f"✅ Kichik kassaga {S.fmt_som(need)} berildi, xarajat tasdiqlandi. Kassangizda: {S.fmt_som(bal)}"
+    note = f"✅ Moliyaga {S.fmt_som(need)} berildi, xarajat tasdiqlandi. Sizda: {S.fmt_som(bal)}"
     try:
         await c.message.edit_caption(caption=(c.message.caption or "") + f"\n\n{note}")
     except Exception:
         await c.message.edit_text(c.message.html_text + f"\n\n{note}")
     if by and by.tg_id:
-        await send(bot, by.tg_id, f"🧾 Xarajat ({info}) tasdiqlandi. Rahbar kichik kassaga {S.fmt_som(need)} berdi — "
-                                  f"pulni rahbardan oling. Kichik kassada: {S.fmt_som(pb)}.")
+        await send(bot, by.tg_id, f"🧾 Xarajat ({info}) tasdiqlandi. Rahbar {S.fmt_som(need)} berdi — "
+                                  f"pulni rahbardan oling. Xarajat pulingiz: {S.fmt_som(pb)}.")
 
 
 @router.callback_query(F.data.startswith(("xy:", "xn:")))
@@ -306,9 +306,9 @@ async def petty_ask(c: CallbackQuery, state: FSMContext) -> None:
         pb, bb = await petty_balance(s), await boss_balance(s)
     await c.answer()
     if pb is None:
-        await c.message.answer("💳 Kassalar hali ochilmagan.", reply_markup=kassa_kb(False))
+        await c.message.answer("💼 Kassa hali ochilmagan.", reply_markup=kassa_kb(False))
         return
-    await c.message.answer(f"💳 Kichik kassada: <b>{S.fmt_som(pb)}</b>\n👤 Kassangizda: <b>{S.fmt_som(bb)}</b>",
+    await c.message.answer(f"💳 Moliyadagi xarajat puli: <b>{S.fmt_som(pb)}</b>\n👤 Sizda: <b>{S.fmt_som(bb)}</b>",
                            reply_markup=kassa_kb(True))
 
 
@@ -321,8 +321,8 @@ async def petty_reminder(bot: Bot) -> None:
             return
         to = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
     for t in to:
-        await send(bot, t, f"💳 Yangi oy: kichik kassada {S.fmt_som(pb)}. Kerak bo'lsa to'ldiring: "
-                           "💼 Kassa → 💳 Kichik kassaga pul berish.")
+        await send(bot, t, f"💳 Yangi oy: moliyadagi xarajat puli {S.fmt_som(pb)}. Kerak bo'lsa: "
+                           "💼 Kassa → 💳 Moliyaga xarajat puli berish.")
 
 
 # ================= 🛒 pullik xizmatlar =================
