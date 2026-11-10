@@ -88,6 +88,7 @@ async def enr_menu(c: CallbackQuery) -> None:
         rows.append([IB(text="❄️ Muzlatish", callback_data=f"fz:{eid}")])
     if role in LEAVE_ROLES:
         rows.append([IB(text="🔀 Boshqa guruhga ko'chirish", callback_data=f"mv:{eid}")])
+        rows.append([IB(text="✏️ Xato guruhga yozilgan — tuzatish", callback_data=f"rgfx:{eid}")])
         rows.append([IB(text="🚪 Guruhdan chiqarish", callback_data=f"lvq:{eid}")])
     rows.append([IB(text="⬅️ Kartaga qaytish", callback_data=f"st:{e.student_id}")])
     await c.message.edit_text("\n".join(lines), reply_markup=IM(inline_keyboard=rows))

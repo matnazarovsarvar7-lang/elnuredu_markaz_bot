@@ -75,6 +75,16 @@ async def reg_from_lead(c: CallbackQuery, state: FSMContext) -> None:
     await _ask_grade(c.message, state, prefix=f"Arizadan: <b>{lead.child_name}</b>, tel {lead.phone}\n\n")
 
 
+async def _back_to_confirm(msg: Message, state: FSMContext) -> bool:
+    """Tekshiruv sahifasidan bitta maydon tuzatilayotgan bo'lsa — qayta tekshiruvga qaytadi."""
+    d = await state.get_data()
+    if d.get("fixing") and d.get("join") and d.get("gid"):
+        await state.update_data(fixing=False)
+        await _confirm(msg, state, date.fromisoformat(d["join"]))
+        return True
+    return False
+
+
 @router.message(Rg.name)
 async def reg_name(m: Message, state: FSMContext) -> None:
     name = " ".join((m.text or "").split())
@@ -90,6 +100,8 @@ async def reg_name(m: Message, state: FSMContext) -> None:
         await m.answer(f"⚠️ Bazada shunga o'xshash ismli o'quvchi bor:\n{lst}\n\n"
                        "Agar u o'sha bola bo'lsa — yangisini ochmang: «👤 O'quvchi» → kartasi → «➕ Guruhga qo'shish».\n"
                        "Boshqa bola bo'lsa — davom eting (ota-ona telefoni bilan ajratiladi).")
+    if await _back_to_confirm(m, state):
+        return
     await _ask_grade(m, state)
 
 
@@ -106,6 +118,8 @@ async def reg_grade(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(grade=grade)
     d = await state.get_data()
     await c.message.edit_text(f"Sinf: {grade if grade <= 11 else 'bitirgan'} ✅")
+    if await _back_to_confirm(c.message, state):
+        return
     if d.get("phone"):
         await _ask_group(c.message, state)
         return
@@ -121,6 +135,8 @@ async def reg_phone(m: Message, state: FSMContext) -> None:
         await m.answer("Raqam noto'g'ri. Masalan: +998901234567")
         return
     await state.update_data(phone=phone)
+    if await _back_to_confirm(m, state):
+        return
     await _ask_group(m, state)
 
 
@@ -170,12 +186,51 @@ async def reg_group(c: CallbackQuery, state: FSMContext) -> None:
     wd = ["Du", "Se", "Chor", "Pay", "Ju", "Sha", "Yak"]
     days = [nth_lesson_on_or_after(t, g.days, i) for i in (1, 2, 3)]
     kb = IM(inline_keyboard=[[IB(text=("Bugun" if x == t else f"{wd[x.weekday()]}") + f" {x:%d.%m}",
-                                 callback_data=f"rgd:{x.isoformat()}") for x in days]])
+                                 callback_data=f"rgd:{x.isoformat()}") for x in days],
+                             [IB(text="⬅️ Guruhni o'zgartirish", callback_data="rgbg")]])
     d = await state.get_data()
     step = "" if d.get("sid") else "5/5. "
     await c.message.edit_text(f"Guruh: <b>{g.name}</b> ✅\n\n{step}Birinchi darsga qaysi kuni keladi (keldi)?\nPastda shu guruhning eng yaqin dars kunlari.\n"
                               f"Boshqa sana bo'lsa yozing: <i>12.11</i>\n"
                               f"(ko'pi bilan {BACK_DAYS} kun oldingi sana)", reply_markup=kb)
+
+
+@router.callback_query(F.data == "rgbg")
+async def reg_back_group(c: CallbackQuery, state: FSMContext) -> None:
+    d = await state.get_data()
+    if not (d.get("name") or d.get("sid")):
+        await c.answer("Ma'lumot eskirgan, qaytadan boshlang.", show_alert=True)
+        return
+    await c.answer()
+    await c.message.edit_text("Guruh qayta tanlanmoqda…")
+    await _ask_group(c.message, state)
+
+
+@router.callback_query(F.data.startswith("rgf:"))
+async def reg_fix(c: CallbackQuery, state: FSMContext) -> None:
+    """Tekshiruv sahifasida: ism, sinf, telefon, guruh yoki sanani tuzatish."""
+    what = c.data.split(":")[1]
+    d = await state.get_data()
+    if not d.get("gid"):
+        await c.answer("Ma'lumot eskirgan, qaytadan boshlang.", show_alert=True)
+        return
+    await c.answer()
+    await state.update_data(fixing=True)
+    if what == "n":
+        await state.set_state(Rg.name)
+        await c.message.answer("Familiya va ismni qaytadan yozing:")
+    elif what == "c":
+        await _ask_grade(c.message, state)
+    elif what == "p":
+        await state.set_state(Rg.phone)
+        await c.message.answer("Ota-ona telefon raqamini qaytadan yozing: +998901234567")
+    elif what == "g":
+        await state.update_data(fixing=False)     # guruhdan keyin sana ham qayta so'raladi
+        await _ask_group(c.message, state)
+    else:
+        await state.update_data(fixing=False)
+        await state.set_state(Rg.date)
+        await c.message.answer("Birinchi dars sanasini yozing: <i>12.11</i>")
 
 
 @router.callback_query(Rg.date, F.data.startswith("rgd:"))
@@ -228,8 +283,15 @@ async def _confirm(msg: Message, state: FSMContext, join: date) -> None:
               f"Oylik narx: {S.fmt_som(fee)}",
               f"{join:%m}-oy uchun to'lov: {S.fmt_som(first)}" + (" (qolgan darslar bo'yicha)" if first != fee else ""),
               f"To'lov muddati: {deadline:%d.%m.%Y} gacha"]
-    await msg.answer("\n".join(lines), reply_markup=IM(inline_keyboard=[
-        [IB(text="✅ Saqlash", callback_data="rgok"), IB(text="❌ Bekor qilish", callback_data="rgx")]]))
+    fix = [IB(text="✏️ Guruh", callback_data="rgf:g"), IB(text="✏️ Sana", callback_data="rgf:d")]
+    if not d.get("sid"):
+        fix = [IB(text="✏️ Ism", callback_data="rgf:n"), IB(text="✏️ Sinf", callback_data="rgf:c"),
+               IB(text="✏️ Telefon", callback_data="rgf:p")], fix
+    else:
+        fix = (fix,)
+    await state.set_state(Rg.date)     # sanani yozib ham o'zgartirsa bo'ladi
+    await msg.answer("\n".join(lines) + "\n\n<i>Xato bo'lsa — pastdan tuzating.</i>", reply_markup=IM(inline_keyboard=[
+        *fix, [IB(text="✅ Saqlash", callback_data="rgok"), IB(text="❌ Bekor qilish", callback_data="rgx")]]))
 
 
 @router.callback_query(F.data == "rgx")
@@ -262,16 +324,19 @@ async def reg_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                 lead = await s.get(Lead, d["lead"])
                 lead.status, lead.handled_by = "oquvchi", who.staff.id
         await s.flush()
-        s.add(Enrollment(student_id=stu.id, group_id=g.id, join_date=join, registered_at=t, tier=stu.tier))
+        enr = Enrollment(student_id=stu.id, group_id=g.id, join_date=join, registered_at=t, tier=stu.tier)
+        s.add(enr)
         await S.audit(s, who.staff, "royxat" if new else "guruhga_qoshdi", student=stu.full_name, group=g.name,
                       join=join.isoformat())
         await s.commit()
+        eid = enr.id
         parent_tgs = [p.tg_id for p in stu.parents if p.tg_id]
         teacher_tg = g.teacher.tg_id if g.teacher else None
         name, gname, sid = stu.full_name, g.name, stu.id
     await state.clear()
     kb = IM(inline_keyboard=[[IB(text="➕ Yana yangi o'quvchi", callback_data="rgnew")],
                              [IB(text="➕ Shu o'quvchini yana bir guruhga", callback_data=f"sag:{sid}")],
+                             [IB(text="🔀 Guruh xato bo'lsa — almashtirish", callback_data=f"rgfx:{eid}")],
                              [IB(text="👤 Kartasini ochish", callback_data=f"st:{sid}")]])
     await c.message.edit_text(f"✅ Saqlandi: <b>{name}</b> → {gname}, {join:%d.%m} dan." +
                               ("\nOta-ona endi o'z raqami bilan botga kira oladi." if new else ""), reply_markup=kb)
@@ -279,3 +344,70 @@ async def reg_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         await send(bot, teacher_tg, f"🆕 Guruhingizga yangi o'quvchi: <b>{name}</b> ({gname}), {join:%d.%m} dan.")
     for p in parent_tgs:
         await send(bot, p, f"✅ {name} «{gname}» guruhiga qo'shildi. Birinchi dars: {join:%d.%m.%Y}.")
+
+
+# ---------- xato guruhga yozilganini tuzatish (hali dars/to'lov bo'lmasa — oddiy almashtirish) ----------
+async def _enr_clean(s, eid: int) -> bool:
+    from app.db.models import Attendance, Payment
+    att = (await s.execute(select(Attendance.id).where(Attendance.enrollment_id == eid))).first()
+    pay = (await s.execute(select(Payment.id).where(Payment.enrollment_id == eid))).first()
+    return not att and not pay
+
+
+@router.callback_query(F.data.startswith("rgfx:"))
+async def reg_fix_group(c: CallbackQuery) -> None:
+    eid = int(c.data.split(":")[1])
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        if not (who.staff and who.staff.current_role in ("admin", "rahbar", "moliya")):
+            await c.answer()
+            return
+        e = await s.get(Enrollment, eid, options=[selectinload(Enrollment.student), selectinload(Enrollment.group)])
+        if not await _enr_clean(s, eid):
+            await c.answer()
+            await c.message.answer("Bu guruhda davomat yoki to'lov bor — oddiy almashtirib bo'lmaydi. "
+                                   "Ko'chirish orqali qiling:", reply_markup=IM(inline_keyboard=[[
+                                       IB(text="🔀 Boshqa guruhga ko'chirish", callback_data=f"mv:{eid}")]]))
+            return
+        busy = set((await s.execute(select(Enrollment.group_id).where(
+            Enrollment.student_id == e.student_id, Enrollment.active))).scalars())
+        gs = (await s.execute(select(Group).where(Group.active).order_by(Group.subject, Group.name))).scalars().all()
+    rows = [[IB(text=f"{g.name} · {DAYS[g.days]}", callback_data=f"rgfy:{eid}:{g.id}")] for g in gs if g.id not in busy]
+    await c.answer()
+    await c.message.answer(f"🔀 <b>{e.student.full_name}</b> xato «{e.group.name}» ga yozilgan. To'g'ri guruhni tanlang:",
+                           reply_markup=IM(inline_keyboard=rows or [[IB(text="Boshqa guruh yo'q", callback_data="rgx")]]))
+
+
+@router.callback_query(F.data.startswith("rgfy:"))
+async def reg_fix_group_save(c: CallbackQuery, bot: Bot) -> None:
+    _, eid, gid = c.data.split(":")
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        e = await s.get(Enrollment, int(eid), options=[selectinload(Enrollment.student), selectinload(Enrollment.group)])
+        if not await _enr_clean(s, e.id):
+            await c.answer("Guruhda davomat/to'lov paydo bo'ldi — ko'chirish orqali qiling.", show_alert=True)
+            return
+        from app.db.models import Staff
+        g = await s.get(Group, int(gid))
+        old_g = e.group
+        old_t = await s.get(Staff, old_g.teacher_id) if old_g.teacher_id else None
+        new_t = await s.get(Staff, g.teacher_id) if g.teacher_id else None
+        old = e.group.name
+        t = today()
+        join = e.join_date if e.join_date >= t else t
+        if g.days:                    # yangi guruhning eng yaqin dars kuniga
+            join = nth_lesson_on_or_after(join, g.days, 1)
+        name, gname = e.student.full_name, g.name
+        tell = []
+        if old_t and old_t.tg_id and old_g.teacher_id != g.teacher_id:
+            tell.append((old_t.tg_id, f"↩️ {name} «{old}» guruhiga xato yozilgan edi — olib tashlandi."))
+        if new_t and new_t.tg_id:
+            tell.append((new_t.tg_id, f"🆕 Guruhingizga yangi o'quvchi: <b>{name}</b> ({gname}), {join:%d.%m} dan."))
+        e.group_id, e.join_date = g.id, join
+        await S.audit(s, who.staff, "guruh_tuzatish", student=e.student.full_name, old=old, new=g.name)
+        await s.commit()
+    for t_, txt in tell:
+        await send(bot, t_, txt)
+    await c.answer("Tuzatildi")
+    await c.message.edit_text(f"✅ {name}: «{old}» → <b>«{gname}»</b>. Birinchi dars: {join:%d.%m.%Y}.\n"
+                              "Sana boshqa bo'lsa — o'quvchi kartasidan o'zgartiring.")

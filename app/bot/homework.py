@@ -97,6 +97,7 @@ def prompt_kb(lid: int, given: bool = False) -> IM:
     first = "✏️ Vazifani o'zgartirish" if given else "✍️ Uy vazifasini yozish"
     return IM(inline_keyboard=[[IB(text=first, callback_data=f"hwg:{lid}")],
                                [IB(text="👥 Kichik guruhga alohida vazifa", callback_data=f"hwp:{lid}")],
+                               [IB(text="💬 Berilgan vazifaga izoh qo'shish", callback_data=f"hwz:{lid}")],
                                [IB(text="🚫 Bugun vazifa yo'q", callback_data=f"hwn:{lid}")],
                                [IB(text="⭐ Baho qo'yish (ixtiyoriy)", callback_data=f"bh:{lid}")],
                                [IB(text="🔔 Dars tugadi — ota-onalarga xabar", callback_data=f"dz:{lid}")],
@@ -281,6 +282,18 @@ async def hw_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                                  if missing else ""))
 
 
+async def _targets(s, roster) -> tuple[dict[int, None], int]:
+    targets: dict[int, None] = {}
+    missing = 0
+    for e in roster:
+        ids = await S.parent_tg_ids(s, e.student_id)
+        if not ids:
+            missing += 1
+        for t in ids:
+            targets[t] = None
+    return targets, missing
+
+
 async def deliver(bot: Bot, lid: int, corrected: bool = False, part: int | None = None) -> tuple[int, int]:
     """Vazifani yuboradi: part=None — umumiy (kichik guruhga kirmagan barcha o'quvchilar, kelmaganlarga ham);
     part=i — faqat o'sha kichik guruh o'quvchilariga. O'quvchi va ota-onalarga."""
@@ -299,14 +312,7 @@ async def deliver(bot: Bot, lid: int, corrected: bool = False, part: int | None 
             roster = [e for e in roster if e.id in only]
             text_, title = p.get("text"), p.get("title")
             files = files_of(p.get("fid"), p.get("kind"), p.get("files"))
-        targets: dict[int, None] = {}
-        missing = 0
-        for e in roster:
-            ids = await S.parent_tg_ids(s, e.student_id)
-            if not ids:
-                missing += 1
-            for t in ids:
-                targets[t] = None
+        targets, missing = await _targets(s, roster)
         nxt = next_lesson(g, les.date)
     head = "✏️ <b>Uy vazifasi (tuzatildi)</b>" if corrected else "📚 <b>Uy vazifasi</b>"
     when = f" soat {g.start_time:%H:%M}" if g.start_time else ""
@@ -623,3 +629,82 @@ async def grade_save(c: CallbackQuery, bot: Bot) -> None:
                               any(v == "alo" for v in draft.values()) else ""))
     for t, text in notes:
         await send(bot, t, text)
+
+
+# ---------- 💬 berilgan vazifaga izoh qo'shish ----------
+class HwZ(StatesGroup):
+    text = State()
+
+
+@router.callback_query(F.data.startswith("hwz:"))
+async def hwz_start(c: CallbackQuery, state: FSMContext) -> None:
+    lid = int(c.data.split(":")[1])
+    async with Session() as s:
+        les = await s.get(Lesson, lid)
+    main = bool(les and (les.homework_text or les.homework_file_id or les.homework_files))
+    parts = (les.homework_parts or []) if les else []
+    if not main and not parts:
+        await c.answer("Avval vazifa bering — keyin izoh qo'shiladi.", show_alert=True)
+        return
+    await c.answer()
+    if parts:
+        rows = ([[IB(text="📚 Umumiy vazifaga", callback_data=f"hwzp:{lid}:m")]] if main else []) + [
+            [IB(text=f"👥 {p.get('title') or f'{i + 1}-kichik guruh'} ({len(p['students'])} o'quvchi)",
+                callback_data=f"hwzp:{lid}:{i}")] for i, p in enumerate(parts)]
+        await c.message.answer("Qaysi vazifaga izoh?", reply_markup=IM(inline_keyboard=rows))
+        return
+    await _hwz_ask(c.message, state, lid, None)
+
+
+@router.callback_query(F.data.startswith("hwzp:"))
+async def hwz_part(c: CallbackQuery, state: FSMContext) -> None:
+    _, lid, p = c.data.split(":")
+    await c.answer()
+    await _hwz_ask(c.message, state, int(lid), None if p == "m" else int(p))
+
+
+async def _hwz_ask(msg: Message, state: FSMContext, lid: int, part: int | None) -> None:
+    await state.clear()
+    await state.set_state(HwZ.text)
+    await state.update_data(lid=lid, part=part)
+    await msg.answer("💬 Izohni yozing (masalan: «3-misolni ham bajaring» yoki «daftarni olib keling»).\n"
+                     "U vazifa olgan ota-ona va o'quvchilarga yuboriladi va vazifaga qo'shiladi.")
+
+
+@router.message(HwZ.text)
+async def hwz_send(m: Message, state: FSMContext, bot: Bot) -> None:
+    text = (m.text or m.caption or "").strip()
+    if not text:
+        await m.answer("Izohni matn bilan yozing.")
+        return
+    d = await state.get_data()
+    await state.clear()
+    async with Session() as s:
+        les = await s.get(Lesson, d["lid"])
+        g = await s.get(Group, les.group_id)
+        roster = await S.group_roster(s, g.id, les.date)
+        if d["part"] is None:
+            taken = _part_ids(les)
+            roster = [e for e in roster if e.id not in taken]
+            les.homework_text = ((les.homework_text or "") + f"\n💬 {text}").strip()[:1500]
+            title = None
+        else:
+            parts = [dict(p) for p in les.homework_parts]
+            p = parts[d["part"]]
+            only = set(p["students"])
+            roster = [e for e in roster if e.id in only]
+            p["text"] = ((p.get("text") or "") + f"\n💬 {text}").strip()[:1500]
+            les.homework_parts = parts
+            title = p.get("title")
+        targets, missing = await _targets(s, roster)
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "vazifa_izoh", lesson=les.id, text=text[:200])
+        await s.commit()
+        lid = les.id
+    msg = (f"💬 <b>Uy vazifasiga izoh</b>\n{g.name} · {les.date:%d.%m}" + (f" · {title}" if title else "")
+           + f"\n\n{text}")
+    sent = 0
+    for t in targets:
+        sent += bool(await send(bot, t, msg))
+    await m.answer(f"✅ Izoh yuborildi: {sent} ta qabul qiluvchi." + (f"\n⚠️ Botga ulanmaganlar: {missing}" if missing else ""),
+                   reply_markup=prompt_kb(lid, True))
