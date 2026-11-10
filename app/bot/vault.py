@@ -143,6 +143,7 @@ def kassa_kb(opened: bool) -> IM:
                                [IB(text="➕ Kassamga kirim", callback_data="kv:in"),
                                 IB(text="➖ Kassamdan chiqim", callback_data="kv:out")],
                                [IB(text="✏️ Qoldiqni tuzatish (sanab ko'rdim)", callback_data="kv:fix")],
+                               [IB(text="✏️ Kichik kassani tuzatish", callback_data="kv:pfix")],
                                [IB(text="🏦 Fondlar", callback_data="fd")],
                                [IB(text="📋 Kassam harakatlari", callback_data="kv:list"),
                                 IB(text="📋 Naqd to'lovlar", callback_data="cnl")]])
@@ -167,10 +168,12 @@ ASK = {"open": "🔓 <b>Kassalarni ochish</b>\n1/2. Hozir <b>sizning qo'lingizda
        "petty": "💳 Kichik kassaga qancha pul berasiz? Summani yozing:",
        "in": "➕ Kassangizga qancha pul kirdi? Summani yozing (masalan, o'zingiz qo'shgan pul):",
        "out": "➖ Kassangizdan qancha pul chiqdi? Summani yozing:",
+       "pfix": "✏️ Moliyadagi <b>kichik kassada</b> (faqat xarajat puli, o'quvchilar to'lovi emas) hozir aniq qancha pul bor? "
+               "Summani yozing — bot shunga tenglaydi (yo'q bo'lsa 0):",
        "fix": "✏️ Kassangizni sanadingizmi? Hozir qo'lingizdagi <b>aniq</b> summani yozing — bot qoldiqni shunga tenglaydi:"}
 
 
-@router.callback_query(F.data.startswith("kv:") & F.data.in_({"kv:open", "kv:petty", "kv:in", "kv:out", "kv:fix"}))
+@router.callback_query(F.data.startswith("kv:") & F.data.in_({"kv:open", "kv:petty", "kv:in", "kv:out", "kv:fix", "kv:pfix"}))
 async def kv_ask(c: CallbackQuery, state: FSMContext) -> None:
     if not await _boss(c.from_user.id):
         await c.answer("Faqat rahbar.", show_alert=True)
@@ -231,15 +234,16 @@ async def kv_open_again(c: CallbackQuery, state: FSMContext) -> None:
 async def kv_amount(m: Message, state: FSMContext) -> None:
     a = _amount(m.text)
     d = await state.get_data()
-    if a is None or (a == 0 and d["act"] != "fix"):
+    if a is None or (a == 0 and d["act"] not in ("fix", "pfix")):
         await m.answer("Summani raqam bilan yozing: 500000")
         return
     await state.update_data(amount=a)
-    if d["act"] in ("in", "out", "fix"):
+    if d["act"] in ("in", "out", "fix", "pfix"):
         await state.set_state(Kv.note)
         hint = {"in": "Qayerdan? (masalan: o'zim qo'shdim)",
                 "out": "Nima uchun? Tanlang yoki yozing:",
-                "fix": "Farq sababi? (masalan: avvalgi xarajat kiritilmagan edi)"}[d["act"]]
+                "fix": "Farq sababi? (masalan: avvalgi xarajat kiritilmagan edi)",
+                "pfix": "Sababi? (masalan: ochishda noto'g'ri kiritilgan)"}[d["act"]]
         kb = IM(inline_keyboard=[[IB(text="👤 Egasi oldi (foydadan)", callback_data="kvn:egasi")],
                                  [IB(text="🏦 Bankka/kartaga qo'ydim", callback_data="kvn:bank")]]) if d["act"] == "out" else None
         await m.answer(hint, reply_markup=kb)
@@ -269,7 +273,8 @@ async def _confirm(m: Message, state: FSMContext, uid: int) -> None:
     text = {"petty": f"💳 Kichik kassaga <b>{S.fmt_som(a)}</b> berasizmi? (kassangizdan chiqadi)",
             "in": f"➕ Kassangizga <b>{S.fmt_som(a)}</b> kirim",
             "out": f"➖ Kassangizdan <b>{S.fmt_som(a)}</b> chiqim",
-            "fix": f"✏️ Kassangiz qoldig'i <b>{S.fmt_som(a)}</b> deb tenglashtirilsinmi?"}[d["act"]]
+            "fix": f"✏️ Kassangiz qoldig'i <b>{S.fmt_som(a)}</b> deb tenglashtirilsinmi?",
+            "pfix": f"✏️ Kichik kassa qoldig'i <b>{S.fmt_som(a)}</b> deb tenglashtirilsinmi?"}[d["act"]]
     if d.get("note"):
         text += f"\nIzoh: {d['note']}"
     await m.answer(text + "\n(PIN so'raladi)", reply_markup=IM(inline_keyboard=[[
@@ -331,6 +336,11 @@ async def kv_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             elif act == "out":
                 s.add(KassaMove(kassa="rahbar", amount=-a, kind=d.get("kind", "chiqim"), note=d.get("note"), by_id=st.id))
                 msg = f"✅ Chiqim: {S.fmt_som(a)}. Kassangizda: {S.fmt_som(bal - a)}"
+            elif act == "pfix":
+                pb = await petty_balance(s)
+                s.add(KassaMove(kassa="kichik", amount=a - pb, kind="tuzatish", note=d.get("note"), by_id=st.id))
+                msg = f"✅ Kichik kassa {S.fmt_som(a)} ga tenglashtirildi (farq {'+' if a >= pb else ''}{S.fmt_som(a - pb)})."
+                notify = f"✏️ Rahbar kichik kassani tuzatdi: endi <b>{S.fmt_som(a)}</b>."
             else:
                 s.add(KassaMove(kassa="rahbar", amount=a - bal, kind="tuzatish", note=d.get("note"), by_id=st.id))
                 msg = f"✅ Qoldiq {S.fmt_som(a)} ga tenglashtirildi (farq {'+' if a >= bal else ''}{S.fmt_som(a - bal)})."
