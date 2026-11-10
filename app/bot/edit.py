@@ -19,6 +19,7 @@ from app import services as S
 
 router = Router()
 DAYS = {"toq": "Toq (Du-Chor-Ju)", "juft": "Juft (Se-Pay-Sha)", "har": "Har kuni (Du-Sha)"}
+EDIT_ROLES = ("admin", "moliya", "rahbar")
 DISC = {"none": "Chegirmasiz", "markaz": "Markaz hisobidan", "umumiy": "Umumiy", "ijtimoiy": "Ijtimoiy (100%)"}
 
 
@@ -30,6 +31,9 @@ class Ed(StatesGroup):
     par_phone = State()
     disc_pct = State()
     staff_add = State()
+    st_name = State()
+    st_region = State()
+    par_replace = State()
 
 
 async def _role(tg_id: int) -> tuple[Staff | None, str | None]:
@@ -170,9 +174,12 @@ async def _student_card(sid: int, role: str) -> tuple[str, IM]:
     grp = "\n".join(f"• {e.group.name} — {S.fmt_som(fees[e.id])}" + (" (istisno narx)" if e.price_override else "")
                     + (f", {DISC[e.discount_kind]} {e.discount_percent}%" if e.discount_kind != "none" else "")
                     for e in enrs) or "—"
-    text = (f"<b>{stu.full_name}</b>\nHolat: {stu.status}\nCoin: {stu.coins}\nOta-ona telefoni: {par}\n"
+    grade = "—" if not stu.grade else ("bitirgan / katta" if stu.grade > 11 else f"{stu.grade}-sinf")
+    text = (f"<b>{stu.full_name}</b>\nSinf: {grade} · Hudud: {stu.region or '—'}\n"
+            f"Holat: {stu.status}\nCoin: {stu.coins}\nOta-ona telefoni: {par}\n"
             f"O'quvchi telefoni: {stu.phone or '—'}\n\nGuruhlar:\n{grp}")
-    rows = [[IB(text="📞 Ota-ona raqami qo'shish", callback_data=f"spa:{sid}")],
+    rows = [[IB(text="✏️ Tahrirlash", callback_data=f"sx:{sid}")]] if role in EDIT_ROLES else []
+    rows += [[IB(text="📞 Ota-ona raqami qo'shish", callback_data=f"spa:{sid}")],
             [IB(text="📱 O'quvchi raqami", callback_data=f"sph:{sid}")],
             [IB(text="➕ Guruhga qo'shish", callback_data=f"sag:{sid}")]]
     if role in ("moliya", "rahbar"):
@@ -235,6 +242,264 @@ async def student_phone_set(m: Message, state: FSMContext) -> None:
     await state.clear()
     text, kb = await _student_card(d["sid"], role)
     await m.answer("Saqlandi ✅\n\n" + text, reply_markup=kb)
+
+
+# ---------- ✏️ o'quvchini tahrirlash ----------
+async def _editor(tg_id: int):
+    async with Session() as s:
+        who = await S.who_by_tg(s, tg_id)
+    st = who.staff
+    return st if st and st.current_role in EDIT_ROLES else None
+
+
+def _edit_kb(sid: int) -> IM:
+    return IM(inline_keyboard=[
+        [IB(text="👤 Ism-familiya", callback_data=f"sxn:{sid}"), IB(text="🎓 Sinf", callback_data=f"sxg:{sid}")],
+        [IB(text="📍 Hudud", callback_data=f"sxr:{sid}"), IB(text="📞 Ota-ona raqamlari", callback_data=f"sxp:{sid}")],
+        [IB(text="⬅️ Kartaga qaytish", callback_data=f"st:{sid}")]])
+
+
+@router.callback_query(F.data.startswith("sx:"))
+async def st_edit_menu(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _editor(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    await state.clear()
+    sid = int(c.data.split(":")[1])
+    async with Session() as s:
+        stu = await s.get(Student, sid)
+    await c.answer()
+    await c.message.edit_text(f"✏️ <b>{stu.full_name}</b> — nimani o'zgartiramiz?\n\n"
+                              "Guruhni almashtirish: kartadagi «⚙️ guruh» tugmasi → «🔀 Boshqa guruhga ko'chirish».",
+                              reply_markup=_edit_kb(sid))
+
+
+async def _back_to_card(m: Message, sid: int, tg_id: int, note: str) -> None:
+    _, role = await _role(tg_id)
+    text, kb = await _student_card(sid, role)
+    await m.answer(note + "\n\n" + text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith(("sxn:", "sxr:")))
+async def st_edit_text_ask(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _editor(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    kind, sid = c.data.split(":")
+    await state.set_state(Ed.st_name if kind == "sxn" else Ed.st_region)
+    await state.update_data(sid=int(sid))
+    await c.answer()
+    await c.message.answer("Yangi familiya va ismni to'liq yozing (masalan: <code>Karimov Jasur</code>):" if kind == "sxn"
+                           else "Hududni yozing (masalan: <code>Xorazm, Urganch tumani</code>):")
+
+
+@router.message(Ed.st_name)
+async def st_name_set(m: Message, state: FSMContext) -> None:
+    name = " ".join((m.text or "").split())
+    if len(name) < 3 or len(name) > 120 or len(name.split()) < 2 or any(ch.isdigit() for ch in name):
+        await m.answer("Familiya va ismni harflar bilan, kamida ikki so'z qilib yozing. Masalan: Karimov Jasur")
+        return
+    d = await state.get_data()
+    async with Session() as s:
+        stu = await s.get(Student, d["sid"])
+        same = [x for x in await S.search_students(s, name) if x.id != stu.id and x.full_name.lower() == name.lower()]
+        old, stu.full_name = stu.full_name, name
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "oquvchi_ism", old=old, new=name)
+        await s.commit()
+    await state.clear()
+    warn = "\n⚠️ Bazada shu ismli boshqa o'quvchi ham bor — adashmaslik uchun tekshiring." if same else ""
+    await _back_to_card(m, d["sid"], m.from_user.id, f"✅ Ism o'zgartirildi: {old} → <b>{name}</b>{warn}")
+
+
+@router.message(Ed.st_region)
+async def st_region_set(m: Message, state: FSMContext) -> None:
+    reg = " ".join((m.text or "").split())
+    if len(reg) < 3 or len(reg) > 80:
+        await m.answer("Hududni 3–80 harf oralig'ida yozing. Masalan: Xorazm, Urganch tumani")
+        return
+    d = await state.get_data()
+    async with Session() as s:
+        stu = await s.get(Student, d["sid"])
+        old, stu.region = stu.region, reg
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "oquvchi_hudud", student=stu.full_name, old=old, new=reg)
+        await s.commit()
+    await state.clear()
+    await _back_to_card(m, d["sid"], m.from_user.id, "✅ Hudud saqlandi.")
+
+
+@router.callback_query(F.data.startswith("sxg:"))
+async def st_grade_ask(c: CallbackQuery) -> None:
+    sid = c.data.split(":")[1]
+    nums = [IB(text=str(i), callback_data=f"sxgs:{sid}:{i}") for i in range(1, 12)]
+    await c.answer()
+    await c.message.edit_text("🎓 Nechanchi sinfda o'qiydi?", reply_markup=IM(inline_keyboard=[
+        nums[0:4], nums[4:8], nums[8:11], [IB(text="Bitirgan / kattalar", callback_data=f"sxgs:{sid}:12")],
+        [IB(text="⬅️ Orqaga", callback_data=f"sx:{sid}")]]))
+
+
+@router.callback_query(F.data.startswith("sxgs:"))
+async def st_grade_set(c: CallbackQuery) -> None:
+    from app.logic.money import tier_of_grade
+    st = await _editor(c.from_user.id)
+    if not st:
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    _, sid, g = c.data.split(":")
+    sid, g = int(sid), int(g)
+    async with Session() as s:
+        stu = await s.get(Student, sid)
+        old_g, stu.grade = stu.grade, g
+        new_tier = tier_of_grade(g)
+        enrs = await S.student_enrollments(s, sid)
+        differ = [e for e in enrs if (e.tier or stu.tier) != new_tier and not e.price_override]
+        stu.tier = new_tier
+        await S.audit(s, st, "oquvchi_sinf", student=stu.full_name, old=old_g, new=g)
+        await s.commit()
+    gtxt = "bitirgan / katta" if g > 11 else f"{g}-sinf"
+    await c.answer("Saqlandi")
+    if differ:
+        note = (f"✅ Sinf: {gtxt}.\n\nℹ️ Yangi sinf boshqa narx toifasiga to'g'ri keladi, lekin guruhdagi narx "
+                "o'zgarmadi. Narxni o'zgartirishni faqat rahbar hal qiladi.")
+        kb = [[IB(text="💱 Narxni yangi toifaga o'tkazish", callback_data=f"sxt:{sid}")]] if st.current_role == "rahbar" else []
+        kb.append([IB(text="⬅️ Kartaga qaytish", callback_data=f"st:{sid}")])
+        await c.message.edit_text(note, reply_markup=IM(inline_keyboard=kb))
+        if st.current_role != "rahbar":
+            async with Session() as s:
+                bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+            for b in bosses:
+                await send(c.bot, b, f"🎓 {st.full_name} «{stu.full_name}» sinfini {gtxt} ga o'zgartirdi. "
+                                     "Narx toifasi farq qiladi — kerak bo'lsa o'quvchi kartasida hal qiling.",
+                           reply_markup=IM(inline_keyboard=[[IB(text="💱 Narxni yangi toifaga o'tkazish",
+                                                                callback_data=f"sxt:{sid}")]]))
+    else:
+        await c.message.edit_text(f"✅ Sinf: {gtxt}.", reply_markup=IM(inline_keyboard=[
+            [IB(text="⬅️ Kartaga qaytish", callback_data=f"st:{sid}")]]))
+
+
+@router.callback_query(F.data.startswith("sxt:"))
+async def st_tier_apply(c: CallbackQuery) -> None:
+    st = await _editor(c.from_user.id)
+    if not st or st.current_role != "rahbar":
+        await c.answer("Faqat rahbar", show_alert=True)
+        return
+    sid = int(c.data.split(":")[1])
+    async with Session() as s:
+        stu = await s.get(Student, sid)
+        n = 0
+        for e in await S.student_enrollments(s, sid):
+            if not e.price_override and e.tier != stu.tier:
+                e.tier, n = stu.tier, n + 1
+        await S.audit(s, st, "oquvchi_toifa", student=stu.full_name, tier=stu.tier)
+        await s.commit()
+    await c.answer("Saqlandi")
+    await c.message.edit_text(f"✅ {n} ta guruhda narx yangi toifaga o'tkazildi (shu oy hisobidan).")
+
+
+@router.callback_query(F.data.startswith("sxp:"))
+async def st_parents(c: CallbackQuery) -> None:
+    sid = int(c.data.split(":")[1])
+    async with Session() as s:
+        stu = await s.get(Student, sid, options=[selectinload(Student.parents)], populate_existing=True)
+        pars = list(stu.parents)
+    rows = []
+    for p in pars:
+        rows.append([IB(text=f"🔁 {p.phone}", callback_data=f"sxpr:{sid}:{p.id}"),
+                     IB(text="🗑 O'chirish", callback_data=f"sxpd:{sid}:{p.id}")])
+    rows.append([IB(text="➕ Yangi raqam qo'shish", callback_data=f"spa:{sid}")])
+    rows.append([IB(text="⬅️ Orqaga", callback_data=f"sx:{sid}")])
+    await c.answer()
+    await c.message.edit_text(f"📞 <b>{stu.full_name}</b> — ota-ona raqamlari.\n🔁 — raqamni almashtirish, 🗑 — o'chirish."
+                              + ("" if pars else "\n\nHozircha raqam yo'q."), reply_markup=IM(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("sxpr:"))
+async def st_parent_replace_ask(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _editor(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    _, sid, pid = c.data.split(":")
+    await state.set_state(Ed.par_replace)
+    await state.update_data(sid=int(sid), pid=int(pid))
+    await c.answer()
+    await c.message.answer("Yangi raqamni yozing: +998901234567")
+
+
+async def _unlink_parent(s, stu: Student, par: Parent) -> None:
+    """Ota-onani shu o'quvchidan ajratadi; boshqa farzandi qolmasa botga kirishi yopiladi."""
+    if par in stu.parents:
+        stu.parents.remove(par)
+    await s.flush()
+    await s.refresh(par, ["children"])
+    if not par.children:
+        par.tg_id = None
+
+
+@router.message(Ed.par_replace)
+async def st_parent_replace(m: Message, state: FSMContext) -> None:
+    phone = S.norm_phone(m.text)
+    if not phone:
+        await m.answer("Raqam noto'g'ri. Masalan: +998901234567")
+        return
+    d = await state.get_data()
+    async with Session() as s:
+        stu = await s.get(Student, d["sid"], options=[selectinload(Student.parents)])
+        old = await s.get(Parent, d["pid"])
+        if old.phone == phone:
+            await state.clear()
+            await m.answer("Bu raqam allaqachon shu. O'zgarish yo'q.")
+            return
+        new = (await s.execute(select(Parent).where(Parent.phone == phone))).scalar_one_or_none() or Parent(phone=phone)
+        if new not in stu.parents:
+            stu.parents.append(new)
+        old_phone = old.phone
+        await _unlink_parent(s, stu, old)
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "otaona_tel_almashdi", student=stu.full_name, old=old_phone, new=phone)
+        await s.commit()
+    await state.clear()
+    await _back_to_card(m, d["sid"], m.from_user.id,
+                        f"✅ Raqam almashtirildi: {old_phone} → {phone}. Ota-ona yangi raqam bilan botga kiradi.")
+
+
+@router.callback_query(F.data.startswith("sxpd:"))
+async def st_parent_del_ask(c: CallbackQuery) -> None:
+    _, sid, pid = c.data.split(":")
+    async with Session() as s:
+        stu = await s.get(Student, int(sid), options=[selectinload(Student.parents)])
+        p = await s.get(Parent, int(pid))
+        last = len(stu.parents) <= 1
+    if last:
+        await c.answer("Bu yagona raqam. Avval yangi raqam qo'shing yoki 🔁 bilan almashtiring.", show_alert=True)
+        return
+    await c.answer()
+    await c.message.edit_text(f"🗑 {p.phone} raqami {stu.full_name} kartasidan o'chirilsinmi?\n"
+                              "Bu raqam endi shu o'quvchi haqida xabar olmaydi.",
+                              reply_markup=IM(inline_keyboard=[[IB(text="✅ Ha, o'chirish", callback_data=f"sxpy:{sid}:{pid}"),
+                                                                IB(text="❌ Yo'q", callback_data=f"sxp:{sid}")]]))
+
+
+@router.callback_query(F.data.startswith("sxpy:"))
+async def st_parent_del(c: CallbackQuery) -> None:
+    st = await _editor(c.from_user.id)
+    if not st:
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    _, sid, pid = c.data.split(":")
+    async with Session() as s:
+        stu = await s.get(Student, int(sid), options=[selectinload(Student.parents)])
+        p = await s.get(Parent, int(pid))
+        if len(stu.parents) <= 1:
+            await c.answer("Yagona raqamni o'chirib bo'lmaydi.", show_alert=True)
+            return
+        phone = p.phone
+        await _unlink_parent(s, stu, p)
+        await S.audit(s, st, "otaona_tel_ochirildi", student=stu.full_name, phone=phone)
+        await s.commit()
+    await c.answer("O'chirildi")
+    await c.message.edit_text(f"✅ {phone} o'chirildi.", reply_markup=IM(inline_keyboard=[
+        [IB(text="📞 Raqamlar", callback_data=f"sxp:{sid}"), IB(text="⬅️ Kartaga", callback_data=f"st:{sid}")]]))
 
 
 # ---------- chegirma ----------

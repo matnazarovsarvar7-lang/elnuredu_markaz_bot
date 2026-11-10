@@ -87,6 +87,7 @@ async def enr_menu(c: CallbackQuery) -> None:
     elif role in FREEZE_ROLES:
         rows.append([IB(text="❄️ Muzlatish", callback_data=f"fz:{eid}")])
     if role in LEAVE_ROLES:
+        rows.append([IB(text="🔀 Boshqa guruhga ko'chirish", callback_data=f"mv:{eid}")])
         rows.append([IB(text="🚪 Guruhdan chiqarish", callback_data=f"lvq:{eid}")])
     rows.append([IB(text="⬅️ Kartaga qaytish", callback_data=f"st:{e.student_id}")])
     await c.message.edit_text("\n".join(lines), reply_markup=IM(inline_keyboard=rows))
@@ -273,6 +274,171 @@ async def fz_return(c: CallbackQuery, bot: Bot) -> None:
 
 
 # ================= 🚪 guruhdan chiqarish =================
+# ================= 🔀 boshqa guruhga ko'chirish =================
+def _d2s(d: date) -> str:
+    return f"{d:%Y%m%d}"
+
+
+def _s2d(x: str) -> date:
+    return date(int(x[:4]), int(x[4:6]), int(x[6:]))
+
+
+def _next_lessons(g: Group, start: date, n: int = 3) -> list[date]:
+    out, y, mth = [], start.year, start.month
+    for _ in range(3):
+        out += [d for d in lesson_dates(y, mth, g.days) if d >= start]
+        if len(out) >= n:
+            break
+        y, mth = (y + 1, 1) if mth == 12 else (y, mth + 1)
+    return out[:n]
+
+
+@router.callback_query(F.data.startswith("mv:"))
+async def mv_groups(c: CallbackQuery) -> None:
+    eid = int(c.data.split(":")[1])
+    async with Session() as s:
+        e = await s.get(Enrollment, eid, options=[selectinload(Enrollment.student), selectinload(Enrollment.group)])
+        busy = set((await s.execute(select(Enrollment.group_id).where(
+            Enrollment.student_id == e.student_id, Enrollment.active))).scalars())
+        gs = (await s.execute(select(Group).where(Group.active).order_by(Group.name))).scalars().all()
+    gs = [g for g in gs if g.id not in busy]
+    if not gs:
+        await c.answer("Ko'chirish mumkin bo'lgan boshqa guruh yo'q.", show_alert=True)
+        return
+    await c.answer()
+    kb = [[IB(text=g.name, callback_data=f"mvg:{eid}:{g.id}")] for g in gs]
+    kb.append([IB(text="⬅️ Orqaga", callback_data=f"en:{eid}")])
+    await c.message.edit_text(f"🔀 <b>{e.student.full_name}</b> «{e.group.name}» guruhidan qaysi guruhga o'tadi?",
+                              reply_markup=IM(inline_keyboard=kb))
+
+
+@router.callback_query(F.data.startswith("mvg:"))
+async def mv_date(c: CallbackQuery) -> None:
+    _, eid, gid = c.data.split(":")
+    async with Session() as s:
+        g = await s.get(Group, int(gid))
+    t = today()
+    opts = _next_lessons(g, t)
+    kb = [[IB(text=f"{d:%d.%m} ({'bugun' if d == t else 'dars'})", callback_data=f"mvd:{eid}:{gid}:{_d2s(d)}")] for d in opts]
+    kb.append([IB(text="⬅️ Orqaga", callback_data=f"mv:{eid}")])
+    await c.answer()
+    await c.message.edit_text(f"📅 «{g.name}» guruhida birinchi darsi qaysi kun?\n"
+                              "Eski guruhda shu kundan oldingi darslar hisoblanadi.",
+                              reply_markup=IM(inline_keyboard=kb))
+
+
+def _mv_last_day(d: date) -> date:
+    """Eski guruhdagi oxirgi hisob kuni: yangi guruh bugun boshlansa — kecha, keyinroq boshlansa — bugun."""
+    t = today()
+    return d - timedelta(days=1) if d <= t else t
+
+
+async def _mv_calc(s, e: Enrollment, last: date) -> tuple[int, int, int, list[tuple[str, int]]]:
+    """(eski guruh hisobi oxirgi oyda, to'langan, qarz, ko'chiriladigan [(oy, summa)])."""
+    mkey = f"{last:%Y-%m}"
+    paid = await S.paid_for_month(s, e.id, mkey)
+    if last < e.join_date:
+        payable = 0
+    else:
+        e.left_date = last
+        payable = (await S.month_status(s, e, last.year, last.month)).payable
+        e.left_date = None
+    moves = []
+    if paid > payable:
+        moves.append((mkey, paid - payable))
+    later = (await s.execute(select(Payment.month, Payment.amount).where(
+        Payment.enrollment_id == e.id, Payment.status == "tasdiq", Payment.month > mkey))).all()
+    agg: dict[str, int] = {}
+    for mo, a in later:
+        agg[mo] = agg.get(mo, 0) + a
+    moves += [(mo, a) for mo, a in sorted(agg.items()) if a > 0]
+    return payable, paid, max(0, payable - paid), moves
+
+
+@router.callback_query(F.data.startswith("mvd:"))
+async def mv_confirm(c: CallbackQuery) -> None:
+    _, eid, gid, ds = c.data.split(":")
+    d = _s2d(ds)
+    async with Session() as s:
+        e = await s.get(Enrollment, int(eid), options=[selectinload(Enrollment.student), selectinload(Enrollment.group)])
+        g = await s.get(Group, int(gid))
+        last = _mv_last_day(d)
+        payable, paid, debt, moves = await _mv_calc(s, e, last)
+        name, old_name, new_name = e.student.full_name, e.group.name, g.name
+        disc = e.discount_kind != "none"
+        override = e.price_override
+        await s.rollback()
+    lines = [f"🔀 <b>{name}</b>", f"«{old_name}» → «{new_name}», {d:%d.%m.%Y} dan",
+             f"\nEski guruh: oxirgi hisob kuni {last:%d.%m}; {last:%m}-oy hisobi {S.fmt_som(payable)}, to'langan {S.fmt_som(paid)}."]
+    if moves:
+        lines.append("Yangi guruhga o'tkaziladigan to'lov: " + ", ".join(f"{mo} — {S.fmt_som(a)}" for mo, a in moves))
+    if debt:
+        lines.append(f"Eski guruh bo'yicha qarz qoladi: <b>{S.fmt_som(debt)}</b>")
+    lines.append("Yangi guruhda shu oy to'lovi birinchi darsidan hisoblanadi.")
+    if disc:
+        lines.append("Chegirma yangi guruhga ham o'tadi.")
+    if override:
+        lines.append("⚠️ Eski guruhdagi istisno narx yangi guruhga o'tmaydi — oddiy narx bo'ladi.")
+    await c.answer()
+    await c.message.edit_text("\n".join(lines), reply_markup=IM(inline_keyboard=[
+        [IB(text="✅ Ko'chirish", callback_data=f"mvy:{eid}:{gid}:{ds}"), IB(text="❌ Bekor", callback_data=f"en:{eid}")]]))
+
+
+@router.callback_query(F.data.startswith("mvy:"))
+async def mv_save(c: CallbackQuery, bot: Bot) -> None:
+    import uuid
+    _, eid, gid, ds = c.data.split(":")
+    d, t = _s2d(ds), today()
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        if not (who.staff and who.staff.current_role in LEAVE_ROLES):
+            await c.answer("Ruxsat yo'q.", show_alert=True)
+            return
+        e = await s.get(Enrollment, int(eid), options=[selectinload(Enrollment.student), selectinload(Enrollment.group)])
+        g = await s.get(Group, int(gid))
+        dup = (await s.execute(select(Enrollment.id).where(Enrollment.student_id == e.student_id,
+                                                           Enrollment.group_id == g.id, Enrollment.active))).first()
+        if not e.active or dup:
+            await c.answer("Allaqachon ko'chirilgan.", show_alert=True)
+            return
+        last = _mv_last_day(d)
+        _, _, _, moves = await _mv_calc(s, e, last)
+        new = (await s.execute(select(Enrollment).where(Enrollment.student_id == e.student_id, Enrollment.group_id == g.id,
+                                                        Enrollment.join_date == d))).scalar_one_or_none()
+        if new:                        # shu kuni shu guruhdan chiqqan bo'lsa — o'sha yozuv qayta ochiladi
+            new.active, new.left_date = True, None
+            new.tier, new.discount_kind, new.discount_percent = e.tier, e.discount_kind, e.discount_percent
+        else:
+            new = Enrollment(student_id=e.student_id, group_id=g.id, join_date=d, registered_at=t, tier=e.tier,
+                             discount_kind=e.discount_kind, discount_percent=e.discount_percent)
+            s.add(new)
+        e.left_date = last
+        e.active = False
+        await s.flush()
+        batch = str(uuid.uuid4())
+        for mo, a in moves:
+            for enr_id, amt in ((e.id, -a), (new.id, a)):
+                s.add(Payment(enrollment_id=enr_id, month=mo, amount=amt, method="kochirish", status="tasdiq",
+                              paid_date=t, batch=batch, entered_by=who.staff.id, confirmed_by=who.staff.id))
+        await _sync_student_status(s, e.student)
+        await S.audit(s, who.staff, "kochirildi", student=e.student.full_name, old=e.group.name, new=g.name,
+                      date=f"{d:%Y-%m-%d}", moved=sum(a for _, a in moves))
+        await s.commit()
+        fam = await _family(s, e.student_id)
+        teachers = {x for x in (e.group.teacher_id, g.teacher_id) if x}
+        t_ids = [st.tg_id for st in [await s.get(Staff, x) for x in teachers] if st and st.tg_id]
+        name, old_name, new_name, sid = e.student.full_name, e.group.name, g.name, e.student_id
+        when = f", soat {g.start_time:%H:%M}" if g.start_time else ""
+    await c.answer("Ko'chirildi")
+    await c.message.edit_text(f"✅ {name} «{old_name}» → «{new_name}» guruhiga ko'chirildi ({d:%d.%m.%Y} dan).",
+                              reply_markup=IM(inline_keyboard=[[IB(text="👤 Kartasi", callback_data=f"st:{sid}")]]))
+    for x in fam:
+        await send(bot, x, f"🔀 {name} {d:%d.%m} dan «{new_name}» guruhida o'qiydi{when}. "
+                           "To'langan pul yangi guruh hisobiga o'tkazildi.")
+    for x in t_ids:
+        await send(bot, x, f"🔀 {name}: «{old_name}» → «{new_name}» ({d:%d.%m} dan).")
+
+
 @router.callback_query(F.data.startswith("lvq:"))
 async def leave_reason(c: CallbackQuery) -> None:
     eid = c.data.split(":")[1]

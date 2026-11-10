@@ -227,13 +227,13 @@ async def exam_card(eid: int) -> tuple[str, IM]:
              f"O'tkazuvchi: {st.full_name if st else '—'}"]
     if ex.moved_note:
         lines.append(f"Izoh: {ex.moved_note}")
-    if ex.test_id:
-        from app.db.models import Test
-        async with Session() as s:
-            t = await s.get(Test, ex.test_id)
-        if t:
-            from app.bot.tests_flow import ST as TST
-            lines.append(f"Test #{t.id}: {TST.get(t.status, t.status)}" + (" · 🖨 chop etildi" if t.printed_at else ""))
+    from app.bot.tests_flow import ST as TST, exam_tests
+    async with Session() as s:
+        tests = await exam_tests(s, ex.id)
+    for t in tests:
+        who = "butun guruh" if t.students is None else f"{len(t.students)} o'quvchi"
+        lines.append(f"Test #{t.id} ({who}, {t.topic[:30]}): {TST.get(t.status, t.status)}"
+                     + (" · 🖨 chop etildi" if t.printed_at else ""))
     rows = []
     if ex.status == "otdi":
         took = [r for r in res if r.percent is not None]
@@ -316,10 +316,12 @@ async def res_start(c: CallbackQuery) -> None:
     from app.db.models import TestPaper
     async with Session() as s:
         ex = await s.get(Exam, eid)
-        has_papers = ex.test_id and (await s.execute(select(TestPaper.id).where(TestPaper.test_id == ex.test_id))).first()
+        from app.bot.tests_flow import exam_tests
+        tids = [t.id for t in await exam_tests(s, ex.id)]
+        has_papers = tids and (await s.execute(select(TestPaper.test_id).where(TestPaper.test_id.in_(tids)))).first()
     if has_papers:
         from app.bot.tests_flow import entry_menu
-        text, kb = await entry_menu(ex.test_id)
+        text, kb = await entry_menu(has_papers[0])
         await c.message.answer(text, reply_markup=kb)
         await c.answer()
         return

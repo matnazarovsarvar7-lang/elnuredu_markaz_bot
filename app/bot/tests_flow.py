@@ -72,11 +72,40 @@ async def _groups_for(s, st: Staff) -> list[Group]:
     return await S.teacher_groups(s, st, st.current_role)
 
 
-async def _open_exams(s, gid: int) -> list[Exam]:
+async def exam_tests(s, exam_id: int) -> list[Test]:
+    return list((await s.execute(select(Test).where(Test.exam_id == exam_id).order_by(Test.id))).scalars())
+
+
+async def _taken(s, exam_id: int) -> tuple[bool, set[int]]:
+    """(butun guruhga test bormi, tanlangan testlarga tushgan enrollment id lar)."""
+    whole, ids = False, set()
+    for t in await exam_tests(s, exam_id):
+        if t.students is None:
+            whole = True
+        else:
+            ids |= set(t.students)
+    return whole, ids
+
+
+async def _exam_roster(s, ex: Exam | None, gid: int) -> list[Enrollment]:
+    return await S.group_roster(s, gid, ex.date if ex else now().date())
+
+
+async def _open_exams(s, gid: int) -> list[tuple[Exam, int, int]]:
+    """Test berilishi mumkin bo'lgan nazoratlar: (nazorat, testga tushganlar, guruhdagilar)."""
     t = now().date()
     rows = (await s.execute(select(Exam).where(Exam.group_id == gid, Exam.status == "reja", Exam.date >= t)
                             .order_by(Exam.date))).scalars().all()
-    return [e for e in rows if not e.test_id]
+    out = []
+    for e in rows:
+        whole, ids = await _taken(s, e.id)
+        if whole:
+            continue
+        roster = {x.id for x in await _exam_roster(s, e, gid)}
+        if roster and roster <= ids:
+            continue
+        out.append((e, len(ids & roster), len(roster)))
+    return out
 
 
 # ================= 1. So'rov (o'qituvchi) =================
@@ -107,7 +136,8 @@ async def pick_exam(c: CallbackQuery, state: FSMContext) -> None:
     async with Session() as s:
         exams = await _open_exams(s, gid)
     await state.update_data(gid=gid)
-    rows = [[IB(text=f"📝 {_exam_label(e)}", callback_data=f"tse:{e.id}")] for e in exams]
+    rows = [[IB(text=f"📝 {_exam_label(e)}" + (f" · testi bor: {k}/{n}" if k else ""), callback_data=f"tse:{e.id}")]
+            for e, k, n in exams]
     rows.append([IB(text="Nazorat sanasi hali belgilanmagan", callback_data="tse:0")])
     await c.message.edit_text("Qaysi nazorat uchun?", reply_markup=IM(inline_keyboard=rows))
 
@@ -117,13 +147,113 @@ async def got_exam(c: CallbackQuery, state: FSMContext) -> None:
     eid = int(c.data.split(":")[1])
     await state.update_data(eid=eid or None)
     d = await state.get_data()
+    async with Session() as s:
+        ex = await s.get(Exam, eid) if eid else None
+        roster = await _exam_roster(s, ex, d["gid"])
+        whole, taken = await _taken(s, eid) if eid else (False, set())
+    order = [e.id for e in roster]
+    names = {e.id: e.student.full_name for e in roster}
+    free = [i for i in order if i not in taken]
+    await state.update_data(order=order, names=names, taken=sorted(taken), sel=[])
+    rows = []
+    if not taken:
+        rows.append([IB(text=f"👥 Butun guruh ({len(order)} ta)", callback_data="tws:all")])
+    else:
+        rows.append([IB(text=f"👥 Qolgan {len(free)} ta o'quvchi", callback_data="tws:rest")])
+    rows.append([IB(text="✅ O'quvchilarni tanlash", callback_data="tws:pick")])
+    head = "Test kimlar uchun?"
+    if taken:
+        head = (f"Bu nazoratda {len(taken & set(order))} ta o'quvchiga boshqa mavzudan test bor.\n"
+                f"Qolgan {len(free)} ta o'quvchi uchun test kimlarga?")
+    await c.answer()
+    await c.message.edit_text(head + "\n\n<i>Bitta guruhni bir necha kichik guruhga bo'lib, har biriga alohida "
+                              "mavzudan test so'rash mumkin.</i>", reply_markup=IM(inline_keyboard=rows))
+
+
+def _pick_kb(d: dict) -> IM:
+    taken, sel = set(d["taken"]), set(d["sel"])
+    rows = []
+    for i, eid in enumerate(d["order"]):
+        nm = d["names"][str(eid)] if str(eid) in d["names"] else d["names"].get(eid, "?")
+        if eid in taken:
+            rows.append([IB(text=f"🔒 {nm} (boshqa testda)", callback_data="twt:x")])
+        else:
+            rows.append([IB(text=f"{'✅' if eid in sel else '▫️'} {nm}", callback_data=f"twt:{i}")])
+    rows.append([IB(text="☑️ Hammasini belgilash", callback_data="tws:allpick"),
+                 IB(text="⬜ Tozalash", callback_data="tws:none")])
+    rows.append([IB(text=f"➡️ Davom etish ({len(sel)} ta)", callback_data="tws:ok")])
+    return IM(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("tws:"))
+async def scope(c: CallbackQuery, state: FSMContext) -> None:
+    act = c.data.split(":")[1]
+    d = await state.get_data()
+    if "order" not in d:
+        await c.answer("Sessiya eskirgan — 📚 Testlar dan qaytadan boshlang.", show_alert=True)
+        return
+    taken = set(d["taken"])
+    free = [i for i in d["order"] if i not in taken]
+    if act == "all":
+        await state.update_data(students=None)
+        return await _after_scope(c, state)
+    if act == "rest":
+        await state.update_data(students=free)
+        return await _after_scope(c, state)
+    if act in ("pick", "allpick", "none"):
+        await state.update_data(sel=free if act == "allpick" else [])
+        d = await state.get_data()
+        await c.answer()
+        await c.message.edit_text("O'quvchilarni belgilang (✅ — shu testga kiradi):", reply_markup=_pick_kb(d))
+        return
+    if act == "ok":
+        if not d["sel"]:
+            await c.answer("Kamida bitta o'quvchini belgilang.", show_alert=True)
+            return
+        sel = [i for i in d["order"] if i in set(d["sel"])]
+        await state.update_data(students=None if (not taken and len(sel) == len(d["order"])) else sel)
+        return await _after_scope(c, state)
+
+
+@router.callback_query(F.data.startswith("twt:"))
+async def scope_toggle(c: CallbackQuery, state: FSMContext) -> None:
+    x = c.data.split(":")[1]
+    if x == "x":
+        await c.answer("Bu o'quvchi shu nazoratda boshqa testga kiritilgan.")
+        return
+    d = await state.get_data()
+    if "order" not in d:
+        await c.answer("Sessiya eskirgan.", show_alert=True)
+        return
+    eid = d["order"][int(x)]
+    sel = set(d["sel"])
+    sel ^= {eid}
+    await state.update_data(sel=sorted(sel))
+    d = await state.get_data()
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=_pick_kb(d))
+
+
+def _scope_text(d: dict) -> str:
+    st = d.get("students")
+    if st is None:
+        return "butun guruh"
+    names = [d["names"].get(str(i)) or d["names"].get(i, "?") for i in st]
+    return f"{len(st)} ta o'quvchi: " + ", ".join(n.split()[0] + (" " + n.split()[1][0] + "." if len(n.split()) > 1 else "")
+                                                for n in names[:30])
+
+
+async def _after_scope(c: CallbackQuery, state: FSMContext) -> None:
+    d = await state.get_data()
+    await c.answer()
     if d.get("mode") == "tsu":
         await state.set_state(Up.file)
-        await c.message.edit_text("📎 Test faylini (.txt) yuboring. Format — «Test tuzish prompti» dagi andoza.\n"
-                                  "Bekor qilish: /start")
+        await c.message.edit_text(f"Test: {_scope_text(d)}.\n\n📎 Test faylini (.txt) yuboring. "
+                                  "Format — «Test tuzish prompti» dagi andoza.\nBekor qilish: /start")
         return
     await state.set_state(Rq.topic)
-    await c.message.edit_text("Mavzu(lar)ni yozing.\n<i>Masalan: Aniq va noaniq artikllar (a, an, the)</i>")
+    await c.message.edit_text(f"Test: {_scope_text(d)}.\n\nMavzu(lar)ni yozing.\n"
+                              "<i>Masalan: Aniq va noaniq artikllar (a, an, the)</i>")
 
 
 @router.message(Rq.topic)
@@ -165,17 +295,19 @@ async def rq_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         g = await s.get(Group, d["gid"])
         ex = await s.get(Exam, d["eid"]) if d.get("eid") else None
         t = Test(group_id=g.id, exam_id=ex.id if ex else None, topic=d["topic"], n_questions=d["n"],
-                 photos=d.get("photos", []), status="sorov", source="rahbar", requested_by=st.id)
+                 photos=d.get("photos", []), status="sorov", source="rahbar", requested_by=st.id,
+                 students=d.get("students"))
         s.add(t)
         await s.flush()
-        if ex:
+        if ex and not ex.test_id:
             ex.test_id = t.id
-        await S.audit(s, st, "test_sorov", group=g.name, topic=d["topic"])
+        await S.audit(s, st, "test_sorov", group=g.name, topic=d["topic"], students=len(d.get("students") or []))
         await s.commit()
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         tid, gname, who = t.id, g.name, st.full_name
     when = _exam_label(ex) if ex else "sana belgilanmagan"
-    text = (f"📨 <b>Test so'rovi #{tid}</b>\n{who} · {gname}\nNazorat: {when}\nMavzu: {d['topic']}\n"
+    text = (f"📨 <b>Test so'rovi #{tid}</b>\n{who} · {gname}\nNazorat: {when}\nKimlar uchun: {_scope_text(d)}\n"
+            f"Mavzu: {d['topic']}\n"
             f"Savollar: {d['n']} ta · rasmlar: {len(d.get('photos', []))} ta\n\n"
             "Rasmlarni «Test tuzish prompti» bilan Claude'ga yuboring, tayyor faylni shu yerga yuklang.")
     for b in bosses:
@@ -187,7 +319,14 @@ async def rq_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                 pass
         await send(bot, b, text, reply_markup=IM(inline_keyboard=[[IB(text="📎 Test faylini yuklash",
                                                                        callback_data=f"tup:{tid}")]]))
-    await c.message.edit_text(f"✅ So'rov #{tid} rahbarga yuborildi. Test tayyor bo'lgach sizga ko'rib chiqishga keladi.")
+    rest = ""
+    if d.get("students") is not None and d.get("eid"):
+        left = len(d["order"]) - len(set(d["taken"]) | set(d["students"]))
+        if left > 0:
+            rest = (f"\n\nℹ️ Bu nazoratda yana {left} ta o'quvchiga test berilmagan. Ular uchun ham "
+                    "📚 Testlar → 📨 Rahbardan test so'rash orqali boshqa mavzudan so'rang.")
+    await c.message.edit_text(f"✅ So'rov #{tid} rahbarga yuborildi. Test tayyor bo'lgach sizga ko'rib chiqishga keladi."
+                              + rest)
 
 
 # ================= 2. Yuklash =================
@@ -229,10 +368,10 @@ async def up_file(m: Message, state: FSMContext, bot: Bot) -> None:
         else:
             ex = await s.get(Exam, d["eid"]) if d.get("eid") else None
             t = Test(group_id=d["gid"], exam_id=ex.id if ex else None, topic=tf.meta.get("mavzu", "")[:200] or "Test",
-                     source="rahbar" if _is_boss(st) else "oqituvchi", requested_by=st.id)
+                     source="rahbar" if _is_boss(st) else "oqituvchi", requested_by=st.id, students=d.get("students"))
             s.add(t)
             await s.flush()
-            if ex:
+            if ex and not ex.test_id:
                 ex.test_id = t.id
         await s.execute(delete(TestQuestion).where(TestQuestion.test_id == t.id))
         for q in tf.questions:
@@ -456,6 +595,9 @@ async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
             return
         await s.execute(delete(TestPaper).where(TestPaper.test_id == tid))
         roster = await S.group_roster(s, g.id, day)
+        if t.students is not None:
+            only = set(t.students)
+            roster = [e for e in roster if e.id in only]
         qs = (await s.execute(select(TestQuestion).where(TestQuestion.test_id == tid))).scalars().all()
         by_id = {q.qid: q for q in qs}
         variants = P.assign_variants(len(roster), max(1, t.n_variants))
@@ -476,7 +618,7 @@ async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
             booklets.append(SH.BookletItem(e.student.full_name, g.name, f"{day:%d.%m.%Y}", code, v, title, qtexts))
             sheets_.append(SH.SheetInfo(paper.id, e.student.full_name, g.name, f"{day:%d.%m.%Y}", code, v,
                                         len(pp.qids), title))
-        if ex:
+        if ex and not ex.test_id:
             ex.test_id = tid
         await s.commit()
         admins = [x.tg_id for x in await S.staff_with_role(s, "admin") if x.tg_id] or \
@@ -492,13 +634,13 @@ async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
         t = await s.get(Test, tid)
         t.meta = {**(t.meta or {}), "pages": pages}
         await s.commit()
-    cap = (f"🖨 <b>Chop etish: {g.name}</b> · nazorat {day:%d.%m}\n{len(booklets)} ta o'quvchi · "
+    cap = (f"🖨 <b>Chop etish: {g.name}</b> · nazorat {day:%d.%m} · test #{tid} ({t.topic[:40]})\n{len(booklets)} ta o'quvchi · "
            f"{t.n_questions} savol\n1) Savollar varaqlari  2) Javob varaqlari (skaner uchun — 100% masshtabda, "
            "bir tomonlama chop eting). Chop etib, o'qituvchiga bering.")
     for a in admins:
         try:
-            await bot.send_document(a, BufferedInputFile(b_pdf, f"{g.name}_{day:%d.%m}_savollar.pdf"))
-            await bot.send_document(a, BufferedInputFile(a_pdf, f"{g.name}_{day:%d.%m}_javob_varaqlari.pdf"),
+            await bot.send_document(a, BufferedInputFile(b_pdf, f"{g.name}_{day:%d.%m}_T{tid}_savollar.pdf"))
+            await bot.send_document(a, BufferedInputFile(a_pdf, f"{g.name}_{day:%d.%m}_T{tid}_javob_varaqlari.pdf"),
                                     caption=cap, reply_markup=IM(inline_keyboard=[[IB(
                                         text="✅ Chop etildi", callback_data=f"tpr:{tid}")]]))
         except Exception:
@@ -531,11 +673,29 @@ async def printed(c: CallbackQuery, bot: Bot) -> None:
 
 
 # ================= 5. Natijalar: skaner va qo'lda =================
+async def scope_tests(s, tid: int) -> list[Test]:
+    """Bitta nazoratdagi barcha testlar (kichik guruhlar) — natijalar birga kiritiladi va yakunlanadi."""
+    t = await s.get(Test, tid)
+    return await exam_tests(s, t.exam_id) if t and t.exam_id else ([t] if t else [])
+
+
+async def scope_papers(s, tid: int) -> list[TestPaper]:
+    ids = [t.id for t in await scope_tests(s, tid)]
+    return list((await s.execute(select(TestPaper).where(TestPaper.test_id.in_(ids or [0]))
+                                 .order_by(TestPaper.test_id, TestPaper.code))).scalars())
+
+
 async def entry_menu(tid: int) -> tuple[str, IM]:
     async with Session() as s:
-        ps = (await s.execute(select(TestPaper).where(TestPaper.test_id == tid))).scalars().all()
+        ts = await scope_tests(s, tid)
+        ps = await scope_papers(s, tid)
     done = sum(1 for p in ps if p.answers or p.absent)
-    text = (f"📝 Test #{tid} natijalari: kiritildi {done} / {len(ps)}\n\n"
+    parts = ""
+    if len(ts) > 1:
+        parts = "\n" + "\n".join(f"• Test #{t.id}: {t.topic[:40]} — "
+                                  + (f"{sum(1 for p in ps if p.test_id == t.id)} ta varaq" if any(p.test_id == t.id for p in ps)
+                                     else ST.get(t.status, t.status)) for t in ts)
+    text = (f"📝 Nazorat natijalari: kiritildi {done} / {len(ps)}{parts}\n\n"
             "📷 <b>Skaner</b>: javob varaqlarini rasmga olib ketma-ket yuboring — bot QR koddan o'quvchini "
             "taniydi va o'zi tekshiradi.\n⌨️ <b>Qo'lda</b>: o'quvchini tanlab, javoblarini harflar bilan yozasiz.")
     kb = [[IB(text="📷 Varaqlarni skaner qilish", callback_data=f"tsc:{tid}")],
@@ -567,7 +727,7 @@ async def scan_photo(m: Message, state: FSMContext, bot: Bot) -> None:
     fid = m.photo[-1].file_id if m.photo else m.document.file_id
     data = (await bot.download(fid, destination=io.BytesIO())).getvalue()
     async with Session() as s:
-        ps = {p.id: p for p in (await s.execute(select(TestPaper).where(TestPaper.test_id == d["tid"]))).scalars()}
+        ps = {p.id: p for p in await scope_papers(s, d["tid"])}
     res = read_sheet(data, lambda pid: len(ps[pid].qids) if pid in ps else None)
     if res.error:
         await m.reply("⚠️ " + res.error)
@@ -605,9 +765,10 @@ async def scan_done(c: CallbackQuery, state: FSMContext) -> None:
 async def manual_list(c: CallbackQuery) -> None:
     tid = int(c.data.split(":")[1])
     async with Session() as s:
+        ids = [t.id for t in await scope_tests(s, tid)]
         rows = (await s.execute(select(TestPaper, Student.full_name).join(Enrollment, Enrollment.id == TestPaper.enrollment_id)
-                                .join(Student, Student.id == Enrollment.student_id).where(TestPaper.test_id == tid)
-                                .order_by(TestPaper.code))).all()
+                                .join(Student, Student.id == Enrollment.student_id).where(TestPaper.test_id.in_(ids))
+                                .order_by(Student.full_name))).all()
     kb = [[IB(text=("✅ " if p.answers else "➖ " if p.absent else "▫️ ") + f"{n} ({p.code})" +
                   (f" — {p.correct}" if p.answers else ""), callback_data=f"tpe:{p.id}")] for p, n in rows]
     kb.append([IB(text="⬅️ Orqaga", callback_data=f"tme:{tid}")])
@@ -668,7 +829,16 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
     force = c.data.endswith(":ok")
     async with Session() as s:
         t = await s.get(Test, tid)
-        ps = (await s.execute(select(TestPaper).where(TestPaper.test_id == tid))).scalars().all()
+        ts = await scope_tests(s, tid)
+        ps = await scope_papers(s, tid)
+        with_papers = {p.test_id for p in ps}
+        not_ready = [x for x in ts if x.id not in with_papers]
+        if not_ready:
+            await c.answer()
+            await c.message.answer("⚠️ Bu nazoratdagi boshqa test(lar) hali tayyor emas: "
+                                   + ", ".join(f"#{x.id} {x.topic[:30]} ({ST.get(x.status, x.status)})" for x in not_ready)
+                                   + ".\nNatijalar barcha testlar bilan birga yakunlanadi — avval ularni tayyorlang.")
+            return
         left = [p for p in ps if not p.answers and not p.absent]
         if left and not force:
             await c.message.answer(f"⚠️ {len(left)} ta o'quvchining javobi kiritilmagan. Ular «qatnashmadi» deb "
@@ -685,9 +855,11 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
         g = await s.get(Group, ex.group_id)
         rules = await S.get_rules(s)
         from app.bot.exams import _apply_coins, APPEAL_HOURS
-        ex.kind, ex.max_score, ex.status, ex.done_at = "test", float(t.n_questions), "otdi", now().replace(tzinfo=None)
+        sizes = {len(p.key) for p in ps}
+        mixed = len(sizes) > 1                 # kichik guruhlarda savollar soni har xil — 100 ballik
+        ex.kind, ex.status, ex.done_at = "test", "otdi", now().replace(tzinfo=None)
+        ex.max_score = 100.0 if mixed else float(sizes.pop() if sizes else t.n_questions)
         msgs = []
-        by_qid = {q.qid: q for q in (await s.execute(select(TestQuestion).where(TestQuestion.test_id == tid))).scalars()}
         for p in ps:
             r = (await s.execute(select(ExamResult).where(ExamResult.exam_id == ex.id,
                                                           ExamResult.enrollment_id == p.enrollment_id))).scalar_one_or_none()
@@ -695,8 +867,8 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
                 r = ExamResult(exam_id=ex.id, enrollment_id=p.enrollment_id)
                 s.add(r)
             n = len(p.key)
-            r.score = float(p.correct) if p.answers else None
             r.percent = round(p.correct / n * 100, 1) if p.answers else None
+            r.score = (r.percent if mixed else float(p.correct)) if p.answers else None
             r.answers = p.answers
             await s.flush()
             enr = await s.get(Enrollment, p.enrollment_id)
@@ -706,7 +878,9 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
                 continue
             wrong = [f"{i}: siz {a if a in 'ABCD' else '—'}, to'g'ri {k}" for i, (a, k) in enumerate(zip(p.answers, p.key), 1)
                      if a != k]
+            topic = next((x.topic for x in ts if x.id == p.test_id), "")
             text = (f"📝 <b>Nazorat natijasi</b> · {g.name} · {ex.date:%d.%m}" + (" · oylik" if ex.monthly else "") +
+                    (f"\nMavzu: {topic}" if len(ts) > 1 and topic else "") +
                     f"\n{stu.full_name}: <b>{p.correct} / {n}</b> ({r.percent:.0f}%)"
                     + (f"\n🎉 +{r.coins_given} coin" if r.coins_given else "")
                     + ("\n\nXato javoblar:\n" + "\n".join(wrong[:40]) if wrong else "\n\nHammasi to'g'ri! 👏"))
@@ -726,13 +900,14 @@ async def paper_question_info(result_id: int, qno: int) -> str | None:
     async with Session() as s:
         r = await s.get(ExamResult, result_id)
         ex = await s.get(Exam, r.exam_id)
-        if not ex.test_id:
+        ids = [t.id for t in await exam_tests(s, ex.id)]
+        if not ids:
             return None
-        p = (await s.execute(select(TestPaper).where(TestPaper.test_id == ex.test_id,
-                                                     TestPaper.enrollment_id == r.enrollment_id))).scalar_one_or_none()
+        p = (await s.execute(select(TestPaper).where(TestPaper.test_id.in_(ids),
+                                                     TestPaper.enrollment_id == r.enrollment_id))).scalars().first()
         if not p or not p.answers or not 1 <= qno <= len(p.qids):
             return None
-        q = (await s.execute(select(TestQuestion).where(TestQuestion.test_id == ex.test_id,
+        q = (await s.execute(select(TestQuestion).where(TestQuestion.test_id == p.test_id,
                                                         TestQuestion.qid == p.qids[qno - 1]))).scalar_one()
     perm = p.perms[qno - 1]
     opts = "\n".join(f"{x}) {q.options[j]}" for x, j in zip("ABCD", perm))
@@ -753,7 +928,8 @@ async def tests_list(c: CallbackQuery) -> None:
     if not rows:
         await c.message.answer("Hozircha test yo'q.")
         return
-    lines = [f"#{t.id} · {gname} · {t.topic[:40]} — {ST.get(t.status, t.status)}"
+    lines = [f"#{t.id} · {gname} · {t.topic[:40]}" + (f" · {len(t.students)} o'quvchi" if t.students is not None else "")
+             + f" — {ST.get(t.status, t.status)}"
              + (" · 🖨 chop etildi" if t.printed_at else "") for t, gname in rows]
     kb = [[IB(text=f"📎 #{t.id} faylini yuklash", callback_data=f"tup:{t.id}")]
           for t, _ in rows if _is_boss(st) and t.status in ("sorov", "qaytarildi")]

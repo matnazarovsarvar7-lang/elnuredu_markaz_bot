@@ -24,7 +24,7 @@ from app import services as S
 
 router = Router()
 TZ = ZoneInfo(settings.timezone)
-METHOD = {"naqd": "Naqd", "karta": "Kartaga o'tkazma", "ijtimoiy": "Ijtimoiy"}
+METHOD = {"naqd": "Naqd", "karta": "Kartaga o'tkazma", "ijtimoiy": "Ijtimoiy", "kochirish": "Guruhdan ko'chirilgan"}
 
 
 def today() -> date:

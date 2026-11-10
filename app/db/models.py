@@ -319,6 +319,7 @@ class Test(Base):
     common: Mapped[int] = mapped_column(Integer, default=0)
     meta: Mapped[dict] = mapped_column(JSON, default=dict)
     photos: Mapped[list] = mapped_column(JSON, default=list)          # so'rov rasmlari (file_id)
+    students: Mapped[list | None] = mapped_column(JSON)               # None = butun guruh; aks holda enrollment id lar
     status: Mapped[str] = mapped_column(String(20), default="sorov")  # sorov | korib | qaytarildi | tasdiq
     source: Mapped[str] = mapped_column(String(20), default="rahbar") # rahbar | oqituvchi
     version: Mapped[int] = mapped_column(Integer, default=0)
