@@ -515,4 +515,5 @@ async def report_view(m: Message) -> None:
         text = await profit_report(s, PR.current_month(now()))
         funds = [f"{FUND_NAMES[k]}: {S.fmt_som(await _fund(s, k))}" for k in ("ehson", "yostiq", "rivoj", "yillik")]
         await s.rollback()
-    await m.answer(text + "\n\n<b>Fondlar qoldig'i</b>\n" + "\n".join(funds))
+    from app.bot.reports import report_kb
+    await m.answer(text + "\n\n<b>Fondlar qoldig'i</b>\n" + "\n".join(funds), reply_markup=report_kb())
