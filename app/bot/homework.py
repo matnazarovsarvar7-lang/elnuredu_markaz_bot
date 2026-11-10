@@ -33,9 +33,25 @@ class Hw(StatesGroup):
     text = State()
 
 
+def hw_for(les: Lesson, eid: int) -> tuple[str | None, str | None, str | None, str | None] | None:
+    """O'quvchining (enrollment) shu darsdagi vazifasi: (matn, fayl, fayl turi, kichik guruh nomi).
+    Kichik guruhga alohida berilgan bo'lsa — o'sha, aks holda umumiy vazifa."""
+    for i, p in enumerate(les.homework_parts or []):
+        if eid in p.get("students", []):
+            return p.get("text"), p.get("fid"), p.get("kind"), p.get("title") or f"{i + 1}-kichik guruh"
+    if les.homework_text or les.homework_file_id:
+        return les.homework_text, les.homework_file_id, les.homework_file_kind, None
+    return None
+
+
+def _part_ids(les: Lesson) -> set[int]:
+    return {e for p in (les.homework_parts or []) for e in p.get("students", [])}
+
+
 def prompt_kb(lid: int, given: bool = False) -> IM:
     first = "✏️ Vazifani o'zgartirish" if given else "✍️ Uy vazifasini yozish"
     return IM(inline_keyboard=[[IB(text=first, callback_data=f"hwg:{lid}")],
+                               [IB(text="👥 Kichik guruhga alohida vazifa", callback_data=f"hwp:{lid}")],
                                [IB(text="🚫 Bugun vazifa yo'q", callback_data=f"hwn:{lid}")],
                                [IB(text="⭐ Baho qo'yish (ixtiyoriy)", callback_data=f"bh:{lid}")],
                                [IB(text="🔔 Dars tugadi — ota-onalarga xabar", callback_data=f"dz:{lid}")],
@@ -56,6 +72,18 @@ async def lesson_status_text(lid: int) -> tuple[str, bool]:
     async with Session() as s:
         les = await s.get(Lesson, lid)
         g = await s.get(Group, les.group_id)
+        roster = await S.group_roster(s, g.id, les.date)
+    parts = les.homework_parts or []
+    if parts:
+        taken = _part_ids(les)
+        rest = len([e for e in roster if e.id not in taken])
+        lines = [f"<b>{g.name}</b> · {les.date:%d.%m}", "👥 Kichik guruhlarga alohida vazifa:"]
+        lines += [f"• {p.get('title')}: {len(p['students'])} o'quvchi — {(p.get('text') or '(faylda)')[:60]}" for p in parts]
+        if les.homework_text or les.homework_file_id:
+            lines.append(f"• Qolganlar ({rest}): {(les.homework_text or '(faylda)')[:60]} ✅")
+        elif rest:
+            lines.append(f"⚠️ Qolgan {rest} o'quvchiga vazifa berilmagan — «✍️ Uy vazifasini yozish» (qolganlar uchun).")
+        return "\n".join(lines), bool(les.homework_text or les.homework_file_id or not rest)
     if les.homework_text or les.homework_file_id:
         return (f"<b>{g.name}</b> · {les.date:%d.%m}\n📚 Uy vazifasi yuborilgan ✅\n\n{les.homework_text or '(faylda)'}",
                 True)
@@ -84,10 +112,13 @@ async def exam_note(msg: Message, lid: int) -> None:
 @router.callback_query(F.data.startswith("hwg:"))
 async def hw_write(c: CallbackQuery, state: FSMContext) -> None:
     lid = int(c.data.split(":")[1])
+    async with Session() as s:
+        les = await s.get(Lesson, lid)
+    who_for = "<b>qolgan o'quvchilar</b> (alohida vazifa berilmaganlar) uchun " if les.homework_parts else ""
     await state.set_state(Hw.text)
-    await state.update_data(lid=lid)
+    await state.update_data(lid=lid, part=None)
     await c.answer()
-    await c.message.answer("Uy vazifasini yozing. Rasm yoki fayl ham yuborish mumkin (izohiga matn yozing).\n"
+    await c.message.answer(f"Uy vazifasini {who_for}yozing. Rasm yoki fayl ham yuborish mumkin (izohiga matn yozing).\n"
                            "<i>Masalan: 45-bet, 3–7-misollar. Yangi so'zlarni yod olish.</i>\n\nBekor qilish: /start")
 
 
@@ -125,6 +156,9 @@ async def hw_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         await c.answer("Ma'lumot eskirgan, qaytadan boshlang.", show_alert=True)
         return
     await state.clear()
+    if d.get("part"):
+        await _send_part(c, bot, d)
+        return
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
         les = await s.get(Lesson, d["lid"])
@@ -142,12 +176,22 @@ async def hw_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                                  if missing else ""))
 
 
-async def deliver(bot: Bot, lid: int, corrected: bool = False) -> tuple[int, int]:
-    """Guruhdagi barcha faol o'quvchilarga (kelmaganlarga ham) va ota-onalarga yuboradi."""
+async def deliver(bot: Bot, lid: int, corrected: bool = False, part: int | None = None) -> tuple[int, int]:
+    """Vazifani yuboradi: part=None — umumiy (kichik guruhga kirmagan barcha o'quvchilar, kelmaganlarga ham);
+    part=i — faqat o'sha kichik guruh o'quvchilariga. O'quvchi va ota-onalarga."""
     async with Session() as s:
         les = await s.get(Lesson, lid)
         g = await s.get(Group, les.group_id)
         roster = await S.group_roster(s, g.id, les.date)
+        if part is None:
+            taken = _part_ids(les)
+            roster = [e for e in roster if e.id not in taken]
+            text_, fid, kind, title = les.homework_text, les.homework_file_id, les.homework_file_kind, None
+        else:
+            p = les.homework_parts[part]
+            only = set(p["students"])
+            roster = [e for e in roster if e.id in only]
+            text_, fid, kind, title = p.get("text"), p.get("fid"), p.get("kind"), p.get("title")
         targets: dict[int, None] = {}
         missing = 0
         for e in roster:
@@ -159,15 +203,15 @@ async def deliver(bot: Bot, lid: int, corrected: bool = False) -> tuple[int, int
         nxt = next_lesson(g, les.date)
     head = "✏️ <b>Uy vazifasi (tuzatildi)</b>" if corrected else "📚 <b>Uy vazifasi</b>"
     when = f" soat {g.start_time:%H:%M}" if g.start_time else ""
-    text = (f"{head}\n{g.name} · {les.date:%d.%m}\n\n{les.homework_text or ''}\n\n"
+    text = (f"{head}\n{g.name} · {les.date:%d.%m}" + (f" · {title}" if title else "") + f"\n\n{text_ or ''}\n\n"
             f"Keyingi dars: {nxt:%d.%m}{when}")
     sent = 0
     for t in targets:
-        if les.homework_file_kind == "photo":
-            ok = await send_photo(bot, t, les.homework_file_id, text)
-        elif les.homework_file_kind == "doc":
+        if kind == "photo":
+            ok = await send_photo(bot, t, fid, text)
+        elif kind == "doc":
             try:
-                await bot.send_document(t, les.homework_file_id, caption=text)
+                await bot.send_document(t, fid, caption=text)
                 ok = True
             except Exception as ex:  # bloklagan bo'lsa belgilaymiz
                 ok = False
@@ -177,6 +221,102 @@ async def deliver(bot: Bot, lid: int, corrected: bool = False) -> tuple[int, int
             ok = await send(bot, t, text)
         sent += ok
     return sent, missing
+
+
+# ---------- 👥 kichik guruhga alohida vazifa ----------
+def _pick_kb(lid: int, d: dict) -> IM:
+    taken, sel = set(d["taken"]), set(d["sel"])
+    rows = []
+    for i, eid in enumerate(d["order"]):
+        nm = d["names"].get(eid) or d["names"].get(str(eid), "?")
+        if eid in taken:
+            rows.append([IB(text=f"🔒 {nm} (boshqa vazifada)", callback_data="hwpt:x")])
+        else:
+            rows.append([IB(text=f"{'✅' if eid in sel else '▫️'} {nm}", callback_data=f"hwpt:{lid}:{i}")])
+    rows.append([IB(text=f"➡️ Davom etish ({len(sel)} ta)", callback_data=f"hwpk:{lid}")])
+    return IM(inline_keyboard=rows)
+
+
+@router.callback_query(F.data.startswith("hwp:"))
+async def part_pick(c: CallbackQuery, state: FSMContext) -> None:
+    lid = int(c.data.split(":")[1])
+    async with Session() as s:
+        les = await s.get(Lesson, lid)
+        roster = await S.group_roster(s, les.group_id, les.date)
+        names = {e.id: e.student.full_name for e in roster}
+    await state.clear()
+    await state.update_data(hw_lid=lid, order=[e.id for e in roster], names=names, taken=sorted(_part_ids(les)), sel=[])
+    d = await state.get_data()
+    await c.answer()
+    await c.message.answer("👥 Shu vazifa kimlar uchun? O'quvchilarni belgilang.\n"
+                           "<i>Masalan: kuchli o'quvchilarga murakkabroq, qolganlarga oddiy vazifa. "
+                           "Belgilanmaganlar umumiy vazifani oladi.</i>", reply_markup=_pick_kb(lid, d))
+
+
+@router.callback_query(F.data.startswith("hwpt:"))
+async def part_toggle(c: CallbackQuery, state: FSMContext) -> None:
+    parts = c.data.split(":")
+    if parts[1] == "x":
+        await c.answer("Bu o'quvchiga shu darsda boshqa alohida vazifa berilgan.")
+        return
+    d = await state.get_data()
+    if d.get("hw_lid") != int(parts[1]):
+        await c.answer("Qaytadan oching.", show_alert=True)
+        return
+    eid = d["order"][int(parts[2])]
+    sel = set(d["sel"]) ^ {eid}
+    await state.update_data(sel=sorted(sel))
+    d = await state.get_data()
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=_pick_kb(int(parts[1]), d))
+
+
+@router.callback_query(F.data.startswith("hwpk:"))
+async def part_go(c: CallbackQuery, state: FSMContext) -> None:
+    lid = int(c.data.split(":")[1])
+    d = await state.get_data()
+    if d.get("hw_lid") != lid or not d.get("sel"):
+        await c.answer("Kamida bitta o'quvchini belgilang.", show_alert=True)
+        return
+    sel = [e for e in d["order"] if e in set(d["sel"])]
+    await state.set_state(Hw.text)
+    await state.update_data(lid=lid, part=sel)
+    await c.answer()
+    await c.message.edit_text(f"✅ {len(sel)} ta o'quvchi tanlandi.\nEndi ularga vazifani yozing "
+                              "(rasm yoki fayl ham bo'ladi, izohiga matn yozing):")
+
+
+async def _send_part(c: CallbackQuery, bot: Bot, d: dict) -> None:
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        les = await s.get(Lesson, d["lid"])
+        g = await s.get(Group, les.group_id)
+        parts = list(les.homework_parts or [])
+        taken = _part_ids(les)
+        students = [e for e in d["part"] if e not in taken]
+        if not students:
+            await c.message.edit_text("Bu o'quvchilarga allaqachon alohida vazifa berilgan.")
+            return
+        parts.append({"students": students, "text": d.get("text"), "fid": d.get("fid"), "kind": d.get("kind"),
+                      "title": f"{len(parts) + 1}-kichik guruh", "at": now().strftime("%Y-%m-%d %H:%M"),
+                      "by": who.staff.id if who.staff else None})
+        les.homework_parts = parts
+        les.no_homework_reason = None
+        if not les.homework_at:
+            les.homework_at, les.homework_by = now().replace(tzinfo=None), who.staff.id if who.staff else None
+        await S.audit(s, who.staff, "uy_vazifa_kichik", group=g.name, date=les.date.isoformat(), students=len(students))
+        await s.commit()
+        idx = len(parts) - 1
+        rest = len([e for e in await S.group_roster(s, g.id, les.date) if e.id not in _part_ids(les)])
+        main_given = bool(les.homework_text or les.homework_file_id)
+    await c.message.edit_text("⏳ Yuborilmoqda...")
+    sent, missing = await deliver(bot, d["lid"], part=idx)
+    tail = ("" if main_given or not rest else
+            f"\n\n⚠️ Qolgan {rest} o'quvchiga hali vazifa berilmagan: «✍️ Uy vazifasini yozish» — qolganlar uchun, "
+            "yoki yana «👥 Kichik guruhga alohida vazifa».")
+    await c.message.edit_text(f"✅ {idx + 1}-kichik guruh ({len(students)} o'quvchi) vazifasi yuborildi: {sent} ta qabul qiluvchi."
+                              + (f"\n⚠️ Botga ulanmaganlar: {missing}" if missing else "") + tail,
+                              reply_markup=prompt_kb(d["lid"], main_given))
 
 
 # ---------- vazifa yo'q ----------
@@ -216,23 +356,28 @@ async def hw_view(m: Message, bot: Bot) -> None:
         for k in kids:
             for e in await S.student_enrollments(s, k.id):
                 les = await latest_homework(s, e.group_id)
-                items.append((k.full_name, e.group, les))
+                items.append((k.full_name, e.group, les, e.id))
     if not items:
         await m.answer("Hozircha ma'lumot yo'q.")
         return
-    for name, g, les in items:
+    for name, g, les, eid in items:
         title = f"📚 <b>{g.name}</b>" + (f" · {name}" if len(kids) > 1 else "")
+        hw = hw_for(les, eid) if les else None
         if not les:
             await m.answer(f"{title}\nHali uy vazifasi kiritilmagan.")
         elif les.no_homework_reason:
             await m.answer(f"{title} · {les.date:%d.%m}\nVazifa berilmagan: {les.no_homework_reason}")
-        elif les.homework_file_kind == "photo":
-            await send_photo(bot, m.chat.id, les.homework_file_id, f"{title} · {les.date:%d.%m}\n\n{les.homework_text or ''}")
-        elif les.homework_file_kind == "doc":
-            await bot.send_document(m.chat.id, les.homework_file_id,
-                                    caption=f"{title} · {les.date:%d.%m}\n\n{les.homework_text or ''}")
+        elif not hw:
+            await m.answer(f"{title} · {les.date:%d.%m}\nVazifa hali kiritilmagan.")
         else:
-            await m.answer(f"{title} · {les.date:%d.%m}\n\n{les.homework_text}")
+            text_, fid, kind, part = hw
+            cap = f"{title} · {les.date:%d.%m}\n\n{text_ or ''}"
+            if kind == "photo":
+                await send_photo(bot, m.chat.id, fid, cap)
+            elif kind == "doc":
+                await bot.send_document(m.chat.id, fid, caption=cap)
+            else:
+                await m.answer(cap)
 
 
 # ---------- avtomatik eslatmalar ----------
@@ -293,9 +438,12 @@ async def tomorrow_reminder(bot: Bot) -> None:
             if not les or les.no_homework_reason or les.date < t - timedelta(days=7):
                 continue
             when = f" soat {g.start_time:%H:%M}" if g.start_time else ""
-            text = (f"⏰ Ertaga{when} — «{g.name}» darsi.\nUy vazifasi ({les.date:%d.%m}):\n\n"
-                    f"{les.homework_text or '(faylda — «📚 Uy vazifasi» tugmasini bosing)'}")
             for e in await S.group_roster(s, g.id, tm):
+                hw = hw_for(les, e.id)
+                if not hw:
+                    continue
+                text = (f"⏰ Ertaga{when} — «{g.name}» darsi.\nUy vazifasi ({les.date:%d.%m}):\n\n"
+                        f"{hw[0] or '(faylda — «📚 Uy vazifasi» tugmasini bosing)'}")
                 stu = await s.get(Student, e.student_id)
                 if stu.tg_id:
                     jobs.append((stu.tg_id, text))
