@@ -137,7 +137,8 @@ def boss_text(b: dict) -> str:
 def kassa_kb(opened: bool) -> IM:
     if not opened:
         return IM(inline_keyboard=[[IB(text="🔓 Kassalarni ochish", callback_data="kv:open")],
-                                   [IB(text="📋 Naqd to'lovlar ro'yxati", callback_data="cnl")]])
+                                   [IB(text="🏦 Fondlar", callback_data="fd"),
+                                    IB(text="📋 Naqd to'lovlar ro'yxati", callback_data="cnl")]])
     return IM(inline_keyboard=[[IB(text="💳 Kichik kassaga pul berish", callback_data="kv:petty")],
                                [IB(text="➕ Kassamga kirim", callback_data="kv:in"),
                                 IB(text="➖ Kassamdan chiqim", callback_data="kv:out")],
