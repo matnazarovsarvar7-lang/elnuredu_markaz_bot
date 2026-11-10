@@ -64,6 +64,7 @@ async def my_salary(m: Message) -> None:
         e, lines = await PR.earned(s, st, start, n.replace(tzinfo=None) - PR.UTC_SHIFT,
                                    min(1.0, n.day / 30))
         _, taken, can = await PR.avans_info(s, st, n)
+        why = "" if can else await PR.avans_reason(s, st, n)
         acc = int((await s.execute(select(func.coalesce(func.sum(BonusLedger.amount), 0)).where(
             BonusLedger.staff_id == st.id, BonusLedger.status == "yigilmoqda"))).scalar())
         prev = (await s.execute(select(Payroll).where(Payroll.staff_id == st.id).order_by(Payroll.month.desc())
@@ -77,7 +78,7 @@ async def my_salary(m: Message) -> None:
     out = [f"💰 <b>Oyligim · {month}</b> (hozirgacha)"]
     out += [f"• {name}: {S.fmt_som(v)}" for name, v in lines] or ["• hozircha hisob yo'q"]
     out += [f"Jami ishlab topilgan: <b>{S.fmt_som(e)}</b>", f"Olingan avans: {S.fmt_som(taken)}",
-            f"Avans olish mumkin: {S.fmt_som(can)}" if can else "Avans: hozir mumkin emas (25-sanadan keyin yoki limit)",
+            f"Avans olish mumkin: {S.fmt_som(can)}" if can else f"Avans: hozir mumkin emas — {why}",
             "", "<b>Ballar (shu oy, taxminiy)</b>"] + (pts_lines or ["—"])
     out.append(f"Yig'ilgan bonus/jarima: <b>{S.fmt_som(acc)}</b> — " + ("har oy beriladi" if monthly else "dekabr va iyunda beriladi"))
     if prev:

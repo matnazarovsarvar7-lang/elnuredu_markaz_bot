@@ -382,3 +382,21 @@ async def avans_info(s, st: Staff, now_local: datetime) -> tuple[int, int, int]:
         return e, taken, 0
     can = int(max(0, e * AVANS_RATIO - taken - pen) // 10_000 * 10_000)
     return e, taken, can
+
+
+async def avans_reason(s, st: Staff, now_local: datetime) -> str:
+    """Avans nega hozir mumkin emasligini aniq tushuntiradi."""
+    from app.logic.salary import AVANS_LAST_DAY, AVANS_MAX_PER_MONTH, AVANS_RATIO
+    month = current_month(now_local)
+    e, taken, _ = await avans_info(s, st, now_local)
+    reqs = int((await s.execute(select(func.count(Payout.id)).where(
+        Payout.staff_id == st.id, Payout.month == month, Payout.kind == "avans", Payout.status != "rad"))).scalar())
+    if now_local.day > AVANS_LAST_DAY:
+        return f"Avans har oyning {AVANS_LAST_DAY}-sanasigacha so'raladi. Oylik oy oxirida beriladi."
+    if reqs >= AVANS_MAX_PER_MONTH:
+        return f"Bu oy avans {AVANS_MAX_PER_MONTH} marta so'ralgan — oyiga ko'pi bilan {AVANS_MAX_PER_MONTH} marta."
+    if e <= 0:
+        return ("Shu oy hali ishlab topilgan summa yo'q: guruhlaringizdan bu oy botga kiritilgan to'lov yo'q. "
+                f"Avans ishlab topilganning {int(AVANS_RATIO * 100)}% igacha beriladi — to'lovlar kiritilishi bilan ochiladi.")
+    return (f"Ishlab topilgan {e:,} so'mning {int(AVANS_RATIO * 100)}% i ({int(e * AVANS_RATIO):,}) olingan avans "
+            f"({taken:,}) va jarimalardan qolmadi yoki 10 000 so'mdan kam.").replace(",", " ")
