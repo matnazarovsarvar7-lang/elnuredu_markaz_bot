@@ -82,6 +82,31 @@ async def init_db() -> None:
     await _one_time_fixes()
 
 
+async def _fix_kassa_2026_11_10(s) -> None:
+    """10-noyabr: kassa kech (21:38) ochilgani uchun shu kuni rahbar qabul qilgan pullar hisobga kirmay qolgan.
+    Kassa boshini 10-noyabr 00:00 ga suramiz: bugungi barcha topshirishlar, avanslar, karta to'lovlari joyiga tushadi.
+    Xarajat puliga xato yozilgan 550 000 (bu o'quvchilar puli edi) olib tashlanadi — xarajat puli 0 dan boshlanadi."""
+    from datetime import datetime, timedelta
+    from sqlalchemy import delete, func, select
+    from app.db.models import Expense, KassaMove, Setting
+    if await s.get(Setting, "fix_2026_11_10_kassa"):
+        return
+    s.add(Setting(key="fix_2026_11_10_kassa", value={"done": True}))
+    row, test = await s.get(Setting, "kassa_v2"), await s.get(Setting, "sinov")
+    if row and test and (test.value or {}).get("on"):
+        at = datetime.fromisoformat(row.value["at"])
+        if (at + timedelta(hours=5)).date() == datetime(2026, 11, 10).date():
+            new = datetime(2026, 11, 9, 19, 0)                   # 10.11 00:00 mahalliy = 09.11 19:00 UTC
+            row.value = {**row.value, "at": new.isoformat(), "moved_from": row.value["at"]}
+            await s.execute(delete(KassaMove).where(KassaMove.kassa == "kichik", KassaMove.kind == "boshlang"))
+            spent = (await s.execute(select(func.coalesce(func.sum(Expense.amount), 0)).where(
+                Expense.source == "kichik", Expense.method == "naqd", Expense.status == "tasdiq",
+                Expense.created_at >= new, Expense.created_at < at))).scalar() or 0
+            # kassa ochilishidan oldingi xarajatlar eski tartibda edi — xarajat puli manfiyga tushmasin
+            s.add(KassaMove(kassa="kichik", amount=int(spent), kind="boshlang", note="10.11 tuzatish"))
+    await s.commit()
+
+
 async def _one_time_fixes() -> None:
     """Rahbar qarorlarini bir marta qo'llash (keyin rahbar sozlamadan o'zgartirsa — qayta tegilmaydi)."""
     from sqlalchemy import select
@@ -93,6 +118,7 @@ async def _one_time_fixes() -> None:
             s.add(Setting(key="sinov", value={"on": True}))
             s.add(Setting(key="fix_2026_11_sinov", value={"done": True}))
             await s.commit()
+        await _fix_kassa_2026_11_10(s)
         if await s.get(Setting, "fix_2026_11_pay"):
             return
         for st in (await s.execute(select(Staff))).scalars():
