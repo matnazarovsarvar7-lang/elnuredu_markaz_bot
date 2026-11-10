@@ -70,7 +70,8 @@ async def _group_card(gid: int) -> tuple[str, IM]:
                               IB(text="📚 Fan", callback_data=f"gsb:{gid}")],
                              [IB(text="👨‍🏫 O'qituvchi", callback_data=f"gtc:{gid}"),
                               IB(text="🤝 Yordamchi", callback_data=f"gas:{gid}")],
-                             [IB(text="🗂 O'tgan darslar (tuzatish)", callback_data=f"lsn:{gid}")],
+                             [IB(text="👥 O'quvchilar ro'yxati", callback_data=f"gls:{gid}"),
+                              IB(text="🗂 O'tgan darslar", callback_data=f"lsn:{gid}")],
                              [IB(text="⏸ Guruhni to'xtatish (yoz / uzrli)", callback_data=f"gpz:{gid}")]])
     return text, kb
 
@@ -157,7 +158,9 @@ async def student_find(m: Message, state: FSMContext) -> None:
     if role not in ("admin", "moliya", "rahbar"):
         return
     await state.set_state(Ed.st_search)
-    await m.answer("O'quvchi ismidan kamida 2 harf yozing:")
+    await m.answer("O'quvchi ismidan kamida 2 harf yozing yoki ro'yxatni oching:", reply_markup=IM(inline_keyboard=[
+        [IB(text="📋 Guruh bo'yicha ro'yxat", callback_data="gla")],
+        [IB(text="📥 Barcha o'quvchilar — Excel", callback_data="stx")]]))
 
 
 @router.message(Ed.st_search)
@@ -1124,3 +1127,113 @@ async def group_assistant_set(c: CallbackQuery, bot: Bot) -> None:
         await send(bot, new.tg_id, f"🤝 Siz «{gname}» guruhiga yordamchi o'qituvchi etib biriktirildingiz.")
     if old and old.tg_id and (not new or old.id != new.id):
         await send(bot, old.tg_id, f"ℹ️ «{gname}» guruhidagi yordamchilik vazifangiz yakunlandi.")
+
+
+# ================= 👥 o'quvchilar ro'yxati va Excel =================
+async def _list_role(tg: int) -> str | None:
+    _, role = await _role(tg)
+    return role if role in ("admin", "moliya", "rahbar") else None
+
+
+@router.callback_query(F.data == "gla")
+async def groups_for_list(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _list_role(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    await state.clear()
+    async with Session() as s:
+        gs = (await s.execute(select(Group).where(Group.active).order_by(Group.name))).scalars().all()
+        counts = {g.id: len(await S.group_roster(s, g.id, __import__("datetime").date.today())) for g in gs}
+    await c.answer()
+    await c.message.answer("Qaysi guruh?", reply_markup=IM(inline_keyboard=[
+        [IB(text=f"{g.name} ({counts[g.id]})", callback_data=f"gls:{g.id}")] for g in gs]))
+
+
+@router.callback_query(F.data.startswith("gls:"))
+async def group_students(c: CallbackQuery) -> None:
+    role = await _list_role(c.from_user.id)
+    if not role:
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    from datetime import date as _d
+    gid = int(c.data.split(":")[1])
+    t = _d.today()
+    async with Session() as s:
+        g = await s.get(Group, gid)
+        enrs = (await s.execute(select(Enrollment).join(Student).where(Enrollment.group_id == gid, Enrollment.active)
+                                .options(selectinload(Enrollment.student), selectinload(Enrollment.group))
+                                .order_by(Student.full_name))).scalars().all()
+        labels = await S.student_labels(s, [e.student for e in enrs])
+        rows = []
+        for e in enrs:
+            st = await S.month_status(s, e, t.year, t.month)
+            frozen = await S.is_frozen(s, e, t)
+            mark = "❄️ muzlatilgan" if frozen else ("✅ to'lagan" if st.debt == 0 else f"qarz {S.fmt_som(st.debt)}")
+            tail = labels[e.student_id].split("☎")[-1] if "☎" in labels[e.student_id] else ""
+            rows.append((e.student_id, e.student.full_name, tail, mark, e.student.coins))
+    paid = sum(1 for r in rows if r[3].startswith("✅"))
+    lines = [f"👥 <b>{g.name}</b> — {len(rows)} ta o'quvchi (to'lagan {paid}, qarzdor {len(rows) - paid})", ""]
+    lines += [f"{i}. {n}" + (f" · ☎{tl}" if tl else "") + f" · {mk} · 🪙{cn}" for i, (_, n, tl, mk, cn) in enumerate(rows, 1)]
+    kb = [[IB(text=f"{i}. {n}", callback_data=f"st:{sid}")] for i, (sid, n, *_r) in enumerate(rows, 1)][:60]
+    await c.answer()
+    await c.message.answer("\n".join(lines) + "\n\nKartani ochish uchun pastdan tanlang:" if rows else
+                           f"{g.name}: faol o'quvchi yo'q.", reply_markup=IM(inline_keyboard=kb) if kb else None)
+
+
+@router.callback_query(F.data == "stx")
+async def students_excel(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    if not await _list_role(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    await state.clear()
+    await c.answer("Tayyorlanmoqda…")
+    import io
+    from datetime import date as _d
+    from aiogram.types import BufferedInputFile
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill
+    from openpyxl.utils import get_column_letter
+    from app.db.models import StudentParent
+    t = _d.today()
+    async with Session() as s:
+        studs = (await s.execute(select(Student).where(Student.status != "ketgan").order_by(Student.full_name))).scalars().all()
+        phones: dict[int, list[str]] = {}
+        for sid, ph in (await s.execute(select(StudentParent.student_id, Parent.phone).join(
+                Parent, Parent.id == StudentParent.parent_id))).all():
+            phones.setdefault(sid, []).append(ph)
+        enrs = (await s.execute(select(Enrollment).where(Enrollment.active).options(
+            selectinload(Enrollment.group), selectinload(Enrollment.student)))).scalars().all()
+        by: dict[int, list] = {}
+        for e in enrs:
+            st = await S.month_status(s, e, t.year, t.month)
+            by.setdefault(e.student_id, []).append((e, st))
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "O'quvchilar"
+    head = ["№", "O'quvchi", "Sinf", "Hudud", "Guruh(lar)", "Ota-ona telefoni", "O'quvchi telefoni", "Holat", "Coin",
+            "Qo'shilgan", f"{t:%m.%Y} hisob", "To'langan", "Qarz", "Chegirma"]
+    ws.append(head)
+    for cell in ws[1]:
+        cell.font, cell.fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="0D2440")
+    for i, x in enumerate(studs, 1):
+        parts = by.get(x.id, [])
+        ws.append([i, x.full_name, ("bitirgan" if x.grade and x.grade > 11 else x.grade), x.region,
+                   ", ".join(e.group.name for e, _ in parts), ", ".join(phones.get(x.id, [])), x.phone, x.status, x.coins,
+                   min((e.join_date for e, _ in parts), default=None), sum(st.payable for _, st in parts),
+                   sum(st.paid for _, st in parts), sum(st.debt for _, st in parts),
+                   "; ".join(f"{e.group.name}: {S.discount_label(e)}" for e, _ in parts if e.discount_kind != "none")])
+    for col in (11, 12, 13):
+        for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
+            for cell in row:
+                cell.number_format = "#,##0"
+    for row in ws.iter_rows(min_row=2, min_col=10, max_col=10):
+        for cell in row:
+            cell.number_format = "DD.MM.YYYY"
+    for i, w in enumerate([5, 30, 8, 22, 30, 28, 16, 12, 7, 12, 14, 14, 14, 30], 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "C2"
+    ws.auto_filter.ref = f"A1:{get_column_letter(len(head))}{len(studs) + 1}"
+    buf = io.BytesIO()
+    wb.save(buf)
+    await bot.send_document(c.message.chat.id, BufferedInputFile(buf.getvalue(), f"ELNUR_oquvchilar_{t:%d.%m.%Y}.xlsx"),
+                            caption=f"📥 Barcha o'quvchilar: {len(studs)} ta. Filtr bilan guruh, qarz yoki sinf bo'yicha saralang.")
