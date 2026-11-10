@@ -512,8 +512,14 @@ async def report_view(m: Message) -> None:
         who = await S.who_by_tg(s, m.from_user.id)
         if not (who.staff and who.staff.current_role == "rahbar"):
             return
+        from app.bot.reports import payers_block, report_kb, today as _today
+        payers = await payers_block(s, _today())
         text = await profit_report(s, PR.current_month(now()))
         funds = [f"{FUND_NAMES[k]}: {S.fmt_som(await _fund(s, k))}" for k in ("ehson", "yostiq", "rivoj", "yillik")]
         await s.rollback()
-    from app.bot.reports import report_kb
-    await m.answer(text + "\n\n<b>Fondlar qoldig'i</b>\n" + "\n".join(funds), reply_markup=report_kb())
+    full = payers + "\n\n" + text + "\n\n<b>Fondlar qoldig'i</b>\n" + "\n".join(funds)
+    while len(full) > 3900:                       # uzun ro'yxat bo'lsa — bo'lib yuboriladi
+        cut = full.rfind("\n", 0, 3900)
+        await m.answer(full[:cut])
+        full = full[cut:].lstrip("\n")
+    await m.answer(full, reply_markup=report_kb())

@@ -112,6 +112,41 @@ def totals(data: dict) -> dict:
     return t
 
 
+# ---------------- bugun to'lov qilganlar (hisobot ichida) ----------------
+def _payer_rows(data: dict) -> list[dict]:
+    agg: dict[tuple, dict] = {}
+    for p in data["pays"]:
+        if p["method"] not in REAL:
+            continue
+        k = (p["student"], p["method"], p["status"], p["note"])
+        r = agg.setdefault(k, {**p, "amount": 0, "groups": []})
+        r["amount"] += p["amount"]
+        if p["group"] not in r["groups"]:
+            r["groups"].append(p["group"])
+    return list(agg.values())
+
+
+async def payers_block(s, d: date, limit: int = 60) -> str:
+    """Shu kuni to'lov qilgan o'quvchilar: ism — summa — usul — guruh. Hisobot va kechki xabar ichida."""
+    data = await collect(s, d, d)
+    t = totals(data)
+    rows = [r for r in _payer_rows(data) if r["amount"] > 0]
+    head = (f"💵 <b>{'Bugun' if d == today() else f'{d:%d.%m}'} to'lov qilganlar: {len(rows)} ta</b> — "
+            f"naqd {S.fmt_som(t['naqd'])}, karta {S.fmt_som(t['karta'])}")
+    if not rows:
+        return head + "\nHali to'lov yo'q."
+    lines = [head]
+    for i, r in enumerate(rows[:limit], 1):
+        icon = "💵" if r["method"] == "naqd" else "💳"
+        tail = " ⏳" if r["status"] == "kutilmoqda" else (" ❌" if r["note"] else "")
+        lines.append(f"{i}. {r['student']} — {S.fmt_som(r['amount'])} {icon} ({', '.join(r['groups'])}){tail}")
+    if len(rows) > limit:
+        lines.append(f"… yana {len(rows) - limit} ta — «📋 Bugungi to'lovlar» yoki Excel'da")
+    if any(r["status"] == "kutilmoqda" for r in rows):
+        lines.append("⏳ — rahbar tasdig'ini kutmoqda (tushumga hali kirmagan)")
+    return "\n".join(lines)
+
+
 # ---------------- 📋 kunlik ro'yxat ----------------
 @router.callback_query(F.data.startswith("rpd:"))
 async def day_list(c: CallbackQuery) -> None:

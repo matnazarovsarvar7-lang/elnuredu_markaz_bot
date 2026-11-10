@@ -97,6 +97,8 @@ async def evening_report(bot: Bot) -> None:
         early = await early_lessons(s, t)
         cl = (await s.execute(select(CashClose).where(CashClose.date == t).order_by(CashClose.id.desc()))).scalars().first()
         exp_cash = await expected_cash(s)
+        from app.bot.reports import payers_block
+        payers = await payers_block(s, t, limit=80)
     text = (f"🌙 <b>Kunlik hisobot · {t:%d.%m.%Y}</b>\n"
             f"Tushum: naqd {S.fmt_som(cash)}, karta {S.fmt_som(card)}\n"
             f"Tasdiq kutayotgan to'lovlar: {pending}\n"
@@ -107,8 +109,16 @@ async def evening_report(bot: Bot) -> None:
             + "\nKassa: " + ({"mos": "✅ yopildi, mos", "farq": "⚠️ yopildi, farq bor", "boshlang": "▫️ boshlang'ich qoldiq"}
                              .get(cl.status, "") if cl else "❌ yopilmadi")
             + (f" · kassada bo'lishi kerak {S.fmt_som(exp_cash)}" if exp_cash is not None else ""))
+    text += "\n\n" + payers
+    parts = []
+    while len(text) > 3900:
+        cut = text.rfind("\n", 0, 3900)
+        parts.append(text[:cut])
+        text = text[cut:].lstrip("\n")
+    parts.append(text)
     for b in bosses:
-        await send(bot, b, text)
+        for part in parts:
+            await send(bot, b, part)
 
 
 def setup(bot: Bot) -> AsyncIOScheduler:
