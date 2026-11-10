@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 from app.bot import keyboards as K
 from app.bot.notify import send, send_photo
 from app.config import settings
-from app.db.models import Enrollment, Payment, Student
+from app.db.models import Staff, Enrollment, Payment, Student
 from app.db.session import Session
 from app import services as S
 
@@ -399,6 +399,8 @@ async def _decide(c: CallbackQuery, bot: Bot, ok: bool) -> None:
         left = (await S.student_debt(s, sid, y, m)).debt
         parents = await S.parent_tg_ids(s, sid)
         total, method, month = sum(p.amount for p in pays), pay.method, pay.month
+        enterer = await s.get(Staff, pay.entered_by) if pay.entered_by else None
+        enterer_tg = enterer.tg_id if enterer and enterer.tg_id and enterer.tg_id != c.from_user.id else None
         await s.commit()
     mark = "\n\n✅ Tasdiqlandi" if ok else "\n\n❌ Rad etildi"
     if c.message.photo:
@@ -411,6 +413,11 @@ async def _decide(c: CallbackQuery, bot: Bot, ok: bool) -> None:
         for t in parents:
             await send(bot, t, f"❌ {name}: {S.fmt_som(total)} lik o'tkazma tasdiqlanmadi. "
                                "Iltimos, markaz bilan bog'laning.")
+    if enterer_tg:
+        await send(bot, enterer_tg, (f"✅ Karta to'lovi tasdiqlandi: {name} · {S.fmt_som(total)} — hisobga olindi."
+                                     if ok else
+                                     f"❌ Karta to'lovi rad etildi: {name} · {S.fmt_som(total)}.\n"
+                                     "Hisobga olinmadi. Pul bankka tushganini tekshiring; chek boshqa bo'lsa — qayta kiriting."))
 
 
 @router.callback_query(F.data.startswith("pc:"))

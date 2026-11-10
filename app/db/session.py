@@ -3,7 +3,9 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from app.config import settings
 from app.db.models import Base
 
-engine = create_async_engine(settings.database_url, pool_pre_ping=True)
+# Bazadagi vaqtlar (created_at = now()) har doim UTC da yoziladi — hisob-kitob shunga asoslangan.
+_connect = {"server_settings": {"timezone": "UTC"}} if settings.database_url.startswith("postgresql+asyncpg") else {}
+engine = create_async_engine(settings.database_url, pool_pre_ping=True, connect_args=_connect)
 Session = async_sessionmaker(engine, expire_on_commit=False)
 
 

@@ -349,6 +349,12 @@ async def close_month(s, month: str) -> list[Payroll]:
                     s.add(BonusLedger(staff_id=st.id, month=next_month(month), role="qoldiq", points=0, value=0,
                                       amount=total + penalty))
         net = gross - avans + bonus - penalty
+        if net < 0:   # berilgan avans ishlab topilgandan ko'p — farqi keyingi oy oyligidan ushlanadi
+            carry = -net
+            lines = list(lines) + [("Keyingi oyga o'tgan avans qarzi", carry)]
+            s.add(Payout(staff_id=st.id, month=next_month(month), kind="avans", amount=carry, method="qarz",
+                         status="berildi", given_at=datetime.now()))
+            net = 0
         pr = (await s.execute(select(Payroll).where(Payroll.staff_id == st.id, Payroll.month == month))).scalar_one_or_none()
         if not pr:
             pr = Payroll(staff_id=st.id, month=month)
@@ -380,7 +386,10 @@ async def avans_info(s, st: Staff, now_local: datetime) -> tuple[int, int, int]:
         BonusLedger.staff_id == st.id, BonusLedger.status == "yigilmoqda", BonusLedger.amount < 0))).scalar())
     if now_local.day > AVANS_LAST_DAY or reqs >= AVANS_MAX_PER_MONTH:
         return e, taken, 0
-    can = int(max(0, e * AVANS_RATIO - taken - pen) // 10_000 * 10_000)
+    pending = int((await s.execute(select(func.coalesce(func.sum(Payout.amount), 0)).where(
+        Payout.staff_id == st.id, Payout.month == month, Payout.kind == "avans",
+        Payout.status == "kutilmoqda"))).scalar())
+    can = int(max(0, e * AVANS_RATIO - taken - pending - pen) // 10_000 * 10_000)
     return e, taken, can
 
 
@@ -398,5 +407,10 @@ async def avans_reason(s, st: Staff, now_local: datetime) -> str:
     if e <= 0:
         return ("Shu oy hali ishlab topilgan summa yo'q: guruhlaringizdan bu oy botga kiritilgan to'lov yo'q. "
                 f"Avans ishlab topilganning {int(AVANS_RATIO * 100)}% igacha beriladi — to'lovlar kiritilishi bilan ochiladi.")
+    pending = int((await s.execute(select(func.coalesce(func.sum(Payout.amount), 0)).where(
+        Payout.staff_id == st.id, Payout.month == month, Payout.kind == "avans",
+        Payout.status == "kutilmoqda"))).scalar())
+    if pending:
+        return f"{pending:,} so'mlik avans so'rovingiz rahbar tasdig'ini kutmoqda.".replace(",", " ")
     return (f"Ishlab topilgan {e:,} so'mning {int(AVANS_RATIO * 100)}% i ({int(e * AVANS_RATIO):,}) olingan avans "
             f"({taken:,}) va jarimalardan qolmadi yoki 10 000 so'mdan kam.").replace(",", " ")

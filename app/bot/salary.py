@@ -61,10 +61,12 @@ async def my_salary(m: Message) -> None:
             return
         month = PR.current_month(n)
         start, _ = PR.period(month)
+        from calendar import monthrange
+        y_, m_ = map(int, month.split("-"))
         e, lines = await PR.earned(s, st, start, n.replace(tzinfo=None) - PR.UTC_SHIFT,
-                                   min(1.0, n.day / 30))
+                                   min(1.0, n.day / monthrange(y_, m_)[1]))
         _, taken, can = await PR.avans_info(s, st, n)
-        why = "" if can else await PR.avans_reason(s, st, n)
+        av_why = "" if can else await PR.avans_reason(s, st, n)
         acc = int((await s.execute(select(func.coalesce(func.sum(BonusLedger.amount), 0)).where(
             BonusLedger.staff_id == st.id, BonusLedger.status == "yigilmoqda"))).scalar())
         prev = (await s.execute(select(Payroll).where(Payroll.staff_id == st.id).order_by(Payroll.month.desc())
@@ -78,7 +80,7 @@ async def my_salary(m: Message) -> None:
     out = [f"💰 <b>Oyligim · {month}</b> (hozirgacha)"]
     out += [f"• {name}: {S.fmt_som(v)}" for name, v in lines] or ["• hozircha hisob yo'q"]
     out += [f"Jami ishlab topilgan: <b>{S.fmt_som(e)}</b>", f"Olingan avans: {S.fmt_som(taken)}",
-            f"Avans olish mumkin: {S.fmt_som(can)}" if can else f"Avans: hozir mumkin emas — {why}",
+            f"Avans olish mumkin: {S.fmt_som(can)}" if can else f"Avans: hozir mumkin emas — {av_why}",
             "", "<b>Ballar (shu oy, taxminiy)</b>"] + (pts_lines or ["—"])
     out.append(f"Yig'ilgan bonus/jarima: <b>{S.fmt_som(acc)}</b> — " + ("har oy beriladi" if monthly else "dekabr va iyunda beriladi"))
     if prev:
@@ -123,9 +125,12 @@ class Av(StatesGroup):
 async def av_start(c: CallbackQuery, state: FSMContext) -> None:
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
+        if not who.staff:
+            return
         _, _, can = await PR.avans_info(s, who.staff, now())
+        why = "" if can else await PR.avans_reason(s, who.staff, now())
     if not can:
-        await c.answer("Hozir avans olish mumkin emas.", show_alert=True)
+        await c.answer(why[:190] or "Hozir avans olish mumkin emas.", show_alert=True)
         return
     await state.set_state(Av.amount)
     await state.update_data(can=can)
@@ -143,6 +148,11 @@ async def av_amount(m: Message, state: FSMContext, bot: Bot) -> None:
     await state.clear()
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
+        _, _, can = await PR.avans_info(s, who.staff, now())     # qayta tekshiruv (oraliqda boshqa so'rov bo'lgan bo'lsa)
+        if a > can:
+            await m.answer(f"Hozir ko'pi bilan {S.fmt_som(can)} so'rash mumkin." if can else
+                           "Hozir avans so'rab bo'lmaydi: " + await PR.avans_reason(s, who.staff, now()))
+            return
         p = Payout(staff_id=who.staff.id, month=PR.current_month(now()), kind="avans", amount=a)
         s.add(p)
         await s.flush()
@@ -160,6 +170,85 @@ async def av_amount(m: Message, state: FSMContext, bot: Bot) -> None:
     kb = IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data=f"avy:{pid}"), IB(text="❌ Rad", callback_data=f"avn:{pid}")]])
     for b in bosses:
         await send(bot, b, f"💸 <b>Avans so'rovi</b>\n{name}: {S.fmt_som(a)}{lock}", reply_markup=kb)
+
+
+class Ag(StatesGroup):
+    amount = State()
+
+
+@router.callback_query(F.data.startswith("avg:"))
+async def av_give_ask(c: CallbackQuery, state: FSMContext) -> None:
+    """Rahbar o'zi avans beradi (masalan, botga o'tilgan birinchi oy yoki alohida holat)."""
+    sid = int(c.data.split(":")[1])
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        if not (who.staff and who.staff.current_role == "rahbar"):
+            await c.answer("Faqat rahbar.", show_alert=True)
+            return
+        st = await s.get(Staff, sid)
+        e, taken, can = await PR.avans_info(s, st, now())
+    await state.set_state(Ag.amount)
+    await state.update_data(sid=sid)
+    await c.answer()
+    await c.message.answer(f"💸 <b>{st.full_name}</b>ga avans\nShu oy botdagi hisob: ishlab topilgan {S.fmt_som(e)}, "
+                           f"olingan avans {S.fmt_som(taken)}, qoida bo'yicha limit {S.fmt_som(can)}.\n"
+                           "Rahbar sifatida limitdan ortiq ham bera olasiz — summa oy oxirida oylikdan ushlanadi.\n"
+                           "Summani yozing:")
+
+
+@router.message(Ag.amount)
+async def av_give_amount(m: Message, state: FSMContext) -> None:
+    a = _amount(m.text)
+    if not a:
+        await m.answer("Summani raqam bilan yozing, masalan 500000.")
+        return
+    d = await state.get_data()
+    await state.clear()
+    async with Session() as s:
+        st = await s.get(Staff, d["sid"])
+        from app.bot.finance import free_cash, SPEND_SHARE
+        free = await free_cash(s)
+    lock = ""
+    if free is not None:
+        allowed = int(max(0, free) * SPEND_SHARE)
+        lock = f"\nKassa qulfi: {S.fmt_som(allowed)} gacha" + (" ✅" if a <= allowed else " — ⚠️ oshadi")
+    await m.answer(f"💸 {st.full_name}: <b>{S.fmt_som(a)}</b> avans berilsinmi?{lock}\n(PIN so'raladi)",
+                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Berildi", callback_data=f"avgy:{d['sid']}:{a}"),
+                                                     IB(text="❌ Bekor", callback_data="avgn")]]))
+
+
+@router.callback_query(F.data == "avgn")
+async def av_give_cancel(c: CallbackQuery) -> None:
+    await c.answer("Bekor qilindi")
+    await c.message.edit_text("Bekor qilindi.")
+
+
+@router.callback_query(F.data.startswith("avgy:"))
+async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    from app.bot.pin import need_pin
+    _, sid, a = c.data.split(":")
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+    if not (who.staff and who.staff.current_role == "rahbar"):
+        await c.answer("Faqat rahbar.", show_alert=True)
+        return
+    if await need_pin(c, state):
+        return
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        st = await s.get(Staff, int(sid))
+        p = Payout(staff_id=st.id, month=PR.current_month(now()), kind="avans", amount=int(a), status="berildi",
+                   approved_by=who.staff.id, given_at=now().replace(tzinfo=None))
+        s.add(p)
+        await s.flush()
+        await S.audit(s, who.staff, "avans_berildi_rahbar", staff=st.full_name, amount=int(a))
+        await s.commit()
+        pid, tg, name = p.id, st.tg_id, st.full_name
+    await c.answer("Saqlandi")
+    await c.message.edit_text(f"✅ {name}: {S.fmt_som(int(a))} avans berildi. Oy oxirida oylikdan ushlanadi.")
+    if tg:
+        await send(bot, tg, f"💸 Sizga {S.fmt_som(int(a))} avans berildi. Qo'lingizga olgach tasdiqlang:",
+                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Oldim", callback_data=f"got:{pid}")]]))
 
 
 @router.callback_query(F.data.startswith(("avy:", "avn:")))

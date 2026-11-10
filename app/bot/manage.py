@@ -106,7 +106,8 @@ def _pay_text(x: Staff) -> str:
 def _pay_kb(sid: int) -> IM:
     return IM(inline_keyboard=[[IB(text="📊 Foiz", callback_data=f"spp:{sid}"),
                                 IB(text="💵 Oklad", callback_data=f"spo:{sid}")],
-                               [IB(text="🔁 Oylik turi", callback_data=f"spt:{sid}")]])
+                               [IB(text="🔁 Oylik turi", callback_data=f"spt:{sid}"),
+                                IB(text="💸 Avans berish", callback_data=f"avg:{sid}")]])
 
 
 @router.callback_query(F.data.startswith("sp:"))
