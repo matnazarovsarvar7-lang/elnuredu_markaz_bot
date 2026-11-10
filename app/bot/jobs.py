@@ -29,6 +29,10 @@ async def debt_reminders(bot: Bot) -> None:
     t = now().date()
     if not reminder_day(t.day):
         return
+    from app.bot.golive import is_test
+    async with Session() as s:
+        if await is_test(s):        # sinov to'lovlari haqiqiy emas — ota-onalarga qarz eslatmasi ketmasin
+            return
     async with Session() as s:
         jobs = []
         for sd in await S.student_debtors(s, t.year, t.month):
@@ -99,6 +103,8 @@ async def evening_report(bot: Bot) -> None:
         exp_cash = await expected_cash(s)
         from app.bot.vault import boss_balance, petty_balance
         bb, pb = await boss_balance(s), await petty_balance(s)
+        from app.bot.golive import is_test
+        test = await is_test(s)
         from app.bot.reports import payers_block
         payers = await payers_block(s, t, limit=80)
     text = (f"🌙 <b>Kunlik hisobot · {t:%d.%m.%Y}</b>\n"
@@ -112,6 +118,8 @@ async def evening_report(bot: Bot) -> None:
                              .get(cl.status, "") if cl else "❌ yopilmadi")
             + (f" · kassada bo'lishi kerak {S.fmt_som(exp_cash)}" if exp_cash is not None else "")
             + (f"\n👤 Sizning kassangiz: {S.fmt_som(bb)} · 💳 Kichik kassa: {S.fmt_som(pb)}" if bb is not None else ""))
+    if test:
+        text = "🧪 <i>Sinov rejimi — summalar haqiqiy emas</i>\n" + text
     text += "\n\n" + payers
     parts = []
     while len(text) > 3900:

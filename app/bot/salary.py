@@ -311,6 +311,10 @@ async def payroll_job(bot: Bot) -> None:
     cm = PR.close_moment(n.year, n.month)
     if n.replace(tzinfo=None) < cm:
         return
+    from app.bot.golive import is_test
+    async with Session() as s:
+        if await is_test(s):        # sinov rejimida oy yopilmaydi (summalar haqiqiy emas)
+            return
     await close_and_report(bot, f"{n:%Y-%m}")
 
 

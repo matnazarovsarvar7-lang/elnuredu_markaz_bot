@@ -87,6 +87,12 @@ async def _one_time_fixes() -> None:
     from sqlalchemy import select
     from app.db.models import Setting, Staff
     async with Session() as s:
+        if not await s.get(Setting, "fix_2026_11_sinov"):
+            # noyabrdagi barcha summalar sinov uchun: avtomatik oy yopish, taqsimot va qarz eslatmalari to'xtaydi,
+            # rahbar «🚀 Haqiqiy ishni boshlash» ni bosguncha
+            s.add(Setting(key="sinov", value={"on": True}))
+            s.add(Setting(key="fix_2026_11_sinov", value={"done": True}))
+            await s.commit()
         if await s.get(Setting, "fix_2026_11_pay"):
             return
         for st in (await s.execute(select(Staff))).scalars():

@@ -190,8 +190,9 @@ async def distribute(month: str, by_id: int | None = None) -> dict | None:
 async def distribution_job(bot: Bot) -> None:
     """1-sana 09:10: o'tgan oy yopilgan bo'lsa — taqsimlaydi va rahbarga hisobot yuboradi."""
     month = PR.prev_month(f"{now():%Y-%m}")
+    from app.bot.golive import is_test
     async with Session() as s:
-        if not await s.get(Setting, f"closed_{month}") or await s.get(Setting, f"dist_{month}"):
+        if await is_test(s) or not await s.get(Setting, f"closed_{month}") or await s.get(Setting, f"dist_{month}"):
             return
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
     p = await distribute(month)

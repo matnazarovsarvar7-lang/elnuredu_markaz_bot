@@ -349,10 +349,15 @@ async def cash_view(m: Message) -> None:
         social = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
             Payment.method == "ijtimoiy", Payment.month == f"{t:%Y-%m}"))).scalar()
     from app.bot import vault as V
+    from app.bot.golive import is_test
     async with Session() as s:
         bi = await V.boss_month_info(s)
         pb = await V.petty_balance(s)
+        test = await is_test(s)
     lines = ["💼 <b>Kassalar</b>", ""]
+    if test:
+        lines += ["🧪 <b>Sinov rejimi</b>: summalar haqiqiy emas. Oy yopilmaydi, fond taqsimoti va qarz eslatmalari "
+                  "ketmaydi. Sinov tugagach — «🚀 Haqiqiy ishni boshlash».", ""]
     if bi:
         lines += ["👤 <b>1. Sizning kassangiz</b> (oylik, avans, xarajatlaringiz shundan)", V.boss_text(bi), "",
                   f"💳 <b>2. Kichik kassa</b> (moliya xarajatlari faqat shundan): <b>{S.fmt_som(pb)}</b>", ""]
@@ -371,7 +376,10 @@ async def cash_view(m: Message) -> None:
                      (f" (farq {'+' if cl.diff > 0 else ''}{S.fmt_som(cl.diff)})" if cl.diff else ""))
     if not closes:
         lines.append("—")
-    await m.answer("\n".join(lines), reply_markup=V.kassa_kb(bi is not None))
+    kb = V.kassa_kb(bi is not None)
+    if test:
+        kb.inline_keyboard.append([IB(text="🚀 Haqiqiy ishni boshlash", callback_data="gl")])
+    await m.answer("\n".join(lines), reply_markup=kb)
 
 
 @router.callback_query(F.data == "cnl")
