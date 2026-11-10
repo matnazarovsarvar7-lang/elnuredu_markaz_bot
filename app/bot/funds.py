@@ -188,8 +188,12 @@ async def distribute(month: str, by_id: int | None = None) -> dict | None:
 
 
 async def distribution_job(bot: Bot) -> None:
-    """1-sana 09:10: o'tgan oy yopilgan bo'lsa — taqsimlaydi va rahbarga hisobot yuboradi."""
-    month = PR.prev_month(f"{now():%Y-%m}")
+    """Har soatda: 1-sana 09:10 dan keyin o'tgan oy yopilgan, lekin taqsimlanmagan bo'lsa — taqsimlaydi
+    (bot o'sha paytda ishlamay qolgan bo'lsa ham keyinroq bajariladi)."""
+    n = now()
+    if n.day == 1 and (n.hour, n.minute) < (9, 10):
+        return
+    month = PR.prev_month(f"{n:%Y-%m}")
     from app.bot.golive import is_test
     async with Session() as s:
         if await is_test(s) or not await s.get(Setting, f"closed_{month}") or await s.get(Setting, f"dist_{month}"):
@@ -217,7 +221,8 @@ async def month_end_reminders(bot: Bot, who: str) -> None:
             pend = (await s.execute(select(func.count(CashHandover.id)).where(CashHandover.status == "kutilmoqda"))).scalar()
             to = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
             text = ("📅 Bugun oyning oxirgi kuni. Ertaga 09:10 da sizdagi pul fondlarga taqsimlanadi va kassa 0 dan "
-                    "boshlanadi." + (f"\n⚠️ Tasdiqlanmagan topshirishlar: {pend} ta — bugun tasdiqlang." if pend else ""))
+                    "boshlanadi.\n🧮 Qo'lingizdagi pulni bir sanab ko'ring: botdagi «Sizda» bilan mos kelmasa — "
+                    "💼 Kassa → 🧮 Qayta sanash (bugun)." + (f"\n⚠️ Tasdiqlanmagan topshirishlar: {pend} ta — bugun tasdiqlang." if pend else ""))
     for t in to:
         await send(bot, t, text)
 
