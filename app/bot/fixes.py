@@ -435,7 +435,7 @@ async def void_apply(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             coins = 0
             for r in rows:
                 s.add(Payment(enrollment_id=r.enrollment_id, month=r.month, amount=-r.amount, method=r.method,
-                              status="tasdiq", paid_date=t, entered_by=st.id, confirmed_by=st.id, void_of=r.id,
+                              status="tasdiq", paid_date=r.paid_date, entered_by=st.id, confirmed_by=st.id, void_of=r.id,
                               void_reason=reason))
                 r.voided_at, r.void_reason = at, reason
                 coins += r.coins_given or 0
@@ -448,7 +448,7 @@ async def void_apply(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                                    f"({obj.paid_date:%d.%m})\nSabab: {reason}\nHisobingiz yangilandi."
                                    + (f" Coin: −{coins}." if coins else "")))
         elif k == "x":
-            s.add(Expense(date=t, category=obj.category, amount=-obj.amount, note=f"Bekor qilindi: #{obj.id}",
+            s.add(Expense(date=obj.date, category=obj.category, amount=-obj.amount, note=f"Bekor qilindi: #{obj.id}",
                           method=obj.method, source=obj.source, status="tasdiq", by_id=st.id, approved_by=st.id,
                           void_of=obj.id, void_reason=reason))
             obj.voided_at, obj.void_reason = at, reason

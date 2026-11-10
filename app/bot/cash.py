@@ -48,15 +48,20 @@ async def expected_cash(s) -> int | None:
     if not op:
         return None
     since = datetime.fromisoformat(op["at"])
+    # kassa sanalgan kundan oldingi sana bilan kiritilgan (orqaga qaytib kiritilgan) to'lov va xarajatlar
+    # kassaga ta'sir qilmaydi: ular allaqachon sanalgan pulning ichida yoki ilgari ishlatilgan
+    open_day = date.fromisoformat(op["day"]) if op.get("day") else (since + timedelta(hours=5)).date()
     pays = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
-        Payment.method == "naqd", Payment.status == "tasdiq", Payment.created_at >= since))).scalar()
+        Payment.method == "naqd", Payment.status == "tasdiq", Payment.created_at >= since,
+        Payment.paid_date >= open_day))).scalar()
     outs = (await s.execute(select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
         CashHandover.status != "rad", CashHandover.created_at >= since))).scalar()
     from app.db.models import Expense, ServiceSale
     sales = (await s.execute(select(func.coalesce(func.sum(ServiceSale.amount), 0)).where(
         ServiceSale.method == "naqd", ServiceSale.status == "tasdiq", ServiceSale.created_at >= since))).scalar()
     spent = (await s.execute(select(func.coalesce(func.sum(Expense.amount), 0)).where(
-        Expense.method == "naqd", Expense.status == "tasdiq", Expense.created_at >= since))).scalar()
+        Expense.method == "naqd", Expense.status == "tasdiq", Expense.created_at >= since,
+        Expense.date >= open_day))).scalar()
     from app.db.models import Payout
     paid_out = (await s.execute(select(func.coalesce(func.sum(Payout.amount), 0)).where(
         Payout.method == "naqd", Payout.status.in_(("berildi", "olindi")), Payout.created_at >= since))).scalar()
@@ -68,7 +73,8 @@ async def _set_opening(s, amount: int) -> None:
     db_now = (await s.execute(select(func.now()))).scalar()          # bazaning o'z vaqti (created_at bilan bir xil)
     if isinstance(db_now, str):
         db_now = datetime.fromisoformat(db_now)
-    val = {"amount": amount, "at": db_now.replace(tzinfo=None, microsecond=0).isoformat()}
+    val = {"amount": amount, "at": db_now.replace(tzinfo=None, microsecond=0).isoformat(),
+           "day": datetime.now(TZ).date().isoformat()}
     if row:
         row.value = val
     else:
