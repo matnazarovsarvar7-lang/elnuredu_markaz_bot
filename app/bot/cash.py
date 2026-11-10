@@ -217,14 +217,19 @@ async def ho_to(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     to = c.data.split(":")[1]
     if to == "bank":
         await state.set_state(Ho.receipt)
-        await c.message.edit_text("🏦 Bank kvitansiyasining rasmini yuboring:")
+        await c.message.edit_text("🏦 Bank kvitansiyasini yuboring (rasm yoki PDF):")
         return
     await _ho_save(c.message, state, bot, c.from_user.id, "rahbar", None)
 
 
-@router.message(Ho.receipt, F.photo)
+@router.message(Ho.receipt, F.photo | F.document)
 async def ho_receipt(m: Message, state: FSMContext, bot: Bot) -> None:
-    await _ho_save(m, state, bot, m.from_user.id, "bank", m.photo[-1].file_id)
+    from app.bot.notify import receipt_of
+    rc = receipt_of(m)
+    if not rc:
+        await m.answer("Kvitansiyani rasm yoki PDF fayl qilib yuboring.")
+        return
+    await _ho_save(m, state, bot, m.from_user.id, "bank", rc[0])
 
 
 async def _ho_save(msg: Message, state: FSMContext, bot: Bot, tg: int, to: str, fid: str | None) -> None:

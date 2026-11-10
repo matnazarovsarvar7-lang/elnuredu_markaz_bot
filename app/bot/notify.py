@@ -43,9 +43,28 @@ async def mark_blocked(bot: Bot, tg_id: int) -> None:
                     pass
 
 
+DOC = "doc:"   # fayl ko'rinishidagi chek (PDF va h.k.) — file_id oldiga qo'yiladi
+
+
+def receipt_of(m) -> tuple[str, str] | None:
+    """Xabardan chek: rasm yoki fayl (PDF, rasm-fayl). (saqlanadigan file_id, takrorni aniqlash uchun unique_id)."""
+    if m.photo:
+        p = m.photo[-1]
+        return p.file_id, p.file_unique_id
+    d = m.document
+    if d and ((d.mime_type or "").startswith("image/") or (d.mime_type or "") == "application/pdf"
+              or (d.file_name or "").lower().endswith((".pdf", ".jpg", ".jpeg", ".png", ".heic", ".webp"))):
+        return DOC + d.file_id, d.file_unique_id
+    return None
+
+
 async def send_photo(bot: Bot, tg_id: int, file_id: str, caption: str, **kw) -> bool:
+    """Rasm yoki (doc: belgili) faylni izoh bilan yuboradi."""
     try:
-        await bot.send_photo(tg_id, file_id, caption=caption, **kw)
+        if file_id.startswith(DOC):
+            await bot.send_document(tg_id, file_id[len(DOC):], caption=caption, **kw)
+        else:
+            await bot.send_photo(tg_id, file_id, caption=caption, **kw)
         return True
     except TelegramForbiddenError:
         await mark_blocked(bot, tg_id)

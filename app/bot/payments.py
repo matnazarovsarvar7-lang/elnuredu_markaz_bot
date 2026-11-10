@@ -166,7 +166,7 @@ async def _got_amount(msg: Message, state: FSMContext, amount: int, tg_id: int) 
     if who.parent:
         await state.update_data(method="karta", paid=today().isoformat())
         await state.set_state(Pay.receipt)
-        await msg.answer("O'tkazma chekining rasmini (skrinshot) yuboring.")
+        await msg.answer("O'tkazma chekini yuboring: skrinshot yoki PDF fayl (Click, Payme, Xazna, bank ilovasi).")
         return
     kb = IM(inline_keyboard=[[IB(text="💵 Naqd", callback_data="pm:naqd"),
                               IB(text="💳 Kartaga o'tkazma", callback_data="pm:karta")]])
@@ -230,7 +230,7 @@ async def _after_date(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> 
             return
         await state.set_state(Pay.receipt)
         kb = IM(inline_keyboard=[[IB(text="Chek yo'q — rahbar tekshirsin", callback_data="nochek")]])
-        await msg.answer("O'tkazma chekining rasmini yuboring. To'lov rahbar tasdiqlagach hisobga olinadi.",
+        await msg.answer("O'tkazma chekini yuboring (skrinshot yoki PDF fayl). To'lov rahbar tasdiqlagach hisobga olinadi.",
                          reply_markup=kb)
         return
     await _save(msg, state, bot, tg_id)
@@ -317,14 +317,19 @@ async def _save_pending(msg_or_cb_msg: Message, state: FSMContext, bot: Bot, tg_
             await send(bot, b, caption + "\n(chek rasmi yo'q)", reply_markup=_confirm_kb(first.id))
 
 
-@router.message(Pay.receipt, F.photo)
+@router.message(Pay.receipt, F.photo | F.document)
 async def pay_receipt(m: Message, state: FSMContext, bot: Bot) -> None:
-    photo = m.photo[-1]
+    from app.bot.notify import receipt_of
+    rc = receipt_of(m)
+    if not rc:
+        await m.answer("Chekni rasm yoki PDF fayl qilib yuboring (Click, Payme, Xazna, bank ilovasi cheki).")
+        return
+    fid, uid = rc
     async with Session() as s:
-        if await S.duplicate_receipt(s, photo.file_unique_id):
+        if await S.duplicate_receipt(s, uid):
             await m.answer("⚠️ Bu chek avval yuborilgan. Boshqa chek rasmini yuboring yoki admin bilan bog'laning.")
             return
-    await _save_pending(m, state, bot, m.from_user.id, photo.file_id, photo.file_unique_id)
+    await _save_pending(m, state, bot, m.from_user.id, fid, uid)
     await m.answer("Chek qabul qilindi. Rahbar tasdiqlagach, to'lov hisobga olinadi va xabar keladi.")
 
 
@@ -336,7 +341,7 @@ async def pay_no_receipt(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
 
 @router.message(Pay.receipt)
 async def pay_receipt_wrong(m: Message) -> None:
-    await m.answer("Iltimos, chekni rasm (skrinshot) qilib yuboring. Bekor qilish: /start")
+    await m.answer("Iltimos, chekni rasm (skrinshot) yoki PDF fayl qilib yuboring. Bekor qilish: /start")
 
 
 # ---------- 4. rahbar tasdig'i ----------
@@ -372,7 +377,7 @@ async def pending(m: Message, bot: Bot) -> None:
     for head, name, total, items in views:
         cap = _pending_caption(name, total, head.paid_date, items)
         if head.receipt_file_id:
-            await bot.send_photo(m.chat.id, head.receipt_file_id, caption=cap, reply_markup=_confirm_kb(head.id))
+            await send_photo(bot, m.chat.id, head.receipt_file_id, cap, reply_markup=_confirm_kb(head.id))
         else:
             await m.answer(cap + "\n(chek rasmi yo'q)", reply_markup=_confirm_kb(head.id))
 
@@ -403,7 +408,7 @@ async def _decide(c: CallbackQuery, bot: Bot, ok: bool) -> None:
         enterer_tg = enterer.tg_id if enterer and enterer.tg_id and enterer.tg_id != c.from_user.id else None
         await s.commit()
     mark = "\n\n✅ Tasdiqlandi" if ok else "\n\n❌ Rad etildi"
-    if c.message.photo:
+    if c.message.photo or c.message.document:
         await c.message.edit_caption(caption=(c.message.caption or "") + mark)
     else:
         await c.message.edit_text((c.message.text or "") + mark)

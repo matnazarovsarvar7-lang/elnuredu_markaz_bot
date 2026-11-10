@@ -116,15 +116,17 @@ async def exp_amount(m: Message, state: FSMContext) -> None:
 async def exp_note(m: Message, state: FSMContext) -> None:
     await state.update_data(note=(m.text or "").strip()[:300])
     await state.set_state(Ex.receipt)
-    await m.answer("📷 Chek rasmini yuboring (chek bo'lmasa — «chek yo'q» deb yozing):")
+    await m.answer("📷 Chekni yuboring — rasm yoki PDF fayl (chek bo'lmasa — «chek yo'q» deb yozing):")
 
 
 @router.message(Ex.receipt)
 async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
     d = await state.get_data()
-    fid = m.photo[-1].file_id if m.photo else None
+    from app.bot.notify import receipt_of
+    rc = receipt_of(m)
+    fid = rc[0] if rc else None
     if not fid and "chek" not in (m.text or "").lower():
-        await m.answer("Chek rasmini yuboring yoki «chek yo'q» deb yozing.")
+        await m.answer("Chekni rasm yoki PDF fayl qilib yuboring yoki «chek yo'q» deb yozing.")
         return
     await state.clear()
     t = now().date()
