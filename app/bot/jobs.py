@@ -97,6 +97,8 @@ async def evening_report(bot: Bot) -> None:
         early = await early_lessons(s, t)
         cl = (await s.execute(select(CashClose).where(CashClose.date == t).order_by(CashClose.id.desc()))).scalars().first()
         exp_cash = await expected_cash(s)
+        from app.bot.vault import boss_balance, petty_balance
+        bb, pb = await boss_balance(s), await petty_balance(s)
         from app.bot.reports import payers_block
         payers = await payers_block(s, t, limit=80)
     text = (f"🌙 <b>Kunlik hisobot · {t:%d.%m.%Y}</b>\n"
@@ -108,7 +110,8 @@ async def evening_report(bot: Bot) -> None:
             + (f"\nErta tugagan darslar: {'; '.join(early)}" if early else "")
             + "\nKassa: " + ({"mos": "✅ yopildi, mos", "farq": "⚠️ yopildi, farq bor", "boshlang": "▫️ boshlang'ich qoldiq"}
                              .get(cl.status, "") if cl else "❌ yopilmadi")
-            + (f" · kassada bo'lishi kerak {S.fmt_som(exp_cash)}" if exp_cash is not None else ""))
+            + (f" · kassada bo'lishi kerak {S.fmt_som(exp_cash)}" if exp_cash is not None else "")
+            + (f"\n👤 Sizning kassangiz: {S.fmt_som(bb)} · 💳 Kichik kassa: {S.fmt_som(pb)}" if bb is not None else ""))
     text += "\n\n" + payers
     parts = []
     while len(text) > 3900:

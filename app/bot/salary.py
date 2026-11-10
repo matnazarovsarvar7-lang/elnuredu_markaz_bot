@@ -159,7 +159,9 @@ async def av_amount(m: Message, state: FSMContext, bot: Bot) -> None:
         await S.audit(s, who.staff, "avans_sorov", amount=a)
         await s.commit()
         from app.bot.finance import free_cash, SPEND_SHARE
+        from app.bot.vault import boss_balance
         free = await free_cash(s)
+        bb = await boss_balance(s)
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         pid, name = p.id, who.staff.full_name
     await m.answer("✅ Avans so'rovi rahbarga yuborildi.")
@@ -169,7 +171,9 @@ async def av_amount(m: Message, state: FSMContext, bot: Bot) -> None:
         lock = f"\nKassa qulfi: {S.fmt_som(allowed)} gacha" + (" ✅" if a <= allowed else " — ⚠️ oshadi")
     kb = IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data=f"avy:{pid}"), IB(text="❌ Rad", callback_data=f"avn:{pid}")]])
     for b in bosses:
-        await send(bot, b, f"💸 <b>Avans so'rovi</b>\n{name}: {S.fmt_som(a)}{lock}", reply_markup=kb)
+        await send(bot, b, f"💸 <b>Avans so'rovi</b>\n{name}: {S.fmt_som(a)}{lock}"
+                   + (f"\n👤 Kassangizda: {S.fmt_som(bb)}" + (" — ⚠️ yetmaydi" if a > bb else "") if bb is not None else
+                      "\n⚠️ Kassalaringiz hali ochilmagan (💼 Kassa → 🔓 Kassalarni ochish)"), reply_markup=kb)
 
 
 class Ag(StatesGroup):
@@ -207,11 +211,13 @@ async def av_give_amount(m: Message, state: FSMContext) -> None:
     async with Session() as s:
         st = await s.get(Staff, d["sid"])
         from app.bot.finance import free_cash, SPEND_SHARE
+        from app.bot.vault import boss_balance
         free = await free_cash(s)
-    lock = ""
+        bb = await boss_balance(s)
+    lock = f"\n👤 Kassangizda: {S.fmt_som(bb)}" + (" — ⚠️ yetmaydi" if a > bb else "") if bb is not None else ""
     if free is not None:
         allowed = int(max(0, free) * SPEND_SHARE)
-        lock = f"\nKassa qulfi: {S.fmt_som(allowed)} gacha" + (" ✅" if a <= allowed else " — ⚠️ oshadi")
+        lock += f"\nKassa qulfi: {S.fmt_som(allowed)} gacha" + (" ✅" if a <= allowed else " — ⚠️ oshadi")
     await m.answer(f"💸 {st.full_name}: <b>{S.fmt_som(a)}</b> avans berilsinmi?{lock}\n(PIN so'raladi)",
                    reply_markup=IM(inline_keyboard=[[IB(text="✅ Berildi", callback_data=f"avgy:{d['sid']}:{a}"),
                                                      IB(text="❌ Bekor", callback_data="avgn")]]))
@@ -231,6 +237,12 @@ async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         who = await S.who_by_tg(s, c.from_user.id)
     if not (who.staff and who.staff.current_role == "rahbar"):
         await c.answer("Faqat rahbar.", show_alert=True)
+        return
+    from app.bot.vault import boss_can_pay
+    async with Session() as s:
+        why = await boss_can_pay(s, int(a))
+    if why:
+        await c.answer(why, show_alert=True)
         return
     if await need_pin(c, state):
         return
@@ -254,6 +266,14 @@ async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
 @router.callback_query(F.data.startswith(("avy:", "avn:")))
 async def av_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     from app.bot.pin import need_pin
+    from app.bot.vault import boss_can_pay
+    if c.data.startswith("avy:"):
+        async with Session() as s:
+            p = await s.get(Payout, int(c.data.split(":")[1]))
+            why = await boss_can_pay(s, p.amount) if p and p.status == "kutilmoqda" and p.method == "naqd" else None
+        if why:
+            await c.answer(why, show_alert=True)
+            return
     if c.data.startswith("avy:") and await need_pin(c, state):
         return
     kind, pid = c.data.split(":")
@@ -395,6 +415,13 @@ def _slip(pr: Payroll) -> str:
 @router.callback_query(F.data.startswith("pay:"))
 async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
     from app.bot.pin import need_pin
+    from app.bot.vault import boss_can_pay
+    async with Session() as s:
+        pr = await s.get(Payroll, int(c.data.split(":")[1]))
+        why = await boss_can_pay(s, pr.net) if pr else None
+    if why:
+        await c.answer(why, show_alert=True)
+        return
     if await need_pin(c, state):
         return
     async with Session() as s:

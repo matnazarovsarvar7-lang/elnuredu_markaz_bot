@@ -398,6 +398,19 @@ class CashClose(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class KassaMove(Base):
+    """Rahbar kassasi va kichik kassa harakatlari (kirim +, chiqim −): ochilish, tuzatish, kichik kassaga berish,
+    egasi olgan pul, fondga ajratish. To'lov, topshirish, oylik va xarajatlar o'z jadvallaridan hisoblanadi."""
+    __tablename__ = "kassa_moves"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kassa: Mapped[str] = mapped_column(String(20))                    # rahbar | kichik
+    amount: Mapped[int] = mapped_column(Integer)
+    kind: Mapped[str] = mapped_column(String(20))                     # boshlang | tuzatish | kirim | chiqim | egasi | kichikka | fond
+    note: Mapped[str | None] = mapped_column(String(300))
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class CashHandover(Base):
     """Inkassatsiya: naqdni rahbarga yoki bankka topshirish."""
     __tablename__ = "cash_handovers"

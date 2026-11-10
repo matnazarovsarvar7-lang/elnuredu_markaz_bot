@@ -48,7 +48,7 @@ async def cash_breakdown(s) -> dict | None:
     op = await _opening(s)
     if not op:
         return None
-    from app.db.models import Expense, Payout, ServiceSale
+    from app.db.models import ServiceSale
     since = datetime.fromisoformat(op["at"])
     # kassa sanalgan kundan oldingi sana bilan kiritilgan (orqaga qaytib kiritilgan) to'lov va xarajatlar
     # kassaga ta'sir qilmaydi: ular allaqachon sanalgan pulning ichida yoki ilgari ishlatilgan
@@ -71,10 +71,8 @@ async def cash_breakdown(s) -> dict | None:
         CashHandover.status != "rad", CashHandover.created_at >= since))
     sales = await total(select(func.coalesce(func.sum(ServiceSale.amount), 0)).where(
         ServiceSale.method == "naqd", ServiceSale.status == "tasdiq", ServiceSale.created_at >= since))
-    spent = await total(select(func.coalesce(func.sum(Expense.amount), 0)).where(
-        Expense.method == "naqd", Expense.status == "tasdiq", Expense.created_at >= since, Expense.date >= open_day))
-    paid_out = await total(select(func.coalesce(func.sum(Payout.amount), 0)).where(
-        Payout.method == "naqd", Payout.status.in_(("berildi", "olindi")), Payout.created_at >= since))
+    # xarajat va oylik/avans qabul kassasidan qilinmaydi: xarajat — kichik kassadan, oylik/avans — rahbar kassasidan
+    spent = paid_out = 0
     opening = int(op["amount"])
     return {"opening": opening, "since": since + timedelta(hours=5), "open_day": open_day, "pays": pays,
             "n_pays": n_pays, "sales": sales, "outs": outs, "spent": spent, "paid_out": paid_out,
@@ -326,7 +324,10 @@ async def ho_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         await s.commit()
         mol = await s.get(Staff, h.by_id) if h.by_id else None
         amt = h.amount
-    await c.message.edit_text(c.message.html_text + ("\n\n✅ Qabul qilindi" if kind == "hoy" else "\n\n❌ Mos emas"))
+        from app.bot.vault import boss_balance
+        bal = await boss_balance(s) if h.to_kind == "rahbar" else None
+    await c.message.edit_text(c.message.html_text + ("\n\n✅ Qabul qilindi" if kind == "hoy" else "\n\n❌ Mos emas")
+                              + (f"\n👤 Kassangizda endi: <b>{S.fmt_som(bal)}</b>" if bal is not None and kind == "hoy" else ""))
     if mol and mol.tg_id:
         await send(bot, mol.tg_id, f"💼 {S.fmt_som(amt)} topshirish: " +
                    ("✅ rahbar qabul qildi." if kind == "hoy" else "❌ rahbar «mos emas» dedi — bog'laning."))
@@ -347,19 +348,30 @@ async def cash_view(m: Message) -> None:
         pend = (await s.execute(select(CashHandover).where(CashHandover.status == "kutilmoqda"))).scalars().all()
         social = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
             Payment.method == "ijtimoiy", Payment.month == f"{t:%Y-%m}"))).scalar()
-    lines = ["💼 <b>Kassa</b>",
-             f"Kassada bo'lishi kerak: <b>{S.fmt_som(exp)}</b>\n\n{breakdown_text(br)}\n" if exp is not None else
-             "Boshlang'ich qoldiq hali kiritilmagan (moliya birinchi «🔐 Kassani yopish» da kiritadi).",
-             f"Tasdiq kutayotgan topshirishlar: {len(pend)} ta" + (f" ({S.fmt_som(sum(h.amount for h in pend))})" if pend else ""),
-             f"Ijtimoiy to'lovlar (kassaga kirmaydi) shu oy: {S.fmt_som(int(social))}", "", "<b>Oxirgi yopishlar</b>"]
+    from app.bot import vault as V
+    async with Session() as s:
+        bi = await V.boss_info(s)
+        pb = await V.petty_balance(s)
+    lines = ["💼 <b>Kassalar</b>", ""]
+    if bi:
+        lines += ["👤 <b>1. Sizning kassangiz</b> (oylik, avans, xarajatlaringiz shundan)", V.boss_text(bi), "",
+                  f"💳 <b>2. Kichik kassa</b> (moliya xarajatlari faqat shundan): <b>{S.fmt_som(pb)}</b>", ""]
+    else:
+        lines += ["⚠️ Kassalar hali ochilmagan. «🔓 Kassalarni ochish» ni bosing: qo'lingizdagi pulni va moliyadagi "
+                  "kichik kassa pulini kiritasiz. Shundan keyin oylik/avans faqat kassangizdan, moliya xarajatlari "
+                  "faqat kichik kassadan bo'ladi.", ""]
+    lines += [f"📥 <b>{'3. ' if bi else ''}Qabul kassasi</b> (moliyada, o'quvchilar to'lovi — sizga topshiriladi)",
+              f"Kassada bo'lishi kerak: <b>{S.fmt_som(exp)}</b>\n\n{breakdown_text(br)}\n" if exp is not None else
+              "Boshlang'ich qoldiq hali kiritilmagan (moliya birinchi «🔐 Kassani yopish» da kiritadi).",
+              f"Tasdiq kutayotgan topshirishlar: {len(pend)} ta" + (f" ({S.fmt_som(sum(h.amount for h in pend))})" if pend else ""),
+              f"Ijtimoiy to'lovlar (kassaga kirmaydi) shu oy: {S.fmt_som(int(social))}", "", "<b>Oxirgi yopishlar</b>"]
     for cl in closes:
         mark = {"mos": "✅", "farq": "⚠️", "boshlang": "▫️"}[cl.status]
         lines.append(f"{mark} {cl.date:%d.%m}: {S.fmt_som(cl.counted)}" +
                      (f" (farq {'+' if cl.diff > 0 else ''}{S.fmt_som(cl.diff)})" if cl.diff else ""))
     if not closes:
         lines.append("—")
-    kb = IM(inline_keyboard=[[IB(text="📋 Naqd to'lovlar ro'yxati", callback_data="cnl")]]) if br else None
-    await m.answer("\n".join(lines), reply_markup=kb)
+    await m.answer("\n".join(lines), reply_markup=V.kassa_kb(bi is not None))
 
 
 @router.callback_query(F.data == "cnl")
