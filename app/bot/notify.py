@@ -71,3 +71,14 @@ async def send_photo(bot: Bot, tg_id: int, file_id: str, caption: str, **kw) -> 
         return False
     except Exception:
         return False
+
+
+async def menu_reset_middleware(handler, event, data):
+    """Menyu tugmasi bosilsa — chala qolgan jarayon (to'lov, tahrir, qidiruv) yopiladi, tugma o'z ishini qiladi."""
+    from app.bot.keyboards import menu_texts
+    text = getattr(event, "text", None)
+    state = data.get("state")
+    if text and state is not None and text in menu_texts():
+        await state.clear()
+        data["raw_state"] = None     # filtrlar ham yangi (bo'sh) holatni ko'rsin
+    return await handler(event, data)

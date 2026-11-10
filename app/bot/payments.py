@@ -59,7 +59,8 @@ async def pay_start(m: Message, state: FSMContext) -> None:
         return
     await state.clear()
     await state.set_state(Pay.search)
-    await m.answer("O'quvchining ismi yoki familiyasidan kamida 2 harf yozing:")
+    await m.answer("💵 O'quvchi ismi yoki familiyasidan kamida 2 harf yozing.\n"
+                   "Saqlagandan keyin keyingi ismni darhol yozaverasiz — boshidan boshlash shart emas.")
 
 
 @router.message(Pay.search)
@@ -67,10 +68,66 @@ async def pay_search(m: Message, state: FSMContext) -> None:
     async with Session() as s:
         found = await S.search_students(s, m.text or "")
     if not found:
-        await m.answer("Topilmadi. Boshqacha yozib ko'ring yoki /start bosing.")
+        await m.answer("Topilmadi. Boshqacha yozib ko'ring (kamida 2 harf).")
+        return
+    if len(found) == 1:                      # bitta topilsa — darhol ochiladi
+        await _open_student(m, state, found[0].id, edit=False)
         return
     kb = IM(inline_keyboard=[[IB(text=x.full_name, callback_data=f"ps:{x.id}")] for x in found])
     await m.answer("O'quvchini tanlang:", reply_markup=kb)
+
+
+def _last_text(last: dict | None) -> str | None:
+    if not last:
+        return None
+    d = date.fromisoformat(last["paid"])
+    return f"{'💵 naqd' if last['method'] == 'naqd' else '💳 karta'} · {d:%d.%m}"
+
+
+async def _open_student(msg: Message, state: FSMContext, sid: int, edit: bool) -> None:
+    """Xodim uchun bitta ekran: qarz + summa tugmalari (yoki summani yozish)."""
+    t = today()
+    async with Session() as s:
+        if not await S.student_enrollments(s, sid):
+            await msg.answer("Bu o'quvchi hech qaysi guruhda emas.")
+            return
+        sd = await S.student_debt(s, sid, t.year, t.month)
+    lines = [f"<b>{sd.student.full_name}</b> · {t:%m.%Y}"]
+    for p in sd.parts:
+        lines.append(f"• {p.enrollment.group.name}: {S.fmt_som(p.payable)}, "
+                     + ("to'langan ✅" if p.debt == 0 else f"qoldi {S.fmt_som(p.debt)}"))
+    rows = []
+    if sd.debt:
+        rows.append([IB(text=f"✅ Qarzini to'liq: {S.fmt_som(sd.debt)}", callback_data=f"pq:{sid}:a:{sd.debt}")])
+    if len(sd.parts) > 1:
+        rows += [[IB(text=f"Faqat {p.enrollment.group.name}: {S.fmt_som(p.debt)}",
+                     callback_data=f"pq:{sid}:{p.enrollment.id}:{p.debt}")] for p in sd.parts if p.debt]
+    rows.append([IB(text="👤 Kartasi", callback_data=f"st:{sid}")])
+    d = await state.get_data()
+    await state.set_state(Pay.amount)
+    await state.update_data(mode="all", sid=sid, eid=None, month=month_key(t), name=sd.student.full_name,
+                            last=d.get("last"))
+    text = "\n".join(lines) + ("\n\nTugmani bosing yoki summani yozing (masalan 300000):" if sd.debt else
+                               "\n\nQarzi yo'q ✅ Oldindan to'lov bo'lsa, summani yozing:")
+    if edit:
+        await msg.edit_text(text, reply_markup=IM(inline_keyboard=rows))
+    else:
+        await msg.answer(text, reply_markup=IM(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("pq:"))
+async def pay_quick_amount(c: CallbackQuery, state: FSMContext) -> None:
+    _, sid, target, amount = c.data.split(":")
+    d = await state.get_data()
+    if d.get("sid") != int(sid):
+        await _open_student(c.message, state, int(sid), edit=False)
+        d = await state.get_data()
+    if target != "a":
+        async with Session() as s:
+            e = await s.get(Enrollment, int(target), options=[selectinload(Enrollment.group)])
+        await state.update_data(mode="one", eid=e.id)
+    await c.answer()
+    await _got_amount(c.message, state, int(amount), c.from_user.id)
 
 
 async def _student_kb(s, sid: int, t: date) -> tuple[str, IM]:
@@ -90,6 +147,11 @@ async def _student_kb(s, sid: int, t: date) -> tuple[str, IM]:
 @router.callback_query(F.data.startswith("ps:"))
 async def pay_pick_student(c: CallbackQuery, state: FSMContext) -> None:
     sid = int(c.data.split(":")[1])
+    who = await _who(c.from_user.id)
+    if who.staff:
+        await c.answer()
+        await _open_student(c.message, state, sid, edit=True)
+        return
     async with Session() as s:
         if not await S.student_enrollments(s, sid):
             await c.message.edit_text("Bu o'quvchi hech qaysi guruhda emas.")
@@ -168,14 +230,54 @@ async def _got_amount(msg: Message, state: FSMContext, amount: int, tg_id: int) 
         await state.set_state(Pay.receipt)
         await msg.answer("O'tkazma chekini yuboring: skrinshot yoki PDF fayl (Click, Payme, Xazna, bank ilovasi).")
         return
-    kb = IM(inline_keyboard=[[IB(text="💵 Naqd", callback_data="pm:naqd"),
-                              IB(text="💳 Kartaga o'tkazma", callback_data="pm:karta")]])
-    await msg.answer(f"{S.fmt_som(amount)} — qanday to'landi?", reply_markup=kb)
+    d = await state.get_data()
+    t = today()
+    rows = []
+    last = d.get("last")
+    if last and not (last["method"] == "naqd" and last["paid"] == t.isoformat()):
+        rows.append([IB(text=f"🔁 Oldingidek: {_last_text(last)}", callback_data="pmd:last")])
+    rows.append([IB(text="💵 Naqd · bugun", callback_data="pmd:naqd:0"),
+                 IB(text="💳 Karta · bugun", callback_data="pmd:karta:0")])
+    rows.append([IB(text="💵 Naqd · boshqa sana", callback_data="pmd:naqd:x"),
+                 IB(text="💳 Karta · boshqa sana", callback_data="pmd:karta:x")])
+    await msg.answer(f"<b>{d.get('name', '')}</b> · {S.fmt_som(amount)} — qanday va qachon to'landi?",
+                     reply_markup=IM(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("pmd:"))
+async def pay_method_date(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    parts = c.data.split(":")
+    d = await state.get_data()
+    if "amount" not in d:
+        await c.answer("Qaytadan boshlang: o'quvchi ismini yozing.", show_alert=True)
+        return
+    await c.answer()
+    if parts[1] == "last":
+        last = d.get("last")
+        if not last:
+            return
+        paid = date.fromisoformat(last["paid"])
+        await state.update_data(method=last["method"], paid=paid.isoformat(), month=month_key(paid))
+        await c.message.edit_text(f"{_last_text(last)} ✅")
+        await _after_date(c.message, state, bot, c.from_user.id)
+        return
+    await state.update_data(method=parts[1])
+    if parts[2] == "x":
+        await state.set_state(Pay.date)
+        await c.message.edit_text("Sanani kun va oy bilan yozing, masalan: 3 11")
+        return
+    await state.update_data(paid=today().isoformat())
+    await c.message.edit_text(f"{'💵 Naqd' if parts[1] == 'naqd' else '💳 Karta'} · bugun ✅")
+    await _after_date(c.message, state, bot, c.from_user.id)
 
 
 @router.message(Pay.amount)
 async def pay_amount(m: Message, state: FSMContext) -> None:
     digits = "".join(ch for ch in (m.text or "") if ch.isdigit())
+    who = await _who(m.from_user.id)
+    if not digits and who.staff and len((m.text or "").strip()) >= 2:
+        await pay_search(m, state)           # summa o'rniga ism yozildi — boshqa o'quvchini qidiramiz
+        return
     await _got_amount(m, state, int(digits) if digits else 0, m.from_user.id)
 
 
@@ -267,15 +369,23 @@ async def _save(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> None:
         items = [(e.group.name, p.amount) for e, p in res]
         coins = sum(p.coins_given for _, p in res)
         await s.commit()
-    await state.clear()
     paid = date.fromisoformat(d["paid"])
+    await _next_series(state, d)
     await msg.answer(f"✅ Saqlandi: {d['name']} · {S.fmt_som(d['amount'])} "
-                     f"({METHOD[d['method']].lower()}, {paid:%d.%m}).{_breakdown(items)}")
+                     f"({METHOD[d['method']].lower()}, {paid:%d.%m}).{_breakdown(items)}\n\n"
+                     "➡️ <b>Keyingi o'quvchi ismini yozing</b> (tugatish — menyudagi istalgan tugma).")
     await _send_receipt(bot, parents, d["name"], d["amount"], d["method"], d["month"], items, sd.debt, coins)
     for b in bosses:
         if b != tg_id:
             await send(bot, b, f"💵 {METHOD[d['method']]}: {d['name']} · {S.fmt_som(d['amount'])} "
                                f"({who.staff.full_name})")
+
+
+async def _next_series(state: FSMContext, d: dict) -> None:
+    """Xodim to'lovdan keyin yana ism yozib keyingi to'lovni kiritadi; usul va sana eslab qolinadi."""
+    await state.clear()
+    await state.set_state(Pay.search)
+    await state.update_data(last={"method": d["method"], "paid": d["paid"]})
 
 
 async def _send_receipt(bot: Bot, tg_ids: list[int], name: str, amount: int, method: str, month: str,
@@ -307,8 +417,12 @@ async def _save_pending(msg_or_cb_msg: Message, state: FSMContext, bot: Bot, tg_
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         items = [(e.group.name, p.amount) for e, p in res]
         first = res[0][1]
+        staff = bool(who.staff)
         await s.commit()
-    await state.clear()
+    if staff:
+        await _next_series(state, d)
+    else:
+        await state.clear()
     caption = _pending_caption(d["name"], d["amount"], first.paid_date, items)
     for b in bosses:
         if file_id:
@@ -330,13 +444,16 @@ async def pay_receipt(m: Message, state: FSMContext, bot: Bot) -> None:
             await m.answer("⚠️ Bu chek avval yuborilgan. Boshqa chek rasmini yuboring yoki admin bilan bog'laning.")
             return
     await _save_pending(m, state, bot, m.from_user.id, fid, uid)
-    await m.answer("Chek qabul qilindi. Rahbar tasdiqlagach, to'lov hisobga olinadi va xabar keladi.")
+    tail = ("\n\n➡️ <b>Keyingi o'quvchi ismini yozing</b> (tugatish — menyudagi istalgan tugma)."
+            if await state.get_state() == Pay.search.state else "")
+    await m.answer("✅ Chek qabul qilindi. Rahbar tasdiqlagach, to'lov hisobga olinadi va xabar keladi." + tail)
 
 
 @router.callback_query(F.data == "nochek")
 async def pay_no_receipt(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     await _save_pending(c.message, state, bot, c.from_user.id, None, None)
-    await c.message.edit_text("Saqlandi. Rahbar bank ilovasida tekshirib tasdiqlagach hisobga olinadi.")
+    await c.message.edit_text("✅ Saqlandi. Rahbar bank ilovasida tekshirib tasdiqlagach hisobga olinadi.\n\n"
+                              "➡️ <b>Keyingi o'quvchi ismini yozing</b> (tugatish — menyudagi istalgan tugma).")
 
 
 @router.message(Pay.receipt)

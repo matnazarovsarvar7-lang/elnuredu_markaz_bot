@@ -330,3 +330,29 @@ async def me(m: Message) -> None:
 @router.message(F.text == K.B_HELP)
 async def help_(m: Message) -> None:
     await m.answer("Savol bo'lsa, markaz administratoriga murojaat qiling. Menyuni qayta ochish: /start")
+
+
+# ---------- tez qidiruv: xodim hech narsa bosmasdan o'quvchi ismini yozsa ----------
+from aiogram.filters import StateFilter as _SF  # noqa: E402
+
+
+@router.message(_SF(None), F.text, ~F.text.startswith("/"))
+async def quick_search(m: Message, state: FSMContext) -> None:
+    async with Session() as s:
+        who = await S.who_by_tg(s, m.from_user.id)
+        if not who.staff or who.staff.current_role not in ("moliya", "rahbar", "admin"):
+            return
+        found = await S.search_students(s, m.text or "") if len((m.text or "").strip()) >= 2 else []
+    role = who.staff.current_role
+    if not found:
+        await m.answer("Tushunmadim. Menyudagi tugmani tanlang yoki o'quvchi ismini yozing (kamida 2 harf).")
+        return
+    if role in ("moliya", "rahbar"):
+        from app.bot.payments import Pay
+        await state.set_state(Pay.search)       # tanlansa — darhol to'lov ekrani
+        kb = [[IB(text=f"💵 {x.full_name}", callback_data=f"ps:{x.id}"),
+               IB(text="👤 Kartasi", callback_data=f"st:{x.id}")] for x in found]
+        await m.answer("🔎 Topildi. 💵 — to'lov kiritish, 👤 — kartasi:", reply_markup=IM(inline_keyboard=kb))
+    else:
+        kb = [[IB(text=x.full_name, callback_data=f"st:{x.id}")] for x in found]
+        await m.answer("🔎 Topildi — kartasini ochish uchun tanlang:", reply_markup=IM(inline_keyboard=kb))

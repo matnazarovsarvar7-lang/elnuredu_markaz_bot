@@ -47,9 +47,15 @@ async def _staff(tg_id: int):
 
 
 # ---------- boshlash ----------
+@router.callback_query(F.data == "rgnew")
+async def reg_again(c: CallbackQuery, state: FSMContext) -> None:
+    await c.answer()
+    await reg_start(c.message, state, tg_id=c.from_user.id)
+
+
 @router.message(F.text == K.B_NEW_STUDENT)
-async def reg_start(m: Message, state: FSMContext) -> None:
-    if not await _staff(m.from_user.id):
+async def reg_start(m: Message, state: FSMContext, tg_id: int | None = None) -> None:
+    if not await _staff(tg_id or m.from_user.id):
         return
     await state.clear()
     await state.set_state(Rg.name)
@@ -262,7 +268,8 @@ async def reg_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         teacher_tg = g.teacher.tg_id if g.teacher else None
         name, gname, sid = stu.full_name, g.name, stu.id
     await state.clear()
-    kb = IM(inline_keyboard=[[IB(text="➕ Yana bir guruhga qo'shish", callback_data=f"sag:{sid}")],
+    kb = IM(inline_keyboard=[[IB(text="➕ Yana yangi o'quvchi", callback_data="rgnew")],
+                             [IB(text="➕ Shu o'quvchini yana bir guruhga", callback_data=f"sag:{sid}")],
                              [IB(text="👤 Kartasini ochish", callback_data=f"st:{sid}")]])
     await c.message.edit_text(f"✅ Saqlandi: <b>{name}</b> → {gname}, {join:%d.%m} dan." +
                               ("\nOta-ona endi o'z raqami bilan botga kira oladi." if new else ""), reply_markup=kb)

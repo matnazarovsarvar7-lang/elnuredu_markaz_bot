@@ -71,11 +71,20 @@ class Ex(StatesGroup):
     receipt = State()
 
 
+AGAIN = IM(inline_keyboard=[[IB(text="➕ Yana xarajat", callback_data="xnew")]])
+
+
+@router.callback_query(F.data == "xnew")
+async def exp_again(c: CallbackQuery, state: FSMContext) -> None:
+    await c.answer()
+    await exp_start(c.message, state, tg_id=c.from_user.id)
+
+
 @router.message(F.text == K.B_EXPENSE)
-async def exp_start(m: Message, state: FSMContext) -> None:
+async def exp_start(m: Message, state: FSMContext, tg_id: int | None = None) -> None:
     month = f"{now():%Y-%m}"
     async with Session() as s:
-        who = await S.who_by_tg(s, m.from_user.id)
+        who = await S.who_by_tg(s, tg_id or m.from_user.id)
         if not (who.staff and who.staff.current_role in ("moliya", "rahbar")):
             return
         cats = await categories(s)
@@ -155,12 +164,13 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
         warn = ""
         if free is not None and d["amount"] > free * SPEND_SHARE:
             warn = f"\n⚠️ Kassa qulfi: erkin pulning 80% i ({S.fmt_som(int(max(0, free) * SPEND_SHARE))}) dan oshdi."
-        await m.answer(f"✅ Xarajat saqlandi: {d['cat']} · {S.fmt_som(d['amount'])}." + warn)
+        await m.answer(f"✅ Xarajat saqlandi: {d['cat']} · {S.fmt_som(d['amount'])}." + warn, reply_markup=AGAIN)
         return
     if status == "tasdiq":
-        await m.answer(f"✅ Kichik kassadan: {d['cat']} · {S.fmt_som(d['amount'])}. Qoldiq: {S.fmt_som(left - d['amount'])}.")
+        await m.answer(f"✅ Kichik kassadan: {d['cat']} · {S.fmt_som(d['amount'])}. Qoldiq: {S.fmt_som(left - d['amount'])}.",
+                       reply_markup=AGAIN)
         return
-    await m.answer("Kichik kassa mablag'i yetarli emas — xarajat rahbar tasdig'iga yuborildi.")
+    await m.answer("Kichik kassa mablag'i yetarli emas — xarajat rahbar tasdig'iga yuborildi.", reply_markup=AGAIN)
     lock = ""
     if free is not None:
         allowed = int(max(0, free) * SPEND_SHARE)
@@ -290,7 +300,23 @@ async def svc_pick(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(vid=vid)
     unit = "sahifa" if v.kind == "printer" else "dona"
     await c.answer()
-    await c.message.answer(f"{v.name}: necha {unit}? (masalan: 1)")
+    await c.message.answer(f"{v.name} — {S.fmt_som(v.price)}. Tugmani bosing yoki sonini yozing ({unit}):",
+                           reply_markup=IM(inline_keyboard=[
+                               [IB(text=f"1 {unit} · 💵 naqd", callback_data="svq:1:naqd"),
+                                IB(text=f"1 {unit} · 💳 karta", callback_data="svq:1:karta")]]))
+
+
+@router.callback_query(Sv.qty, F.data.startswith("svq:"))
+async def svc_quick(c: CallbackQuery, state: FSMContext) -> None:
+    _, q, method = c.data.split(":")
+    await state.update_data(qty=int(q))
+    d = await state.get_data()
+    async with Session() as s:
+        v = await s.get(Service, d["vid"])
+    if v.kind == "kitob" and (v.stock or 0) < int(q):
+        await c.answer(f"Omborda faqat {v.stock or 0} ta bor.", show_alert=True)
+        return
+    await _svc_do(c, state, method)
 
 
 @router.message(Sv.qty)
@@ -313,9 +339,12 @@ async def svc_qty(m: Message, state: FSMContext) -> None:
 
 @router.callback_query(Sv.qty, F.data.startswith("svm:"))
 async def svc_save(c: CallbackQuery, state: FSMContext) -> None:
+    await _svc_do(c, state, c.data.split(":")[1])
+
+
+async def _svc_do(c: CallbackQuery, state: FSMContext, method: str) -> None:
     d = await state.get_data()
     await state.clear()
-    method = c.data.split(":")[1]
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
         v = await s.get(Service, d["vid"])
@@ -330,7 +359,8 @@ async def svc_save(c: CallbackQuery, state: FSMContext) -> None:
         left = v.stock
         name = v.name
     await c.message.edit_text(f"✅ Sotuv: {name} × {q} = {S.fmt_som(d['qty'] * v.price)} ({method})."
-                              + (f"\nOmborda qoldi: {left}" if v.kind == "kitob" else ""))
+                              + (f"\nOmborda qoldi: {left}" if v.kind == "kitob" else ""),
+                              reply_markup=IM(inline_keyboard=[[IB(text=f"➕ Yana: {name[:30]}", callback_data=f"sv:{v.id}")]]))
 
 
 @router.callback_query(F.data == "svn")

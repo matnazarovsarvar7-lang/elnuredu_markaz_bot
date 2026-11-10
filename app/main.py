@@ -51,6 +51,8 @@ async def main() -> None:
     await ensure_owner()
     bot = Bot(settings.bot_token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
+    from app.bot.notify import menu_reset_middleware
+    dp.message.outer_middleware(menu_reset_middleware)
     # /start har doim birinchi: boshlangan amal (to'lov, tahrir) o'rtasida ham ishlaydi
     from app.bot.handlers import start as start_handler
     from aiogram import Router

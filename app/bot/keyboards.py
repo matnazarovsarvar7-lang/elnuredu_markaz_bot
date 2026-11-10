@@ -123,3 +123,8 @@ def homework_kb(lesson_id: int, rows: list[tuple[int, str, str]]) -> InlineKeybo
 
 def consent_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="✅ Roziman", callback_data="consent")]])
+
+
+def menu_texts() -> set[str]:
+    """Pastki menyudagi barcha tugma matnlari (bosilsa — boshlangan jarayon yopiladi)."""
+    return {v for k, v in globals().items() if k.startswith("B_") and isinstance(v, str) and k != "B_CONTACT"}
