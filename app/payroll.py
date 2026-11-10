@@ -67,12 +67,21 @@ async def teacher_share(s, st: Staff, start: datetime, end: datetime) -> tuple[i
     """O'qituvchi guruhlaridan shu davrda tushgan to'lovlar × foiz (chegirma qoidalari bilan)."""
     if not st.percent:
         return 0, []
-    groups = (await s.execute(select(Group).where(Group.teacher_id == st.id))).scalars().all()
+    from app.db.models import GroupTeacher
+    hist_gids = set((await s.execute(select(GroupTeacher.group_id).where(GroupTeacher.teacher_id == st.id))).scalars())
+    groups = (await s.execute(select(Group).where((Group.teacher_id == st.id) | Group.id.in_(hist_gids or {0})))).scalars().all()
     total, lines = 0, []
     for g in groups:
+        spans = await teacher_spans(s, g, st.id, start, end)
+        if not spans:
+            continue
+        cond = None
+        for a_, b_ in spans:
+            c_ = (Payment.created_at > a_) & (Payment.created_at <= b_)
+            cond = c_ if cond is None else (cond | c_)
         rows = (await s.execute(select(Payment, Enrollment).join(Enrollment, Enrollment.id == Payment.enrollment_id)
                                 .where(Enrollment.group_id == g.id, Payment.status == "tasdiq", Payment.amount > 0,
-                                       Payment.created_at > start, Payment.created_at <= end))).all()
+                                       cond))).all()
         base = 0
         for p, e in rows:
             disc = Discount(e.discount_kind, e.discount_percent)
@@ -84,13 +93,30 @@ async def teacher_share(s, st: Staff, start: datetime, end: datetime) -> tuple[i
         # qaytarilgan pullar (manfiy) ulushdan ayiriladi
         refunds = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).join(
             Enrollment, Enrollment.id == Payment.enrollment_id).where(
-            Enrollment.group_id == g.id, Payment.amount < 0, Payment.created_at > start,
-            Payment.created_at <= end))).scalar()
+            Enrollment.group_id == g.id, Payment.amount < 0, Payment.status == "tasdiq", cond))).scalar()
         share = round((base + int(refunds)) * st.percent / 100)
         if share:
             lines.append((f"{g.name}: {st.percent:g}% ulush", share))
             total += share
     return total, lines
+
+
+async def teacher_spans(s, g: Group, staff_id: int, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    """Davr ichida shu xodim guruh o'qituvchisi bo'lgan oraliqlar (o'qituvchi almashgan bo'lsa — tarix bo'yicha)."""
+    from app.db.models import GroupTeacher
+    hist = (await s.execute(select(GroupTeacher).where(GroupTeacher.group_id == g.id)
+                            .order_by(GroupTeacher.since))).scalars().all()
+    if not hist:
+        return [(start, end)] if g.teacher_id == staff_id else []
+    out = []
+    for i, h in enumerate(hist):
+        if h.teacher_id != staff_id:
+            continue
+        a_ = max(start, h.since)
+        b_ = min(end, hist[i + 1].since) if i + 1 < len(hist) else end
+        if a_ < b_:
+            out.append((a_, b_))
+    return out
 
 
 def has_role(st: Staff, role: str) -> bool:

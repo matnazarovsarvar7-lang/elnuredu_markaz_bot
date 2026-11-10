@@ -129,10 +129,13 @@ async def leads_list(m: Message) -> None:
         conv = (await s.execute(select(func.count(Lead.id)).where(Lead.created_at >= month_start,
                                                                    Lead.status == "oquvchi"))).scalar()
     await m.answer(f"🧲 <b>Arizalar</b>\nShu oy: {total} ta, o'quvchi bo'lgani: {conv} ta\n"
-                   f"Ochiq: {len(rows)} ta" + ("" if rows else " ✅"))
+                   f"Ochiq: {len(rows)} ta" + ("" if rows else " ✅"),
+                   reply_markup=IM(inline_keyboard=[[IB(text="📁 Yopilgan arizalar (tahrirlash)", callback_data="ldc")]]))
     for lead in rows:
+        kb = _lead_kb(lead.id)
+        kb.inline_keyboard.append([IB(text="✏️ Tahrirlash", callback_data=f"lde:{lead.id}")])
         await m.answer(f"{STATUS[lead.status]} · {lead.created_at:%d.%m}\n<b>{lead.child_name}</b>\n"
-                       f"Fan: {lead.subject or '—'}\nTel: {lead.phone}", reply_markup=_lead_kb(lead.id))
+                       f"Fan: {lead.subject or '—'}\nTel: {lead.phone}", reply_markup=kb)
 
 
 # ---------- 📊 hozirgi holat (rahbar) ----------

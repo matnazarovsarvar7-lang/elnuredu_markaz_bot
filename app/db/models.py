@@ -160,6 +160,10 @@ class Payment(Base):
     entered_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     confirmed_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     coins_given: Mapped[int] = mapped_column(Integer, default=0)
+    void_of: Mapped[int | None] = mapped_column(Integer)              # bekor qilish yozuvi: asl yozuv id
+    void_reason: Mapped[str | None] = mapped_column(String(300))       # bekor qilish sababi (so'rov / qaror)
+    void_req_by: Mapped[int | None] = mapped_column(Integer)           # so'ragan xodim
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)       # asl yozuv bekor qilingan vaqt
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -455,6 +459,10 @@ class Expense(Base):
     receipt_file_id: Mapped[str | None] = mapped_column(String(200))
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    void_of: Mapped[int | None] = mapped_column(Integer)              # bekor qilish yozuvi: asl yozuv id
+    void_reason: Mapped[str | None] = mapped_column(String(300))       # bekor qilish sababi (so'rov / qaror)
+    void_req_by: Mapped[int | None] = mapped_column(Integer)           # so'ragan xodim
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)       # asl yozuv bekor qilingan vaqt
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -480,6 +488,10 @@ class ServiceSale(Base):
     method: Mapped[str] = mapped_column(String(20), default="naqd")   # naqd | karta
     status: Mapped[str] = mapped_column(String(20), default="tasdiq") # tasdiq | bekor
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    void_of: Mapped[int | None] = mapped_column(Integer)              # bekor qilish yozuvi: asl yozuv id
+    void_reason: Mapped[str | None] = mapped_column(String(300))       # bekor qilish sababi (so'rov / qaror)
+    void_req_by: Mapped[int | None] = mapped_column(Integer)           # so'ragan xodim
+    voided_at: Mapped[datetime | None] = mapped_column(DateTime)       # asl yozuv bekor qilingan vaqt
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -582,3 +594,12 @@ class SurveyAnswer(Base):
     score: Mapped[int] = mapped_column(Integer)
     comment: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class GroupTeacher(Base):
+    """Guruh o'qituvchisi tarixi: o'qituvchi almashsa, to'lov ulushi shu sanadan yangi o'qituvchiga."""
+    __tablename__ = "group_teachers"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(ForeignKey("groups.id"), index=True)
+    teacher_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    since: Mapped[datetime] = mapped_column(DateTime)

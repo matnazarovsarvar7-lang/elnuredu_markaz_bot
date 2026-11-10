@@ -241,10 +241,12 @@ async def exam_card(eid: int) -> tuple[str, IM]:
         lines += [f"Turi: {KIND_SHORT.get(ex.kind, '—')} · eng ko'p ball {ex.max_score:g}",
                   f"Qatnashdi: {len(took)} · o'rtacha {avg:.0f}%"]
         rows.append([IB(text="📊 Natijalar", callback_data=f"exv:{eid}")])
+        rows.append([IB(text="✏️ Natijani tuzatish", callback_data=f"exf:{eid}")])
     elif ex.status != "bekor":
         rows.append([IB(text="✅ Natijalarni kiritish", callback_data=f"exr:{eid}")])
         if ex.status == "reja":
             rows.append([IB(text="📅 Kunni o'zgartirish", callback_data=f"exd:{eid}")])
+            rows.append([IB(text="👤 O'tkazuvchini almashtirish", callback_data=f"exc:{eid}")])
     return "\n".join(lines), IM(inline_keyboard=rows)
 
 

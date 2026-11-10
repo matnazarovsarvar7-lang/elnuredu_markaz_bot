@@ -23,6 +23,7 @@ from app.bot.salary import router as salary_router
 from app.bot.achieve import router as achieve_router
 from app.bot.pin import router as pin_router
 from app.bot.extra import router as extra_router
+from app.bot.fixes import router as fixes_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -70,6 +71,7 @@ async def main() -> None:
     dp.include_router(salary_router)
     dp.include_router(achieve_router)
     dp.include_router(extra_router)
+    dp.include_router(fixes_router)
     dp.include_router(tests_router)
     dp.include_router(exams_router)
     dp.include_router(delegate_router)

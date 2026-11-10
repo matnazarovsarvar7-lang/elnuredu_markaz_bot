@@ -50,8 +50,8 @@ async def groups_list(m: Message) -> None:
         return
     async with Session() as s:
         gs = (await s.execute(select(Group).where(Group.active).order_by(Group.name))).scalars().all()
-    kb = IM(inline_keyboard=[[IB(text=f"{g.name}{'' if g.start_time else ' ⚠️ vaqt yo`q'}", callback_data=f"g:{g.id}")]
-                             for g in gs])
+    kb = IM(inline_keyboard=[[IB(text="➕ Yangi guruh ochish", callback_data="gnew")]] +
+            [[IB(text=f"{g.name}{'' if g.start_time else ' ⚠️ vaqt yo`q'}", callback_data=f"g:{g.id}")] for g in gs])
     await m.answer("Guruhni tanlang (⚠️ — dars vaqti kiritilmagan):", reply_markup=kb)
 
 
@@ -60,10 +60,17 @@ async def _group_card(gid: int) -> tuple[str, IM]:
         g = await s.get(Group, gid, options=[selectinload(Group.teacher)])
         n = len(await S.group_roster(s, gid, __import__("datetime").date.today()))
     t = f"{g.start_time:%H:%M}–{g.end_time:%H:%M}" if g.start_time and g.end_time else "kiritilmagan"
-    text = (f"<b>{g.name}</b>\nO'qituvchi: {g.teacher.full_name if g.teacher else '—'}\nKunlar: {DAYS[g.days]}\n"
+    async with Session() as s:
+        asst = await s.get(Staff, g.assistant_id) if g.assistant_id else None
+    text = (f"<b>{g.name}</b>\nFan: {g.subject or '—'}\nO'qituvchi: {g.teacher.full_name if g.teacher else '—'}\n"
+            f"Yordamchi: {asst.full_name if asst else '—'}\nKunlar: {DAYS[g.days]}\n"
             f"Vaqt: {t}\nXona: {g.room or '—'}\nO'quvchilar: {n}")
     kb = IM(inline_keyboard=[[IB(text="🕒 Vaqt", callback_data=f"gt:{gid}"), IB(text="🚪 Xona", callback_data=f"gr:{gid}")],
-                             [IB(text="📅 Kunlar", callback_data=f"gd:{gid}")],
+                             [IB(text="📅 Kunlar", callback_data=f"gd:{gid}"), IB(text="✏️ Nomi", callback_data=f"gnm:{gid}"),
+                              IB(text="📚 Fan", callback_data=f"gsb:{gid}")],
+                             [IB(text="👨‍🏫 O'qituvchi", callback_data=f"gtc:{gid}"),
+                              IB(text="🤝 Yordamchi", callback_data=f"gas:{gid}")],
+                             [IB(text="🗂 O'tgan darslar (tuzatish)", callback_data=f"lsn:{gid}")],
                              [IB(text="⏸ Guruhni to'xtatish (yoz / uzrli)", callback_data=f"gpz:{gid}")]])
     return text, kb
 
@@ -184,6 +191,7 @@ async def _student_card(sid: int, role: str) -> tuple[str, IM]:
             [IB(text="➕ Guruhga qo'shish", callback_data=f"sag:{sid}")]]
     if role in ("moliya", "rahbar"):
         rows.append([IB(text="🏷 Chegirma", callback_data=f"sd:{sid}"), IB(text="🪙 Qo'lda coin", callback_data=f"mcn:{sid}")])
+        rows.append([IB(text="💵 To'lovlar (bekor qilish)", callback_data=f"pl:{sid}")])
     if role in ("rahbar", "admin", "moliya", "oqituvchi"):
         rows += [[IB(text=f"⚙️ {e.group.name}: muzlatish / chiqarish", callback_data=f"en:{e.id}")] for e in enrs]
     return text, IM(inline_keyboard=rows)
@@ -573,6 +581,7 @@ async def staff_list(m: Message, state: FSMContext) -> None:
         f"{'✅' if x.active else '⛔'} {x.full_name} · {', '.join(S.ROLE_TITLES[r] for r in x.role_list())} · "
         f"{x.phone or 'raqam yo`q'}{' · botda' if x.tg_id else ''}" for x in rows]
     kb = IM(inline_keyboard=[[IB(text="➕ Xodim qo'shish", callback_data="sfa")]] +
+            [[IB(text=f"✏️ {x.full_name}", callback_data=f"sfe:{x.id}")] for x in rows if x.active] +
             [[IB(text=f"⛔ {x.full_name} — chiqarish", callback_data=f"sfo:{x.id}")] for x in rows
              if x.active and "rahbar" not in x.role_list()])
     await m.answer("\n".join(lines), reply_markup=kb)
@@ -661,3 +670,429 @@ async def import_json(m: Message, bot: Bot) -> None:
         await m.answer(f"Yuklab bo'lmadi: {e}")
         return
     await m.answer("✅ Ma'lumotlar yuklandi:\n" + "\n".join(f"{k}: {v}" for k, v in res.items()))
+
+
+# ================= 👥 xodimni tahrirlash (rahbar) =================
+class Sf(StatesGroup):
+    name = State()
+    phone = State()
+
+
+ROLE_DRAFT: dict[tuple[int, int], set[str]] = {}
+
+
+async def _boss_staff(tg: int) -> Staff | None:
+    st, role = await _role(tg)
+    return st if role == "rahbar" else None
+
+
+def _staff_edit_kb(sid: int) -> IM:
+    return IM(inline_keyboard=[[IB(text="👤 Ism-familiya", callback_data=f"sfen:{sid}"),
+                                IB(text="📞 Telefon", callback_data=f"sfep:{sid}")],
+                               [IB(text="🎭 Lavozimlar", callback_data=f"sfer:{sid}")]])
+
+
+@router.callback_query(F.data.startswith("sfe:"))
+async def staff_edit(c: CallbackQuery) -> None:
+    if not await _boss_staff(c.from_user.id):
+        await c.answer("Faqat rahbar", show_alert=True)
+        return
+    sid = int(c.data.split(":")[1])
+    async with Session() as s:
+        x = await s.get(Staff, sid)
+    await c.answer()
+    await c.message.answer(f"✏️ <b>{x.full_name}</b>\nTelefon: {x.phone or '—'}\n"
+                           f"Lavozimlar: {', '.join(S.ROLE_TITLES[r] for r in x.role_list())}",
+                           reply_markup=_staff_edit_kb(sid))
+
+
+@router.callback_query(F.data.startswith(("sfen:", "sfep:")))
+async def staff_field_ask(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _boss_staff(c.from_user.id):
+        await c.answer("Faqat rahbar", show_alert=True)
+        return
+    kind, sid = c.data.split(":")
+    await state.set_state(Sf.name if kind == "sfen" else Sf.phone)
+    await state.update_data(sid=int(sid))
+    await c.answer()
+    await c.message.answer("Yangi ism-familiyani yozing:" if kind == "sfen" else
+                           "Yangi telefon raqamini yozing: +998901234567\n"
+                           "Xodim eski raqamdan chiqariladi va yangi raqam bilan /start qilib kiradi.")
+
+
+@router.message(Sf.name)
+async def staff_name_set(m: Message, state: FSMContext) -> None:
+    name = " ".join((m.text or "").split())
+    if len(name) < 3 or len(name.split()) < 2 or any(ch.isdigit() for ch in name):
+        await m.answer("Ism va familiyani yozing. Masalan: Ali Valiyev")
+        return
+    d = await state.get_data()
+    await state.clear()
+    async with Session() as s:
+        x = await s.get(Staff, d["sid"])
+        old, x.full_name = x.full_name, name
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "xodim_ism", old=old, new=name)
+        await s.commit()
+    await m.answer(f"✅ {old} → <b>{name}</b>. Ballar, oylik va tarix saqlanadi.")
+
+
+@router.message(Sf.phone)
+async def staff_phone_set(m: Message, state: FSMContext, bot: Bot) -> None:
+    phone = S.norm_phone(m.text or "")
+    if not phone:
+        await m.answer("Raqam noto'g'ri. Masalan: +998901234567")
+        return
+    d = await state.get_data()
+    async with Session() as s:
+        busy = (await s.execute(select(Staff).where(Staff.phone == phone, Staff.id != d["sid"]))).scalar_one_or_none()
+        if busy:
+            await m.answer(f"Bu raqam boshqa xodimda ({busy.full_name}). Boshqa raqam yozing.")
+            return
+        await state.clear()
+        x = await s.get(Staff, d["sid"])
+        old, old_tg = x.phone, x.tg_id
+        if old == phone:
+            await m.answer("Raqam o'zgarmadi.")
+            return
+        x.phone, x.tg_id = phone, None
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "xodim_tel", staff=x.full_name, old=old, new=phone)
+        await s.commit()
+        name = x.full_name
+    if old_tg and old_tg != m.from_user.id:
+        await send(bot, old_tg, f"ℹ️ Botdagi raqamingiz {phone} ga o'zgartirildi. Yangi raqamdagi Telegram bilan /start qiling.")
+    await m.answer(f"✅ {name}: {old or '—'} → {phone}. Xodim yangi raqam bilan /start qilib kiradi; "
+                   "ballari, oyligi va tarixi saqlanadi.")
+
+
+def _roles_kb(sid: int, roles: set[str]) -> IM:
+    kb = [[IB(text=("✅ " if r in roles else "▫️ ") + t, callback_data=f"sfrt:{sid}:{r}")] for r, t in S.ROLE_TITLES.items()]
+    kb.append([IB(text="💾 Saqlash", callback_data=f"sfrk:{sid}")])
+    return IM(inline_keyboard=kb)
+
+
+@router.callback_query(F.data.startswith("sfer:"))
+async def staff_roles(c: CallbackQuery) -> None:
+    if not await _boss_staff(c.from_user.id):
+        await c.answer("Faqat rahbar", show_alert=True)
+        return
+    sid = int(c.data.split(":")[1])
+    async with Session() as s:
+        x = await s.get(Staff, sid)
+    ROLE_DRAFT[(c.from_user.id, sid)] = set(x.role_list())
+    await c.answer()
+    await c.message.answer(f"🎭 <b>{x.full_name}</b> lavozimlari (bosib yoqing/o'chiring):",
+                           reply_markup=_roles_kb(sid, ROLE_DRAFT[(c.from_user.id, sid)]))
+
+
+@router.callback_query(F.data.startswith("sfrt:"))
+async def staff_role_toggle(c: CallbackQuery) -> None:
+    _, sid, r = c.data.split(":")
+    key = (c.from_user.id, int(sid))
+    if key not in ROLE_DRAFT:
+        await c.answer("Qaytadan oching.", show_alert=True)
+        return
+    ROLE_DRAFT[key] ^= {r}
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=_roles_kb(int(sid), ROLE_DRAFT[key]))
+
+
+@router.callback_query(F.data.startswith("sfrk:"))
+async def staff_roles_save(c: CallbackQuery, bot: Bot) -> None:
+    sid = int(c.data.split(":")[1])
+    me = await _boss_staff(c.from_user.id)
+    roles = ROLE_DRAFT.get((c.from_user.id, sid))
+    if not me or roles is None:
+        await c.answer("Qaytadan oching.", show_alert=True)
+        return
+    if not roles:
+        await c.answer("Kamida bitta lavozim qolsin.", show_alert=True)
+        return
+    if sid == me.id and "rahbar" not in roles:
+        await c.answer("O'zingizdan rahbar lavozimini olib bo'lmaydi.", show_alert=True)
+        return
+    ROLE_DRAFT.pop((c.from_user.id, sid), None)
+    order = [r for r in S.ROLE_TITLES if r in roles]
+    async with Session() as s:
+        x = await s.get(Staff, sid)
+        old = x.role_list()
+        x.roles = ",".join(order)
+        if x.current_role not in order:
+            x.current_role = order[0]
+        await S.audit(s, me, "xodim_lavozim", staff=x.full_name, old=old, new=order)
+        await s.commit()
+        tg, name = x.tg_id, x.full_name
+    titles = ", ".join(S.ROLE_TITLES[r] for r in order)
+    await c.answer("Saqlandi")
+    await c.message.edit_text(f"✅ {name}: {titles}.\nBallar shu oy saqlanadi; yangi lavozim KPI si ertadan hisoblanadi.")
+    if tg and tg != c.from_user.id:
+        await send(bot, tg, f"ℹ️ Lavozimlaringiz yangilandi: {titles}. Menyuni yangilash uchun /start bosing.")
+
+
+# ================= ⚙️ guruh: yangi guruh, nom, fan, o'qituvchi, yordamchi =================
+class Gm(StatesGroup):
+    name = State()
+    subject = State()
+    time = State()
+    room = State()
+    rename = State()
+    resubj = State()
+
+
+async def _group_editor(tg: int) -> Staff | None:
+    st, role = await _role(tg)
+    return st if role in ("rahbar", "moliya") else None
+
+
+def _parse_time(text: str) -> tuple[time, time] | None:
+    nums = [int(x) for x in re.findall(r"\d+", text or "")]
+    if len(nums) != 4 or not (0 <= nums[0] < 24 and 0 <= nums[2] < 24 and nums[1] < 60 and nums[3] < 60):
+        return None
+    a, b = time(nums[0], nums[1]), time(nums[2], nums[3])
+    return (a, b) if b > a else None
+
+
+@router.callback_query(F.data == "gnew")
+async def gnew(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _group_editor(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(Gm.name)
+    await c.answer()
+    await c.message.answer("➕ <b>Yangi guruh</b>\n1/6. Guruh nomi (masalan: Matematika toq 2):")
+
+
+@router.message(Gm.name)
+async def gnew_name(m: Message, state: FSMContext) -> None:
+    name = " ".join((m.text or "").split())[:120]
+    if len(name) < 2:
+        await m.answer("Nomini yozing.")
+        return
+    async with Session() as s:
+        if (await s.execute(select(Group.id).where(Group.name == name))).first():
+            await m.answer("Bu nomli guruh bor. Boshqa nom yozing.")
+            return
+    await state.update_data(name=name)
+    await state.set_state(Gm.subject)
+    await m.answer("2/6. Fan (masalan: Matematika):")
+
+
+@router.message(Gm.subject)
+async def gnew_subject(m: Message, state: FSMContext) -> None:
+    await state.update_data(subject=" ".join((m.text or "").split())[:60] or None)
+    await state.set_state(None)
+    await m.answer("3/6. Dars kunlari:", reply_markup=IM(inline_keyboard=[[IB(text=v, callback_data=f"gnd:{k}")]
+                                                                       for k, v in DAYS.items()]))
+
+
+@router.callback_query(F.data.startswith("gnd:"))
+async def gnew_days(c: CallbackQuery, state: FSMContext) -> None:
+    d = await state.get_data()
+    if "name" not in d:
+        await c.answer("Qaytadan boshlang.", show_alert=True)
+        return
+    await state.update_data(days=c.data.split(":")[1])
+    await state.set_state(Gm.time)
+    await c.answer()
+    await c.message.edit_text(f"Kunlar: {DAYS[c.data.split(':')[1]]} ✅\n4/6. Dars vaqti: 14 00 15 30 (boshlanishi va tugashi)")
+
+
+@router.message(Gm.time)
+async def gnew_time(m: Message, state: FSMContext) -> None:
+    tt = _parse_time(m.text or "")
+    if not tt:
+        await m.answer("Masalan: 14 00 15 30 (tugashi boshlanishidan keyin)")
+        return
+    await state.update_data(t1=tt[0].isoformat(), t2=tt[1].isoformat())
+    await state.set_state(Gm.room)
+    await m.answer("5/6. Xona (masalan: 2-xona) yoki «-»:")
+
+
+@router.message(Gm.room)
+async def gnew_room(m: Message, state: FSMContext) -> None:
+    room = (m.text or "").strip()[:30]
+    await state.update_data(room=None if room in ("-", "") else room)
+    await state.set_state(None)
+    async with Session() as s:
+        ts = [x for x in (await s.execute(select(Staff).where(Staff.active).order_by(Staff.full_name))).scalars()
+              if "oqituvchi" in x.role_list()]
+    kb = [[IB(text=x.full_name, callback_data=f"gnt:{x.id}")] for x in ts]
+    kb.append([IB(text="Keyin belgilayman", callback_data="gnt:0")])
+    await m.answer("6/6. O'qituvchi:", reply_markup=IM(inline_keyboard=kb))
+
+
+@router.callback_query(F.data.startswith("gnt:"))
+async def gnew_save(c: CallbackQuery, state: FSMContext) -> None:
+    st = await _group_editor(c.from_user.id)
+    d = await state.get_data()
+    if not st or "t1" not in d:
+        await c.answer("Qaytadan boshlang.", show_alert=True)
+        return
+    tid = int(c.data.split(":")[1]) or None
+    await state.clear()
+    async with Session() as s:
+        if (await s.execute(select(Group.id).where(Group.name == d["name"]))).first():
+            await c.answer("Bu nomli guruh allaqachon bor.", show_alert=True)
+            return
+        g = Group(name=d["name"], subject=d.get("subject"), days=d["days"], start_time=time.fromisoformat(d["t1"]),
+                  end_time=time.fromisoformat(d["t2"]), room=d.get("room"), teacher_id=tid, active=True)
+        s.add(g)
+        await s.flush()
+        if tid:
+            from app.db.models import GroupTeacher
+            s.add(GroupTeacher(group_id=g.id, teacher_id=tid, since=_utcnow()))
+        await S.audit(s, st, "guruh_ochildi", group=g.name, teacher=tid)
+        await s.commit()
+        gid = g.id
+    await c.answer("Guruh ochildi")
+    text, kb = await _group_card(gid)
+    await c.message.edit_text("✅ Yangi guruh ochildi. Endi o'quvchilarni «➕ Yangi o'quvchi» yoki kartadagi "
+                              "«➕ Guruhga qo'shish» orqali qo'shing.\n\n" + text, reply_markup=kb)
+
+
+def _utcnow():
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+@router.callback_query(F.data.startswith(("gnm:", "gsb:")))
+async def group_text_ask(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _group_editor(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    kind, gid = c.data.split(":")
+    await state.set_state(Gm.rename if kind == "gnm" else Gm.resubj)
+    await state.update_data(gid=int(gid))
+    await c.answer()
+    await c.message.answer("Guruhning yangi nomini yozing:" if kind == "gnm" else "Fan nomini yozing:")
+
+
+@router.message(Gm.rename)
+async def group_rename(m: Message, state: FSMContext) -> None:
+    name = " ".join((m.text or "").split())[:120]
+    d = await state.get_data()
+    async with Session() as s:
+        if len(name) < 2 or (await s.execute(select(Group.id).where(Group.name == name, Group.id != d["gid"]))).first():
+            await m.answer("Bu nom bo'sh yoki boshqa guruhda bor. Boshqa nom yozing.")
+            return
+        await state.clear()
+        g = await s.get(Group, d["gid"])
+        old, g.name = g.name, name
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "guruh_nomi", old=old, new=name)
+        await s.commit()
+    text, kb = await _group_card(d["gid"])
+    await m.answer(f"✅ {old} → {name}\n\n" + text, reply_markup=kb)
+
+
+@router.message(Gm.resubj)
+async def group_subject(m: Message, state: FSMContext) -> None:
+    subj = " ".join((m.text or "").split())[:60]
+    if len(subj) < 2:
+        await m.answer("Fan nomini yozing.")
+        return
+    d = await state.get_data()
+    await state.clear()
+    async with Session() as s:
+        g = await s.get(Group, d["gid"])
+        old, g.subject = g.subject, subj
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "guruh_fan", group=g.name, old=old, new=subj)
+        await s.commit()
+    text, kb = await _group_card(d["gid"])
+    await m.answer("✅ Saqlandi\n\n" + text, reply_markup=kb)
+
+
+@router.callback_query(F.data.startswith("gtc:"))
+async def group_teacher_list(c: CallbackQuery) -> None:
+    if not await _boss_staff(c.from_user.id):
+        await c.answer("O'qituvchini faqat rahbar almashtiradi", show_alert=True)
+        return
+    gid = int(c.data.split(":")[1])
+    async with Session() as s:
+        g = await s.get(Group, gid)
+        ts = [x for x in (await s.execute(select(Staff).where(Staff.active).order_by(Staff.full_name))).scalars()
+              if "oqituvchi" in x.role_list()]
+    await c.answer()
+    await c.message.answer(f"👨‍🏫 «{g.name}» guruhiga yangi o'qituvchi.\nBugundan keyingi to'lovlar ulushi yangi "
+                           "o'qituvchiga hisoblanadi, avvalgilari eski o'qituvchida qoladi.",
+                           reply_markup=IM(inline_keyboard=[[IB(text=("✅ " if x.id == g.teacher_id else "") + x.full_name,
+                                                                callback_data=f"gtcs:{gid}:{x.id}")] for x in ts]))
+
+
+@router.callback_query(F.data.startswith("gtcs:"))
+async def group_teacher_set(c: CallbackQuery, bot: Bot) -> None:
+    me = await _boss_staff(c.from_user.id)
+    if not me:
+        await c.answer("Faqat rahbar", show_alert=True)
+        return
+    _, gid, tid = c.data.split(":")
+    from app.db.models import GroupTeacher
+    async with Session() as s:
+        g = await s.get(Group, int(gid))
+        if g.teacher_id == int(tid):
+            await c.answer("Bu o'qituvchi allaqachon shu guruhda.")
+            return
+        old = await s.get(Staff, g.teacher_id) if g.teacher_id else None
+        new = await s.get(Staff, int(tid))
+        hist = (await s.execute(select(GroupTeacher.id).where(GroupTeacher.group_id == g.id))).first()
+        if not hist and g.teacher_id:
+            from datetime import datetime
+            s.add(GroupTeacher(group_id=g.id, teacher_id=g.teacher_id, since=datetime(2000, 1, 1)))
+        s.add(GroupTeacher(group_id=g.id, teacher_id=new.id, since=_utcnow()))
+        g.teacher_id = new.id
+        await S.audit(s, me, "guruh_oqituvchi", group=g.name, old=old.full_name if old else None, new=new.full_name)
+        await s.commit()
+        gname = g.name
+    await c.answer("Saqlandi")
+    await c.message.edit_text(f"✅ «{gname}»: o'qituvchi {old.full_name if old else '—'} → <b>{new.full_name}</b>.")
+    if new.tg_id:
+        await send(bot, new.tg_id, f"👨‍🏫 Sizga «{gname}» guruhi biriktirildi. 📋 Bugungi darslar menyusida ko'rinadi.")
+    if old and old.tg_id:
+        await send(bot, old.tg_id, f"ℹ️ «{gname}» guruhi endi {new.full_name} ga o'tkazildi.")
+
+
+@router.callback_query(F.data.startswith("gas:"))
+async def group_assistant_list(c: CallbackQuery) -> None:
+    gid = int(c.data.split(":")[1])
+    st, role = await _role(c.from_user.id)
+    async with Session() as s:
+        g = await s.get(Group, gid)
+        if not st or not (role == "rahbar" or st.id == g.teacher_id):
+            await c.answer("Faqat rahbar yoki guruh o'qituvchisi", show_alert=True)
+            return
+        xs = [x for x in (await s.execute(select(Staff).where(Staff.active).order_by(Staff.full_name))).scalars()
+              if "yordamchi" in x.role_list()]
+    kb = [[IB(text=("✅ " if x.id == g.assistant_id else "") + x.full_name, callback_data=f"gass:{gid}:{x.id}")] for x in xs]
+    kb.append([IB(text="Yordamchisiz", callback_data=f"gass:{gid}:0")])
+    await c.answer()
+    await c.message.answer(f"🤝 «{g.name}» guruhi yordamchisi:", reply_markup=IM(inline_keyboard=kb))
+
+
+@router.callback_query(F.data.startswith("gass:"))
+async def group_assistant_set(c: CallbackQuery, bot: Bot) -> None:
+    _, gid, aid = c.data.split(":")
+    st, role = await _role(c.from_user.id)
+    async with Session() as s:
+        g = await s.get(Group, int(gid))
+        if not st or not (role == "rahbar" or st.id == g.teacher_id):
+            await c.answer("Ruxsat yo'q", show_alert=True)
+            return
+        old = await s.get(Staff, g.assistant_id) if g.assistant_id else None
+        new = await s.get(Staff, int(aid)) if int(aid) else None
+        g.assistant_id = new.id if new else None
+        if not new:
+            g.delegated = {}
+        await S.audit(s, st, "guruh_yordamchi", group=g.name, old=old.full_name if old else None,
+                      new=new.full_name if new else None)
+        await s.commit()
+        gname = g.name
+    await c.answer("Saqlandi")
+    await c.message.edit_text(f"✅ «{gname}» yordamchisi: <b>{new.full_name if new else 'yo`q'}</b>."
+                              + ("\nYuklangan ishlarni «🤝 Yordamchi» menyusidan belgilang." if new else ""))
+    if new and new.tg_id:
+        await send(bot, new.tg_id, f"🤝 Siz «{gname}» guruhiga yordamchi o'qituvchi etib biriktirildingiz.")
+    if old and old.tg_id and (not new or old.id != new.id):
+        await send(bot, old.tg_id, f"ℹ️ «{gname}» guruhidagi yordamchilik vazifangiz yakunlandi.")

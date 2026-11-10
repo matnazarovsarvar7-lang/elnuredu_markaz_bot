@@ -88,6 +88,7 @@ async def exp_start(m: Message, state: FSMContext) -> None:
         head += (f"Kichik kassa qoldig'i: <b>{S.fmt_som(lim - spent)}</b>\n" if lim is not None else
                  "Kichik kassa summasi bu oy hali belgilanmagan — xarajat rahbar tasdig'iga boradi.\n")
     rows = [[IB(text=c, callback_data=f"xc:{i}")] for i, c in enumerate(cats)]
+    rows.append([IB(text="📋 Oxirgi xarajatlar / bekor qilish", callback_data="xl")])
     await m.answer(head + "Toifani tanlang:", reply_markup=IM(inline_keyboard=rows))
 
 
@@ -270,6 +271,7 @@ async def svc_menu(m: Message) -> None:
                 callback_data=f"sv:{v.id}")] for v in svcs]
     rows.append([IB(text="🖨 Ichki chop etish (bepul)", callback_data="pu")])
     rows.append([IB(text="🖨 Printer hisoblagichi", callback_data="svp")])
+    rows.append([IB(text="📋 Oxirgi sotuvlar / bekor qilish", callback_data="sll")])
     if who.staff.current_role == "rahbar":
         rows.append([IB(text="➕ Xizmat/kitob qo'shish", callback_data="svn")])
     await m.answer("🛒 <b>Xizmatlar</b>\n• Pullik sotuv — xizmatni tanlang (o'quvchi hisobiga yozilmaydi, qarzga "

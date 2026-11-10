@@ -558,7 +558,9 @@ async def tasks_all(m: Message) -> None:
         elif t.status == "bajarildi":
             out.append(f"🟢 {x.full_name}: {t.text[:60]} — bajarildi {t.done_at:%d.%m}")
     out.append("\n🔴 muddati o'tgan · 🟡 jarayonda · 🟢 oxirgi 7 kunda bajarilgan")
-    await m.answer("\n".join(out))
+    ekb = [[IB(text=f"✏️ {x.full_name.split()[0]}: {t.text[:28]}", callback_data=f"tke:{t.id}")]
+           for t, x in rows if t.status == "ochiq"][:20]
+    await m.answer("\n".join(out), reply_markup=IM(inline_keyboard=ekb) if ekb else None)
     async with Session() as s:
         rec = (await s.execute(select(RecurringTask, Staff).join(Staff, Staff.id == RecurringTask.staff_id)
                                .where(RecurringTask.active))).all()
@@ -568,7 +570,8 @@ async def tasks_all(m: Message) -> None:
         for r, x in rec:
             when = WEEKDAYS[r.day] if r.kind == "weekly" else f"har oy {r.day}-kuni"
             lines.append(f"• {x.full_name}: {r.text[:50]} — {when}")
-            kb.append([IB(text=f"⏹ To'xtatish: {r.text[:30]}", callback_data=f"rstop:{r.id}")])
+            kb.append([IB(text=f"✏️ Matn: {r.text[:24]}", callback_data=f"rte:{r.id}"),
+                       IB(text="⏹ To'xtatish", callback_data=f"rstop:{r.id}")])
         await m.answer("\n".join(lines), reply_markup=IM(inline_keyboard=kb))
 
 
