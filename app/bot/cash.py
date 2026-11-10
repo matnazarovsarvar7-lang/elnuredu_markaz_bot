@@ -43,29 +43,72 @@ async def _opening(s) -> dict | None:
     return row.value if row else None
 
 
-async def expected_cash(s) -> int | None:
+async def cash_breakdown(s) -> dict | None:
+    """Kutilgan naqd qanday hisoblangani: boshlang'ich qoldiq + kirim − chiqim, va hisobga kirmaganlar (izoh uchun)."""
     op = await _opening(s)
     if not op:
         return None
+    from app.db.models import Expense, Payout, ServiceSale
     since = datetime.fromisoformat(op["at"])
     # kassa sanalgan kundan oldingi sana bilan kiritilgan (orqaga qaytib kiritilgan) to'lov va xarajatlar
     # kassaga ta'sir qilmaydi: ular allaqachon sanalgan pulning ichida yoki ilgari ishlatilgan
     open_day = date.fromisoformat(op["day"]) if op.get("day") else (since + timedelta(hours=5)).date()
-    pays = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
-        Payment.method == "naqd", Payment.status == "tasdiq", Payment.created_at >= since,
-        Payment.paid_date >= open_day))).scalar()
-    outs = (await s.execute(select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
-        CashHandover.status != "rad", CashHandover.created_at >= since))).scalar()
-    from app.db.models import Expense, ServiceSale
-    sales = (await s.execute(select(func.coalesce(func.sum(ServiceSale.amount), 0)).where(
-        ServiceSale.method == "naqd", ServiceSale.status == "tasdiq", ServiceSale.created_at >= since))).scalar()
-    spent = (await s.execute(select(func.coalesce(func.sum(Expense.amount), 0)).where(
-        Expense.method == "naqd", Expense.status == "tasdiq", Expense.created_at >= since,
-        Expense.date >= open_day))).scalar()
-    from app.db.models import Payout
-    paid_out = (await s.execute(select(func.coalesce(func.sum(Payout.amount), 0)).where(
-        Payout.method == "naqd", Payout.status.in_(("berildi", "olindi")), Payout.created_at >= since))).scalar()
-    return int(op["amount"]) + int(pays) + int(sales) - int(outs) - int(spent) - int(paid_out)
+
+    async def total(q):
+        return int((await s.execute(q)).scalar() or 0)
+
+    naqd = Payment.method == "naqd"
+    ok = Payment.status == "tasdiq"
+    pays = await total(select(func.coalesce(func.sum(Payment.amount), 0)).where(
+        naqd, ok, Payment.created_at >= since, Payment.paid_date >= open_day))
+    n_pays = await total(select(func.count(Payment.id)).where(
+        naqd, ok, Payment.created_at >= since, Payment.paid_date >= open_day, Payment.amount > 0))
+    back = await total(select(func.coalesce(func.sum(Payment.amount), 0)).where(
+        naqd, ok, Payment.created_at >= since, Payment.paid_date < open_day))
+    before = await total(select(func.coalesce(func.sum(Payment.amount), 0)).where(
+        naqd, ok, Payment.created_at < since, Payment.paid_date == open_day))
+    outs = await total(select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
+        CashHandover.status != "rad", CashHandover.created_at >= since))
+    sales = await total(select(func.coalesce(func.sum(ServiceSale.amount), 0)).where(
+        ServiceSale.method == "naqd", ServiceSale.status == "tasdiq", ServiceSale.created_at >= since))
+    spent = await total(select(func.coalesce(func.sum(Expense.amount), 0)).where(
+        Expense.method == "naqd", Expense.status == "tasdiq", Expense.created_at >= since, Expense.date >= open_day))
+    paid_out = await total(select(func.coalesce(func.sum(Payout.amount), 0)).where(
+        Payout.method == "naqd", Payout.status.in_(("berildi", "olindi")), Payout.created_at >= since))
+    opening = int(op["amount"])
+    return {"opening": opening, "since": since + timedelta(hours=5), "open_day": open_day, "pays": pays,
+            "n_pays": n_pays, "sales": sales, "outs": outs, "spent": spent, "paid_out": paid_out,
+            "back": back, "before": before,
+            "expected": opening + pays + sales - outs - spent - paid_out}
+
+
+def breakdown_text(b: dict) -> str:
+    lines = [f"Boshlang'ich qoldiq ({b['since']:%d.%m %H:%M} da sanalgan): {S.fmt_som(b['opening'])}",
+             f"+ Naqd to'lovlar (shundan keyin kiritilgan): {S.fmt_som(b['pays'])} ({b['n_pays']} ta)"]
+    if b["sales"]:
+        lines.append(f"+ Naqd xizmat sotuvi: {S.fmt_som(b['sales'])}")
+    if b["outs"]:
+        lines.append(f"− Kassadan topshirilgan: {S.fmt_som(b['outs'])}")
+    if b["spent"]:
+        lines.append(f"− Naqd xarajatlar: {S.fmt_som(b['spent'])}")
+    if b["paid_out"]:
+        lines.append(f"− Naqd oylik/avans: {S.fmt_som(b['paid_out'])}")
+    lines.append(f"= <b>Kutilgan: {S.fmt_som(b['expected'])}</b>")
+    notes = []
+    if b["before"]:
+        notes.append(f"• {b['open_day']:%d.%m} kuni boshlang'ich qoldiq sanalishidan <b>oldin</b> kiritilgan naqd to'lovlar: "
+                     f"{S.fmt_som(b['before'])} — ular boshlang'ich qoldiq ichida hisoblangan")
+    if b["back"]:
+        notes.append(f"• Orqaga sana bilan kiritilgan naqd to'lovlar: {S.fmt_som(b['back'])} — kassaga qo'shilmaydi "
+                     "(pul o'sha kunlari olingan)")
+    if notes:
+        lines += ["", "ℹ️ Hisobga kirmaganlar:"] + notes
+    return "\n".join(lines)
+
+
+async def expected_cash(s) -> int | None:
+    b = await cash_breakdown(s)
+    return b["expected"] if b else None
 
 
 async def _set_opening(s, amount: int) -> None:
@@ -135,14 +178,18 @@ async def close_save(m: Message, state: FSMContext, bot: Bot) -> None:
     else:
         await m.answer("⚠️ Farq bor. Rahbarga xabar berildi.")
     sign = "+" if diff > 0 else ""
+    async with Session() as s:
+        br = await cash_breakdown(s)
     text = (f"🔐 <b>Kassa yopildi · {t:%d.%m}</b> ({name})\nKutilgan: {S.fmt_som(exp)}\nSanalgan: {S.fmt_som(counted)}\n"
             + ("Boshlang'ich qoldiq sifatida qayd etildi." if status == "boshlang" else
-               "✅ Mos" if status == "mos" else f"⚠️ Farq: <b>{sign}{S.fmt_som(diff)}</b>"))
+               "✅ Mos" if status == "mos" else f"⚠️ Farq: <b>{sign}{S.fmt_som(diff)}</b>")
+            + (f"\n\n<b>Kutilgan qanday hisoblandi:</b>\n{breakdown_text(br)}" if br and status != "boshlang" else ""))
     kb = None
     if status == "farq":
         kb = IM(inline_keyboard=[[IB(text="−2 ball moliyaga", callback_data=f"cf:{cid}:pen")],
                                  [IB(text="Sabab aniqlandi — qoldiqni tuzatish", callback_data=f"cf:{cid}:fix")],
-                                 [IB(text="🔄 Qayta sanashga ruxsat", callback_data=f"cf:{cid}:re")]])
+                                 [IB(text="🔄 Qayta sanashga ruxsat", callback_data=f"cf:{cid}:re")],
+                                 [IB(text="📋 Naqd to'lovlar ro'yxati", callback_data="cnl")]])
     for b in bosses:
         await send(bot, b, text, reply_markup=kb)
 
@@ -293,14 +340,15 @@ async def cash_view(m: Message) -> None:
         who = await S.who_by_tg(s, m.from_user.id)
         if not (who.staff and who.staff.current_role == "rahbar"):
             return
-        exp = await expected_cash(s)
+        br = await cash_breakdown(s)
+        exp = br["expected"] if br else None
         closes = (await s.execute(select(CashClose).order_by(CashClose.date.desc(), CashClose.id.desc())
                                   .limit(7))).scalars().all()
         pend = (await s.execute(select(CashHandover).where(CashHandover.status == "kutilmoqda"))).scalars().all()
         social = (await s.execute(select(func.coalesce(func.sum(Payment.amount), 0)).where(
             Payment.method == "ijtimoiy", Payment.month == f"{t:%Y-%m}"))).scalar()
     lines = ["💼 <b>Kassa</b>",
-             f"Kassada bo'lishi kerak: <b>{S.fmt_som(exp)}</b>" if exp is not None else
+             f"Kassada bo'lishi kerak: <b>{S.fmt_som(exp)}</b>\n\n{breakdown_text(br)}\n" if exp is not None else
              "Boshlang'ich qoldiq hali kiritilmagan (moliya birinchi «🔐 Kassani yopish» da kiritadi).",
              f"Tasdiq kutayotgan topshirishlar: {len(pend)} ta" + (f" ({S.fmt_som(sum(h.amount for h in pend))})" if pend else ""),
              f"Ijtimoiy to'lovlar (kassaga kirmaydi) shu oy: {S.fmt_som(int(social))}", "", "<b>Oxirgi yopishlar</b>"]
@@ -310,7 +358,55 @@ async def cash_view(m: Message) -> None:
                      (f" (farq {'+' if cl.diff > 0 else ''}{S.fmt_som(cl.diff)})" if cl.diff else ""))
     if not closes:
         lines.append("—")
-    await m.answer("\n".join(lines))
+    kb = IM(inline_keyboard=[[IB(text="📋 Naqd to'lovlar ro'yxati", callback_data="cnl")]]) if br else None
+    await m.answer("\n".join(lines), reply_markup=kb)
+
+
+@router.callback_query(F.data == "cnl")
+async def cash_list(c: CallbackQuery) -> None:
+    """Kassa ochilgan kundan beri kiritilgan barcha naqd to'lovlar: vaqti, kim kiritgan, o'quvchi, summa, hisobga kirdimi."""
+    from app.db.models import Student
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        if not (who.staff and who.staff.current_role in ("rahbar", "moliya")):
+            await c.answer()
+            return
+        op = await _opening(s)
+        if not op:
+            await c.answer("Boshlang'ich qoldiq hali yo'q", show_alert=True)
+            return
+        since = datetime.fromisoformat(op["at"])
+        open_day = date.fromisoformat(op["day"]) if op.get("day") else (since + timedelta(hours=5)).date()
+        start = datetime.combine(open_day, datetime.min.time()) - timedelta(hours=5)
+        rows = (await s.execute(
+            select(Payment, Student.full_name, Staff.full_name)
+            .join(Enrollment, Enrollment.id == Payment.enrollment_id).join(Student, Student.id == Enrollment.student_id)
+            .outerjoin(Staff, Staff.id == Payment.entered_by)
+            .where(Payment.method == "naqd", Payment.status == "tasdiq", Payment.created_at >= min(start, since))
+            .order_by(Payment.created_at))).all()
+    lines = [f"📋 <b>Naqd to'lovlar</b> ({open_day:%d.%m} dan beri)",
+             f"Boshlang'ich qoldiq sanalgan vaqt: {since + timedelta(hours=5):%d.%m %H:%M}", ""]
+    total = 0
+    for p, st, by in rows:
+        t = p.created_at + timedelta(hours=5)
+        if p.created_at < since:
+            mark = "⏪"   # qoldiq sanalishidan oldin — qoldiq ichida
+        elif p.paid_date < open_day:
+            mark = "📅"   # orqaga sana bilan — kassaga qo'shilmaydi
+        else:
+            mark = "✅"
+            total += p.amount
+        lines.append(f"{mark} {t:%d.%m %H:%M} · {st} · <b>{S.fmt_som(p.amount)}</b>"
+                     + (f" · sana {p.paid_date:%d.%m}" if p.paid_date != t.date() else "") + (f" · {by}" if by else ""))
+    if not rows:
+        lines.append("—")
+    lines += ["", f"✅ Kassaga qo'shilgan: <b>{S.fmt_som(total)}</b>",
+              "⏪ — qoldiq sanalishidan oldin kiritilgan (qoldiq ichida)",
+              "📅 — orqaga sana bilan kiritilgan (kassaga qo'shilmaydi)"]
+    text = "\n".join(lines)
+    for i in range(0, len(text), 3900):
+        await c.message.answer(text[i:i + 3900])
+    await c.answer()
 
 
 # ================= ijtimoiy o'quvchilar: har oy avtomatik "to'landi" =================
