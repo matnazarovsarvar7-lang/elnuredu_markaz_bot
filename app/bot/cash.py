@@ -284,9 +284,15 @@ async def ho_quick(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     if time.time() - _HOQ.get(c.from_user.id, 0) < 60:
         await c.answer("Topshirish yuborilgan.", show_alert=True)
         return
+    async with Session() as s:
+        exp = await expected_cash(s)
+    amt = min(int(c.data.split(":")[1]), exp or 0)
+    if amt <= 0:
+        await c.answer("Topshiriladigan pul yo'q.", show_alert=True)
+        return
     _HOQ[c.from_user.id] = time.time()
     await state.clear()
-    await state.update_data(amount=int(c.data.split(":")[1]))
+    await state.update_data(amount=amt)
     await c.answer()
     await c.message.edit_reply_markup(reply_markup=None)
     await _ho_save(c.message, state, bot, c.from_user.id, "rahbar", None)
