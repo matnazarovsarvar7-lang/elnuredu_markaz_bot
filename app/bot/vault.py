@@ -30,9 +30,30 @@ def _amount(text: str | None) -> int | None:
 
 
 async def start_at(s) -> datetime | None:
-    """Kassalar ochilgan payt (bazadagi UTC). None — rahbar hali kassalarni ochmagan."""
+    """Kassalar hisobi boshlangan payt (bazadagi UTC). Hech narsa so'ralmaydi: birinchi murojaatda
+    hamma kassa 0 dan avtomatik boshlanadi — keyin faqat botga kiritilgan pul harakatlari hisoblanadi."""
     row = await s.get(Setting, START_KEY)
-    return datetime.fromisoformat(row.value["at"]) if row else None
+    if row:
+        return datetime.fromisoformat(row.value["at"])
+    return await ensure_started()
+
+
+async def ensure_started() -> datetime:
+    """Kassalarni 0 dan boshlaydi (alohida sessiyada — chaqirgan joy commit qilmasa ham saqlanadi)."""
+    from app.bot.cash import _set_opening
+    async with Session() as s2:
+        row = await s2.get(Setting, START_KEY)
+        if row:
+            return datetime.fromisoformat(row.value["at"])
+        db_now = (await s2.execute(select(func.now()))).scalar()
+        if isinstance(db_now, str):
+            db_now = datetime.fromisoformat(db_now)
+        at = db_now.replace(tzinfo=None, microsecond=0)
+        s2.add(Setting(key=START_KEY, value={"at": at.isoformat(), "auto": True}))
+        if not await s2.get(Setting, "cash_opening"):
+            await _set_opening(s2, 0)
+        await s2.commit()
+        return at
 
 
 async def _sum(s, q) -> int:
@@ -179,13 +200,9 @@ def boss_text(b: dict) -> str:
     return "\n".join(lines)
 
 
-def kassa_kb(opened: bool) -> IM:
-    if not opened:
-        return IM(inline_keyboard=[[IB(text="🧮 Pulni sanab kiritish", callback_data="kv:open")],
-                                   [IB(text="🏦 Fondlar", callback_data="fd")]])
+def kassa_kb(opened: bool = True) -> IM:
     return IM(inline_keyboard=[[IB(text="💳 Moliyaga xarajat puli berish", callback_data="kv:petty")],
                                [IB(text="➕ Kirim", callback_data="kv:in"), IB(text="➖ Chiqim", callback_data="kv:out")],
-                               [IB(text="🧮 Qayta sanash (raqam mos kelmasa)", callback_data="kv:open")],
                                [IB(text="🏦 Fondlar", callback_data="fd"), IB(text="📋 Tafsilot", callback_data="kv:det")]])
 
 
@@ -205,7 +222,7 @@ class Kv(StatesGroup):
     note = State()
 
 
-ASK = {"open": "🧮 <b>Pulni sanab kiritish</b> (4 ta savol)\n\n"
+ASK = {"open": "✏️ <b>Tuzatish</b> — faqat bot ko'rsatgan raqam haqiqiy puldan farq qilsa (4 ta savol)\n\n"
                "1/4. 👤 <b>Qo'lingizda</b> hozir qancha naqd pul bor?\n<i>Sanab yozing. Yo'q bo'lsa — 0.</i>",
        "petty": "💳 Moliyaga xarajat uchun qancha pul berasiz? Summani yozing:",
        "in": "➕ Sizga qancha pul kirdi? Summani yozing (masalan, o'zingiz qo'shgan pul):",

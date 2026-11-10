@@ -93,7 +93,7 @@ async def exp_start(m: Message, state: FSMContext, tg_id: int | None = None) -> 
         pb, bb = await petty_balance(s), await boss_balance(s)
     await state.clear()
     if who.staff.current_role == "moliya" and pb is None:
-        await m.answer("💳 Xarajat puli hali kiritilmagan. Rahbar «💼 Kassa → 🧮 Pulni sanab kiritish» ni bosgach, "
+        await m.answer("💳 Xarajat puli hali yo'q. Rahbar «💼 Kassa → 💳 Moliyaga xarajat puli berish» orqali bergach, "
                        "xarajat kiritiladi.")
         return
     await state.set_state(Ex.cat)

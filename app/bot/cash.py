@@ -39,8 +39,19 @@ def _amount(text: str | None) -> int | None:
 
 # ================= kassa qoldig'i (faqat bot ichida, moliyaga ko'rsatilmaydi) =================
 async def _opening(s) -> dict | None:
+    """Moliyadagi o'quvchilar puli hisobining boshi. Yo'q bo'lsa — kassalar bilan birga 0 dan avtomatik."""
     row = await s.get(Setting, "cash_opening")
-    return row.value if row else None
+    if row:
+        return row.value
+    from app.bot.vault import ensure_started
+    await ensure_started()
+    async with Session() as s2:
+        row = await s2.get(Setting, "cash_opening")
+        if not row:
+            await _set_opening(s2, 0)
+            await s2.commit()
+            row = await s2.get(Setting, "cash_opening")
+        return row.value
 
 
 async def cash_breakdown(s) -> dict | None:
@@ -172,8 +183,9 @@ async def close_save(m: Message, state: FSMContext, bot: Bot) -> None:
     if status == "boshlang":
         await m.answer("✅ Kassa boshlang'ich qoldig'i qayd etildi. Ertadan bot har kuni solishtiradi.")
     else:
-        hand = IM(inline_keyboard=[[IB(text=f"💼 Hammasini rahbarga topshirish — {S.fmt_som(counted)}",
-                                       callback_data=f"hoq:{counted}")]]) if counted > 0 else None
+        give = min(counted, exp)        # ortiqcha (sababi noma'lum) pul avtomatik topshirilmaydi; kam bo'lsa — borini
+        hand = IM(inline_keyboard=[[IB(text=f"💼 Rahbarga topshirish — {S.fmt_som(give)}",
+                                       callback_data=f"hoq:{give}")]]) if give > 0 else None
         await m.answer(("✅ Kassa mos. Rahmat!" if status == "mos" else "⚠️ Farq bor. Rahbarga xabar berildi.")
                        + ("\n\nPulni konvertga solib rahbarga bering va pastdagi tugmani bosing:" if hand else ""),
                        reply_markup=hand)
@@ -312,6 +324,9 @@ async def ho_amount(m: Message, state: FSMContext) -> None:
 @router.callback_query(Ho.amount, F.data.startswith("hot:"))
 async def ho_to(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     to = c.data.split(":")[1]
+    if not (await state.get_data()).get("amount"):
+        await c.answer("Avval summani yozing.", show_alert=True)
+        return
     if to == "bank":
         await state.set_state(Ho.receipt)
         await c.message.edit_text("🏦 Bank kvitansiyasini yuboring (rasm yoki PDF):")
@@ -416,7 +431,7 @@ async def simple_view() -> tuple[str, IM]:
     if test:
         lines.append("🧪 <i>Sinov rejimi — summalar haqiqiy emas</i>")
     lines.append("")
-    if bi is None:
+    if bi is None:  # endi bo'lmaydi (avtomatik boshlanadi), eski holat uchun
         lines += ["Kassa hali ochilmagan.", "",
                   "«🧮 Pulni sanab kiritish» ni bosing — bot 4 ta savol beradi:",
                   "1. Qo'lingizda qancha naqd bor?", "2. Markaz kartasida qancha bor?",
@@ -487,7 +502,8 @@ async def cash_detail(c: CallbackQuery) -> None:
     await c.answer()
     await c.message.answer("\n".join(lines)[:3900], reply_markup=IM(inline_keyboard=[
         [IB(text="📋 Sizdagi pul harakatlari", callback_data="kv:list")],
-        [IB(text="📋 O'quvchilar naqd to'lovlari", callback_data="cnl")]]))
+        [IB(text="📋 O'quvchilar naqd to'lovlari", callback_data="cnl")],
+        [IB(text="✏️ Raqam haqiqiy pulga mos emas — tuzatish", callback_data="kv:open")]]))
 
 
 @router.callback_query(F.data == "cnl")

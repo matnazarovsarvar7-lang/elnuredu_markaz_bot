@@ -65,7 +65,8 @@ async def golive_ask(c: CallbackQuery) -> None:
              "Barcha <b>sinov pul yozuvlari o'chiriladi</b>:"] + [f"• {n}: {k} ta" for n, k in cnt] + [
              "", "Kassalar, fondlar, oy yopilishlari ham 0 dan boshlanadi.",
              "✅ Saqlanadi: o'quvchilar, ota-onalar, guruhlar, xodimlar, chegirmalar, davomat, vazifalar, testlar.", "",
-             "Keyin: 💼 Kassa → 🧮 Pulni sanab kiritish va haqiqiy to'lovlarni kiritasiz.",
+             "Keyin hamma kassa 0 dan boshlanadi — hech narsa sanash shart emas: moliya haqiqiy to'lovlarni kiritadi, "
+             "siz topshirilgan pulni ✅ qabul qilasiz.",
              "", "⚠️ <b>Bu amalni qaytarib bo'lmaydi.</b>"]
     await c.answer()
     await c.message.answer("\n".join(lines), reply_markup=IM(inline_keyboard=[
@@ -111,7 +112,9 @@ async def golive_do(c: CallbackQuery, state: FSMContext) -> None:
         await S.audit(s, st, "haqiqiy_ish", deleted=dict((n, k) for n, k in cnt))
         await s.commit()
     await c.answer()
-    await c.message.edit_text("✅ <b>Bot haqiqiy ishga o'tdi.</b>\nSinov pul yozuvlari o'chirildi.\n\n"
-                              "Endi:\n1. 💼 Kassa → 🧮 Pulni sanab kiritish (haqiqiy pul).\n"
-                              "2. Moliya birinchi «🔐 Kassani yopish» da qabul kassasidagi haqiqiy pulni sanaydi.\n"
-                              "3. Haqiqiy to'lovlar kiritiladi.")
+    from app.bot.vault import ensure_started
+    await ensure_started()                       # barcha kassalar shu daqiqadan 0 dan
+    await c.message.edit_text("✅ <b>Bot haqiqiy ishga o'tdi.</b>\nSinov pul yozuvlari o'chirildi, barcha kassalar 0 dan boshlandi.\n\n"
+                              "Endi:\n1. Moliya haqiqiy to'lovlarni kiritadi.\n"
+                              "2. Moliya pulni topshiradi — siz ✅ Qabul qildim.\n"
+                              "3. Moliyaga xarajat uchun pul bersangiz — 💼 Kassa → 💳 Moliyaga xarajat puli berish.")
