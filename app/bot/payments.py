@@ -67,14 +67,15 @@ async def pay_start(m: Message, state: FSMContext) -> None:
 async def pay_search(m: Message, state: FSMContext) -> None:
     async with Session() as s:
         found = await S.search_students(s, m.text or "")
+        labels = await S.student_labels(s, found) if len(found) > 1 else {}
     if not found:
         await m.answer("Topilmadi. Boshqacha yozib ko'ring (kamida 2 harf).")
         return
     if len(found) == 1:                      # bitta topilsa — darhol ochiladi
         await _open_student(m, state, found[0].id, edit=False)
         return
-    kb = IM(inline_keyboard=[[IB(text=x.full_name, callback_data=f"ps:{x.id}")] for x in found])
-    await m.answer("O'quvchini tanlang:", reply_markup=kb)
+    kb = IM(inline_keyboard=[[IB(text=labels[x.id], callback_data=f"ps:{x.id}")] for x in found])
+    await m.answer("O'quvchini tanlang (guruhi va ota-ona telefoni oxiriga qarang):", reply_markup=kb)
 
 
 def _last_text(last: dict | None) -> str | None:
@@ -92,7 +93,9 @@ async def _open_student(msg: Message, state: FSMContext, sid: int, edit: bool) -
             await msg.answer("Bu o'quvchi hech qaysi guruhda emas.")
             return
         sd = await S.student_debt(s, sid, t.year, t.month)
-    lines = [f"<b>{sd.student.full_name}</b> · {t:%m.%Y}"]
+        label = (await S.student_labels(s, [sd.student]))[sid]
+    tail = label.split("☎")[-1] if "☎" in label else ""
+    lines = [f"<b>{sd.student.full_name}</b> · {t:%m.%Y}" + (f" · ota-ona ☎{tail}" if tail else "")]
     for p in sd.parts:
         lines.append(f"• {p.enrollment.group.name}: {S.fmt_som(p.payable)}, "
                      + ("to'langan ✅" if p.debt == 0 else f"qoldi {S.fmt_som(p.debt)}"))

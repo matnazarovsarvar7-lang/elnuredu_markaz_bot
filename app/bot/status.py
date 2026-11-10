@@ -408,9 +408,11 @@ async def mv_save(c: CallbackQuery, bot: Bot) -> None:
         if new:                        # shu kuni shu guruhdan chiqqan bo'lsa — o'sha yozuv qayta ochiladi
             new.active, new.left_date = True, None
             new.tier, new.discount_kind, new.discount_percent = e.tier, e.discount_kind, e.discount_percent
+            new.discount_amount = e.discount_amount
         else:
             new = Enrollment(student_id=e.student_id, group_id=g.id, join_date=d, registered_at=t, tier=e.tier,
-                             discount_kind=e.discount_kind, discount_percent=e.discount_percent)
+                             discount_kind=e.discount_kind, discount_percent=e.discount_percent,
+                             discount_amount=e.discount_amount)
             s.add(new)
         e.left_date = last
         e.active = False

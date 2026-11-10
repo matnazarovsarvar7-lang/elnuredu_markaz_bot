@@ -70,3 +70,13 @@ def test_callback_prefixes_unique():
                 owners.setdefault(p, set()).add(f.name)
     clash = {p: o for p, o in owners.items() if len(o) > 1}
     assert not clash, clash
+
+
+def test_discount_amount_and_parse():
+    from app.bot.edit import parse_discount
+    from app.services import name_key
+    assert parse_discount("20%", 300000) == ("pct", 20)
+    assert parse_discount("50 000", 300000) == ("sum", 50000)
+    assert isinstance(parse_discount("300000", 300000), str)
+    assert name_key("Behruz Hasanov") == name_key("Xasanov Behruz")
+    assert name_key("G'ofurov O'tkir") == name_key("Gofurov Otkir")

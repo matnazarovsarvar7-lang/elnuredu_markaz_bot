@@ -281,6 +281,23 @@ def _frozen_share(enr: Enrollment, year: int, month: int, periods: list, until: 
     return len(count), len(days)
 
 
+def discount_pct(enr: Enrollment, fee: int) -> float:
+    """Chegirma foizi. Summa bilan berilgan bo'lsa — oylik narxga nisbatan (to'liq oyda aynan shu summa ayiriladi,
+    oy chala bo'lsa — mutanosib)."""
+    if enr.discount_kind in ("markaz", "umumiy") and enr.discount_amount:
+        return min(100.0, enr.discount_amount * 100 / fee) if fee else 0
+    return enr.discount_percent or 0
+
+
+def discount_label(enr: Enrollment) -> str:
+    if enr.discount_kind == "none":
+        return ""
+    if enr.discount_kind == "ijtimoiy":
+        return "ijtimoiy (100%)"
+    name = {"markaz": "markaz hisobidan", "umumiy": "umumiy"}.get(enr.discount_kind, enr.discount_kind)
+    return f"{name} −{fmt_som(enr.discount_amount)}" if enr.discount_amount else f"{name} {enr.discount_percent}%"
+
+
 async def month_status(s: AsyncSession, enr: Enrollment, year: int, month: int) -> MonthStatus:
     fee = await enrollment_fee(s, enr, year, month)
     gross = month_due(fee, enr.join_date, year, month, enr.group.days)
@@ -290,7 +307,7 @@ async def month_status(s: AsyncSession, enr: Enrollment, year: int, month: int) 
         keep, total = _frozen_share(enr, year, month, periods, until)
         if total and keep < total:
             gross = round_to(gross * keep / total)
-    payable = Discount(enr.discount_kind, enr.discount_percent).payable(gross)
+    payable = Discount(enr.discount_kind, discount_pct(enr, fee)).payable(gross)
     paid = await paid_for_month(s, enr.id, f"{year:04d}-{month:02d}")
     return MonthStatus(enr, gross, payable, paid)
 
@@ -371,6 +388,43 @@ async def search_students(s: AsyncSession, q: str, limit: int = 10) -> list[Stud
     rows = (await s.execute(select(Student).where(Student.status != "ketgan", Student.full_name.ilike(f"%{q}%"))
                             .order_by(Student.full_name).limit(limit))).scalars()
     return list(rows)
+
+
+def name_key(name: str) -> str:
+    """Ism yozilishidagi farqlarni tekislaydi: x/h, o'/o, g'/g, yo/e, so'zlar tartibi (Hasanov = Xasanov)."""
+    n = (name or "").lower()
+    for ch in "ʻ‘’`ʼ":
+        n = n.replace(ch, "'")
+    n = n.replace("x", "h").replace("o'", "o").replace("g'", "g").replace("'", "").replace("yo", "e").replace("iy", "i")
+    return " ".join(sorted(n.split()))
+
+
+async def similar_students(s: AsyncSession, name: str) -> list[Student]:
+    key = name_key(name)
+    rows = (await s.execute(select(Student))).scalars().all()
+    return [x for x in rows if name_key(x.full_name) == key]
+
+
+async def student_labels(s: AsyncSession, students: list[Student]) -> dict[int, str]:
+    """Bir xil ismli o'quvchilarni adashtirmaslik uchun tugma yozuvi: ism · guruh(lar) · ota-ona tel. oxirgi 4 raqami."""
+    from app.db.models import StudentParent
+    ids = [x.id for x in students] or [0]
+    groups: dict[int, list[str]] = {}
+    for sid, gname in (await s.execute(select(Enrollment.student_id, Group.name).join(Group, Group.id == Enrollment.group_id)
+                                       .where(Enrollment.student_id.in_(ids), Enrollment.active))).all():
+        groups.setdefault(sid, []).append(gname)
+    phones: dict[int, str] = {}
+    for sid, ph in (await s.execute(select(StudentParent.student_id, Parent.phone).join(
+            Parent, Parent.id == StudentParent.parent_id).where(StudentParent.student_id.in_(ids)))).all():
+        phones.setdefault(sid, ph)
+    names = [x.full_name.strip().lower() for x in students]
+    out = {}
+    for x in students:
+        g = ", ".join(groups.get(x.id, [])) or "guruhsiz"
+        tail = (phones.get(x.id) or x.phone or "")[-4:]
+        extra = f" · {x.grade}-sinf" if names.count(x.full_name.strip().lower()) > 1 and x.grade and x.grade <= 11 else ""
+        out[x.id] = f"{x.full_name} · {g}" + (f" · ☎…{tail}" if tail else "") + extra
+    return out
 
 
 async def student_enrollments(s: AsyncSession, student_id: int) -> list[Enrollment]:

@@ -82,12 +82,14 @@ async def reg_name(m: Message, state: FSMContext) -> None:
         await m.answer("Familiya va ismni to'liq yozing. Masalan: Karimov Jasur")
         return
     async with Session() as s:
-        same = (await s.execute(select(Student).where(func.lower(Student.full_name) == name.lower()))).scalars().all()
+        same = await S.similar_students(s, name)
+        labels = await S.student_labels(s, same) if same else {}
     await state.update_data(name=name[:120])
     if same:
-        await m.answer(f"⚠️ «{name}» nomli o'quvchi bazada bor ({same[0].status}). Agar u o'sha bola bo'lsa — "
-                       "yangisini ochmang: «👤 O'quvchi» → kartasi → «➕ Guruhga qo'shish».\n"
-                       "Boshqa bola bo'lsa — davom eting.")
+        lst = "\n".join(f"• {labels[x.id]} ({x.status})" for x in same)
+        await m.answer(f"⚠️ Bazada shunga o'xshash ismli o'quvchi bor:\n{lst}\n\n"
+                       "Agar u o'sha bola bo'lsa — yangisini ochmang: «👤 O'quvchi» → kartasi → «➕ Guruhga qo'shish».\n"
+                       "Boshqa bola bo'lsa — davom eting (ota-ona telefoni bilan ajratiladi).")
     await _ask_grade(m, state)
 
 

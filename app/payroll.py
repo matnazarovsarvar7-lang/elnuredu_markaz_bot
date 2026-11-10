@@ -81,12 +81,13 @@ async def teacher_share(s, st: Staff, start: datetime, end: datetime) -> tuple[i
             cond = c_ if cond is None else (cond | c_)
         rows = (await s.execute(select(Payment, Enrollment).join(Enrollment, Enrollment.id == Payment.enrollment_id)
                                 .where(Enrollment.group_id == g.id, Payment.status == "tasdiq", Payment.amount > 0,
-                                       cond))).all()
+                                       cond).options(selectinload(Enrollment.student)))).all()
         base = 0
         for p, e in rows:
-            disc = Discount(e.discount_kind, e.discount_percent)
-            if e.discount_kind == "markaz" and e.discount_percent:
-                payable_full = 100 - e.discount_percent
+            from app import services as _S
+            pct = _S.discount_pct(e, await _S.enrollment_fee(s, e)) if e.discount_amount else e.discount_percent
+            if e.discount_kind == "markaz" and pct:
+                payable_full = 100 - pct
                 base += round(p.amount * 100 / payable_full) if payable_full > 0 else p.amount
             else:
                 base += p.amount        # ijtimoiy: shartli to'lov to'liq narxda yozilgan

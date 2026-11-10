@@ -105,6 +105,7 @@ class Enrollment(Base):
     tier: Mapped[int | None] = mapped_column(Integer)             # 1/2/3 — narx toifadan (tarix bilan)
     discount_kind: Mapped[str] = mapped_column(String(20), default="none")
     discount_percent: Mapped[int] = mapped_column(Integer, default=0)
+    discount_amount: Mapped[int | None] = mapped_column(Integer)   # chegirma summada (oyiga, so'm); bo'lsa foiz o'rniga
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     left_date: Mapped[date | None] = mapped_column(Date)
     student: Mapped[Student] = relationship(back_populates="enrollments")

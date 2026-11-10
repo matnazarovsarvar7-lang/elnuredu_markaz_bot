@@ -49,7 +49,7 @@ def month_due(fee: int, join: date, year: int, month: int, pattern: str, step: i
 @dataclass(frozen=True)
 class Discount:
     kind: str = "none"   # none | markaz | umumiy | ijtimoiy
-    percent: int = 0     # 0–100
+    percent: float = 0   # 0–100 (summa chegirmasi oylik narxga nisbatan foizga aylantiriladi)
 
     def payable(self, gross: int, step: int = 1000) -> int:
         if self.kind == "ijtimoiy":

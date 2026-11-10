@@ -343,6 +343,7 @@ async def quick_search(m: Message, state: FSMContext) -> None:
         if not who.staff or who.staff.current_role not in ("moliya", "rahbar", "admin"):
             return
         found = await S.search_students(s, m.text or "") if len((m.text or "").strip()) >= 2 else []
+        labels = await S.student_labels(s, found) if found else {}
     role = who.staff.current_role
     if not found:
         await m.answer("Tushunmadim. Menyudagi tugmani tanlang yoki o'quvchi ismini yozing (kamida 2 harf).")
@@ -350,9 +351,9 @@ async def quick_search(m: Message, state: FSMContext) -> None:
     if role in ("moliya", "rahbar"):
         from app.bot.payments import Pay
         await state.set_state(Pay.search)       # tanlansa — darhol to'lov ekrani
-        kb = [[IB(text=f"💵 {x.full_name}", callback_data=f"ps:{x.id}"),
-               IB(text="👤 Kartasi", callback_data=f"st:{x.id}")] for x in found]
-        await m.answer("🔎 Topildi. 💵 — to'lov kiritish, 👤 — kartasi:", reply_markup=IM(inline_keyboard=kb))
+        kb = [[IB(text=f"💵 {labels[x.id]}", callback_data=f"ps:{x.id}")] for x in found]
+        await m.answer("🔎 Topildi — to'lov uchun tanlang (kartasi to'lov ekranida «👤 Kartasi»):",
+                       reply_markup=IM(inline_keyboard=kb))
     else:
-        kb = [[IB(text=x.full_name, callback_data=f"st:{x.id}")] for x in found]
+        kb = [[IB(text=labels[x.id], callback_data=f"st:{x.id}")] for x in found]
         await m.answer("🔎 Topildi — kartasini ochish uchun tanlang:", reply_markup=IM(inline_keyboard=kb))

@@ -168,8 +168,10 @@ async def student_search(m: Message, state: FSMContext) -> None:
         await m.answer("Topilmadi. Boshqacha yozib ko'ring.")
         return
     await state.clear()
-    await m.answer("Tanlang:", reply_markup=IM(inline_keyboard=[[IB(text=x.full_name, callback_data=f"st:{x.id}")]
-                                                              for x in found]))
+    async with Session() as s:
+        labels = await S.student_labels(s, found)
+    await m.answer("Tanlang (guruhi va ota-ona telefoni oxiriga qarang):", reply_markup=IM(inline_keyboard=[
+        [IB(text=labels[x.id], callback_data=f"st:{x.id}")] for x in found]))
 
 
 async def _student_card(sid: int, role: str) -> tuple[str, IM]:
@@ -179,7 +181,7 @@ async def _student_card(sid: int, role: str) -> tuple[str, IM]:
         stu = await s.get(Student, sid, options=[selectinload(Student.parents)], populate_existing=True)
         par = ", ".join(p.phone + (" (botda)" if p.tg_id else "") for p in stu.parents) or "—"
     grp = "\n".join(f"• {e.group.name} — {S.fmt_som(fees[e.id])}" + (" (istisno narx)" if e.price_override else "")
-                    + (f", {DISC[e.discount_kind]} {e.discount_percent}%" if e.discount_kind != "none" else "")
+                    + (f", chegirma: {S.discount_label(e)}" if e.discount_kind != "none" else "")
                     for e in enrs) or "—"
     grade = "—" if not stu.grade else ("bitirgan / katta" if stu.grade > 11 else f"{stu.grade}-sinf")
     text = (f"<b>{stu.full_name}</b>\nSinf: {grade} · Hudud: {stu.region or '—'}\n"
@@ -541,32 +543,58 @@ async def disc_kind_set(c: CallbackQuery, state: FSMContext) -> None:
     if kind in ("none", "ijtimoiy"):
         await _save_disc(c.message, c.from_user.id, int(eid), kind, 100 if kind == "ijtimoiy" else 0)
         return
+    async with Session() as s:
+        e = await s.get(Enrollment, int(eid), options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])
+        fee = await S.enrollment_fee(s, e)
     await state.set_state(Ed.disc_pct)
-    await state.update_data(eid=int(eid), kind=kind)
-    await c.message.answer("Chegirma foizini yozing (masalan 20):")
+    await state.update_data(eid=int(eid), kind=kind, fee=fee)
+    await c.message.answer(f"Oylik narx: {S.fmt_som(fee)}.\nChegirmani yozing:\n"
+                           "• <b>foiz</b> bilan — masalan <code>20%</code>\n"
+                           "• <b>summa</b> bilan (oyiga necha so'm kam to'laydi) — masalan <code>50000</code>")
+
+
+def parse_discount(text: str, fee: int) -> tuple[str, int] | str:
+    """('pct', 20) yoki ('sum', 50000) yoki xato matni. 100 gacha son — foiz, 1000 dan katta — summa."""
+    t = (text or "").replace(" ", "").replace(",", "").lower()
+    digits = "".join(ch for ch in t if ch.isdigit())
+    if not digits:
+        return "Raqam yozing: 20% yoki 50000"
+    n = int(digits)
+    if "%" in t or n <= 100:
+        return ("pct", n) if 1 <= n <= 100 else "Foiz 1 dan 100 gacha bo'lsin."
+    if n < 1000:
+        return "Summani to'liq yozing (masalan 50000) yoki foiz uchun % qo'ying (masalan 20%)."
+    if fee and n >= fee:
+        return f"Chegirma oylik narxdan ({S.fmt_som(fee)}) kam bo'lsin. To'liq ozod qilish uchun «Ijtimoiy (100%)» ni tanlang."
+    return ("sum", n)
 
 
 @router.message(Ed.disc_pct)
 async def disc_pct(m: Message, state: FSMContext) -> None:
-    digits = "".join(ch for ch in (m.text or "") if ch.isdigit())
-    pct = int(digits) if digits else -1
-    if not 1 <= pct <= 100:
-        await m.answer("1 dan 100 gacha raqam yozing.")
-        return
     d = await state.get_data()
+    res = parse_discount(m.text or "", d.get("fee") or 0)
+    if isinstance(res, str):
+        await m.answer(res)
+        return
     await state.clear()
-    await _save_disc(m, m.from_user.id, d["eid"], d["kind"], pct)
+    kind_v, val = res
+    await _save_disc(m, m.from_user.id, d["eid"], d["kind"], val if kind_v == "pct" else 0,
+                     amount=val if kind_v == "sum" else None)
 
 
-async def _save_disc(msg: Message, tg_id: int, eid: int, kind: str, pct: int) -> None:
+async def _save_disc(msg: Message, tg_id: int, eid: int, kind: str, pct: int, amount: int | None = None) -> None:
     async with Session() as s:
         e = await s.get(Enrollment, eid, options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])
-        e.discount_kind, e.discount_percent = kind, pct
+        e.discount_kind, e.discount_percent, e.discount_amount = kind, pct, amount
         who = await S.who_by_tg(s, tg_id)
-        await S.audit(s, who.staff, "chegirma", student=e.student.full_name, group=e.group.name, kind=kind, pct=pct)
+        await S.audit(s, who.staff, "chegirma", student=e.student.full_name, group=e.group.name, kind=kind, pct=pct,
+                      amount=amount)
         await s.commit()
-    await msg.answer(f"Saqlandi ✅ {e.student.full_name} · {e.group.name}: {DISC[kind]}"
-                     + (f" {pct}%" if kind in ("markaz", "umumiy") else ""))
+        fee = await S.enrollment_fee(s, e)
+        label = S.discount_label(e)
+    pay = fee - amount if amount else round(fee * (100 - pct) / 100) if kind in ("markaz", "umumiy") else (0 if kind == "ijtimoiy" else fee)
+    await msg.answer(f"Saqlandi ✅ {e.student.full_name} · {e.group.name}: {label or DISC[kind]}\n"
+                     f"To'liq oy uchun to'lov: <b>{S.fmt_som(pay)}</b> (narx {S.fmt_som(fee)}).")
 
 
 # ---------- xodimlar (rahbar) ----------
