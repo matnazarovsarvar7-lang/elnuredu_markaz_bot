@@ -439,6 +439,32 @@ async def duplicate_receipt(s: AsyncSession, receipt_hash: str) -> bool:
                                                      Payment.status != "rad"))).first() is not None
 
 
+async def receipt_uses(s: AsyncSession, receipt_hash: str) -> list[tuple[int, str, int]]:
+    """Shu chek bilan avval kiritilgan to'lovlar: (student_id, ism, summa) — o'quvchi bo'yicha jamlangan."""
+    base = (await s.execute(select(Payment.id, Payment.batch).where(
+        Payment.receipt_hash == receipt_hash, Payment.status != "rad", Payment.amount > 0,
+        Payment.voided_at.is_(None)))).all()
+    ids = [i for i, _ in base] or [0]
+    batches = [b for _, b in base if b] or ["-"]
+    rows = (await s.execute(select(Enrollment.student_id, Student.full_name, Payment.amount)
+                            .join(Enrollment, Enrollment.id == Payment.enrollment_id)
+                            .join(Student, Student.id == Enrollment.student_id)
+                            .where(Payment.id.in_(ids) | Payment.batch.in_(batches), Payment.status != "rad",
+                                   Payment.amount > 0, Payment.voided_at.is_(None)))).all()
+    agg: dict[int, list] = {}
+    for sid, name, amt in rows:
+        agg.setdefault(sid, [sid, name, 0])[2] += amt
+    return [tuple(v) for v in agg.values()]
+
+
+async def are_siblings(s: AsyncSession, a: int, b: int) -> bool:
+    """Ikki o'quvchining umumiy ota-onasi (telefoni) bormi."""
+    from app.db.models import StudentParent
+    pa = set((await s.execute(select(StudentParent.parent_id).where(StudentParent.student_id == a))).scalars())
+    pb = set((await s.execute(select(StudentParent.parent_id).where(StudentParent.student_id == b))).scalars())
+    return bool(pa & pb)
+
+
 async def confirm_payment(s: AsyncSession, pay: Payment, by: Staff) -> int:
     enr = await s.get(Enrollment, pay.enrollment_id, options=[selectinload(Enrollment.group),
                                                              selectinload(Enrollment.student)])

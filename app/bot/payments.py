@@ -64,9 +64,9 @@ async def pay_start(m: Message, state: FSMContext) -> None:
 
 
 @router.message(Pay.search)
-async def pay_search(m: Message, state: FSMContext) -> None:
+async def pay_search(m: Message, state: FSMContext, text: str | None = None) -> None:
     async with Session() as s:
-        found = await S.search_students(s, m.text or "")
+        found = await S.search_students(s, text if text is not None else (m.text or ""))
         labels = await S.student_labels(s, found) if len(found) > 1 else {}
     if not found:
         await m.answer("Topilmadi. Boshqacha yozib ko'ring (kamida 2 harf).")
@@ -421,12 +421,19 @@ async def _save_pending(msg_or_cb_msg: Message, state: FSMContext, bot: Bot, tg_
         items = [(e.group.name, p.amount) for e, p in res]
         first = res[0][1]
         staff = bool(who.staff)
+        shared = ""
+        if file_hash:
+            uses = await S.receipt_uses(s, file_hash)
+            if len(uses) > 1:
+                shared = ("\n\n📎 <b>Bitta chek — bir necha o'quvchi:</b>\n"
+                          + "\n".join(f"• {n}: {S.fmt_som(a)}" for _, n, a in uses)
+                          + f"\n<b>Jami: {S.fmt_som(sum(a for *_, a in uses))}</b> — chekdagi summa bilan solishtiring.")
         await s.commit()
     if staff:
         await _next_series(state, d)
     else:
         await state.clear()
-    caption = _pending_caption(d["name"], d["amount"], first.paid_date, items)
+    caption = _pending_caption(d["name"], d["amount"], first.paid_date, items) + shared
     for b in bosses:
         if file_id:
             await send_photo(bot, b, file_id, caption, reply_markup=_confirm_kb(first.id))
@@ -442,14 +449,48 @@ async def pay_receipt(m: Message, state: FSMContext, bot: Bot) -> None:
         await m.answer("Chekni rasm yoki PDF fayl qilib yuboring (Click, Payme, Xazna, bank ilovasi cheki).")
         return
     fid, uid = rc
+    d = await state.get_data()
     async with Session() as s:
-        if await S.duplicate_receipt(s, uid):
-            await m.answer("⚠️ Bu chek avval yuborilgan. Boshqa chek rasmini yuboring yoki admin bilan bog'laning.")
-            return
+        uses = await S.receipt_uses(s, uid)
+        others = [u for u in uses if u[0] != d.get("sid")]
+        same_student = [u for u in uses if u[0] == d.get("sid")]
+        sib = bool(others) and all([await S.are_siblings(s, u[0], d["sid"]) for u in others])
+    if same_student and not others:
+        await m.answer(f"⚠️ Bu chek shu o'quvchi uchun avval kiritilgan ({S.fmt_som(same_student[0][2])}). "
+                       "Ikki marta kiritilmasin — boshqa chek yuboring yoki menyudan chiqing.")
+        return
+    if others and not sib:
+        used = ", ".join(f"{n} — {S.fmt_som(a)}" for _, n, a in others)
+        await state.update_data(rc_fid=fid, rc_uid=uid)
+        await m.answer(f"⚠️ Bu chek avval boshqa o'quvchi uchun ishlatilgan: {used}.\n"
+                       "Agar bitta o'tkazma bilan bir necha o'quvchi uchun to'langan bo'lsa — davom eting, "
+                       "rahbar chekdagi umumiy summani tekshiradi.",
+                       reply_markup=IM(inline_keyboard=[
+                           [IB(text="✅ Ha, bitta chek — bir necha o'quvchi", callback_data="prcu")],
+                           [IB(text="❌ Yo'q, boshqa chek yuboraman", callback_data="prcn")]]))
+        return
     await _save_pending(m, state, bot, m.from_user.id, fid, uid)
     tail = ("\n\n➡️ <b>Keyingi o'quvchi ismini yozing</b> (tugatish — menyudagi istalgan tugma)."
             if await state.get_state() == Pay.search.state else "")
     await m.answer("✅ Chek qabul qilindi. Rahbar tasdiqlagach, to'lov hisobga olinadi va xabar keladi." + tail)
+
+
+@router.callback_query(F.data.in_({"prcu", "prcn"}))
+async def pay_receipt_shared(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    d = await state.get_data()
+    if not d.get("rc_uid") or await state.get_state() != Pay.receipt.state:
+        await c.answer("Eskirgan. Chekni qayta yuboring.", show_alert=True)
+        return
+    await c.answer()
+    if c.data == "prcn":
+        await state.update_data(rc_fid=None, rc_uid=None)
+        await c.message.edit_text("Boshqa chekni yuboring (rasm yoki PDF).")
+        return
+    await c.message.edit_text("✅ Bitta chek bir necha o'quvchi uchun — rahbar umumiy summani tekshiradi.")
+    await _save_pending(c.message, state, bot, c.from_user.id, d["rc_fid"], d["rc_uid"])
+    tail = ("\n\n➡️ <b>Keyingi o'quvchi ismini yozing</b> (tugatish — menyudagi istalgan tugma)."
+            if await state.get_state() == Pay.search.state else "")
+    await c.message.answer("✅ Chek qabul qilindi. Rahbar tasdiqlagach hisobga olinadi." + tail)
 
 
 @router.callback_query(F.data == "nochek")
@@ -460,8 +501,33 @@ async def pay_no_receipt(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
 
 
 @router.message(Pay.receipt)
-async def pay_receipt_wrong(m: Message) -> None:
-    await m.answer("Iltimos, chekni rasm (skrinshot) yoki PDF fayl qilib yuboring. Bekor qilish: /start")
+async def pay_receipt_wrong(m: Message, state: FSMContext) -> None:
+    who = await _who(m.from_user.id)
+    txt = (m.text or "").strip()
+    if who.staff and len(txt) >= 2 and not any(ch.isdigit() for ch in txt):
+        d = await state.get_data()
+        await state.update_data(skip_to=txt[:60])
+        await m.answer(f"⏳ {d.get('name', '')} · {S.fmt_som(d.get('amount', 0))} — hali saqlanmadi, chek kutilmoqda.\n"
+                       "Nima qilamiz?", reply_markup=IM(inline_keyboard=[
+                           [IB(text="📎 Chek yo'q — rahbar tekshirsin (saqlash)", callback_data="nochek")],
+                           [IB(text=f"⏭ Saqlamasdan «{txt[:20]}» ni qidirish", callback_data="prskip")]]))
+        return
+    await m.answer("Chekni rasm (skrinshot) yoki PDF fayl qilib yuboring.\n"
+                   "Chek bo'lmasa — «Chek yo'q — rahbar tekshirsin» tugmasi; chiqish — menyudagi istalgan tugma.")
+
+
+@router.callback_query(F.data == "prskip")
+async def pay_skip(c: CallbackQuery, state: FSMContext) -> None:
+    d = await state.get_data()
+    txt = d.get("skip_to")
+    await c.answer()
+    await state.clear()
+    await state.set_state(Pay.search)
+    if d.get("last"):
+        await state.update_data(last=d["last"])
+    await c.message.edit_text(f"⏭ {d.get('name', '')} uchun to'lov saqlanmadi.")
+    if txt:
+        await pay_search(c.message, state, text=txt)
 
 
 # ---------- 4. rahbar tasdig'i ----------
@@ -490,12 +556,18 @@ async def pending(m: Message, bot: Bot) -> None:
             seen.add(key)
             name, pays, items, _ = await _batch_view(s, p)
             head = next((x for x in pays if x.receipt_file_id), pays[0])
-            views.append((head, name, sum(x.amount for x in pays), items))
+            shared = ""
+            if head.receipt_hash:
+                uses = await S.receipt_uses(s, head.receipt_hash)
+                if len(uses) > 1:
+                    shared = ("\n\n📎 Bitta chek: " + ", ".join(f"{n} {S.fmt_som(a)}" for _, n, a in uses)
+                              + f" — jami {S.fmt_som(sum(a for *_, a in uses))}")
+            views.append((head, name, sum(x.amount for x in pays), items, shared))
     if not views:
         await m.answer("Tasdiq kutayotgan narsa yo'q ✅")
         return
-    for head, name, total, items in views:
-        cap = _pending_caption(name, total, head.paid_date, items)
+    for head, name, total, items, shared in views:
+        cap = _pending_caption(name, total, head.paid_date, items) + shared
         if head.receipt_file_id:
             await send_photo(bot, m.chat.id, head.receipt_file_id, cap, reply_markup=_confirm_kb(head.id))
         else:
