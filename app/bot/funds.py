@@ -4,9 +4,11 @@ Har oyning 1-sanasi 09:10 da rahbar kassasidagi pul (oy oxiri — 00:00 holati) 
 boshlanadi. Navbat:
   1) 💼 Oylik zaxirasi — hali berilmagan oyliklar (oylik shu fonddan beriladi);
   2) 🏆 Yillik bonus fondi — tushumning 1% i (berilgan bonuslardan qolgani) + ushlangan jarimalar;
-  3) qolgan sof pul: 🤲 Ehson 5% · 🛡 Moliyaviy yostiq 20% · 🚀 Rivojlanish 25% · 👤 Egasining ulushi 50%.
-Yostiq 3 oylik zarur xarajatga yetgach, uning ulushi rivojlanishga o'tadi.
-Kassada oyliklarga yetmasa — yostiqdan olinadi va rahbar ogohlantiriladi.
+  3) qolgan sof pul: 🤲 Ehson 5% · 🛡 Moliyaviy yostiq 20% · 🚀 Rivojlanish 5% · 📈 Investitsiya 20% ·
+     👤 Egasining ulushi 50%  (rivojlanish uchun 25% ning 80% i investitsiyaga — rahbar qarori).
+Yostiq 3 oylik zarur xarajatga yetgach, uning 20% ulushi to'liq investitsiyaga o'tadi.
+Oyliklarga yetmasa — avval yostiqdan, keyin investitsiya fondidagi (hali aksiyaga qo'yilmagan) puldan olinadi;
+shunda ham yetmasa — rahbar ogohlantiriladi (aksiya sotish kerak bo'lishi mumkin).
 Fonddan pul faqat sabab bilan, rahbar tomonidan olinadi (PIN)."""
 from __future__ import annotations
 
@@ -33,8 +35,9 @@ TZ = ZoneInfo(settings.timezone)
 SHIFT = timedelta(hours=5)
 
 FUNDS = {"oylik": "💼 Oylik zaxirasi", "yillik": "🏆 Yillik bonus fondi", "ehson": "🤲 Ehson",
-         "yostiq": "🛡 Moliyaviy yostiq", "rivoj": "🚀 Rivojlanish va filial", "egasi": "👤 Egasining ulushi"}
-SPLIT = {"ehson": 0.05, "yostiq": 0.20, "rivoj": 0.25, "egasi": 0.50}
+         "yostiq": "🛡 Moliyaviy yostiq", "rivoj": "🚀 Rivojlanish va filial", "invest": "📈 Investitsiya (aksiyalar)",
+         "egasi": "👤 Egasining ulushi"}
+SPLIT = {"ehson": 0.05, "yostiq": 0.20, "rivoj": 0.05, "invest": 0.20, "egasi": 0.50}
 CUSHION_MONTHS = 3
 MONTHS_UZ = ["", "Yanvar", "Fevral", "Mart", "Aprel", "May", "Iyun", "Iyul", "Avgust", "Sentabr", "Oktabr", "Noyabr", "Dekabr"]
 
@@ -131,10 +134,13 @@ async def plan(s, month: str, until_utc: datetime | None = None) -> dict | None:
     unpaid, who = await unpaid_salaries(s, month)
     need_oylik = max(0, unpaid - bal["oylik"])
     need_yil = await yillik_add(s, month)
-    avail, from_cushion = kassa, 0
-    if avail < need_oylik:                                 # oyliklarga yetmasa — yostiqdan
+    avail, from_cushion, from_invest = kassa, 0, 0
+    if avail < need_oylik:                                 # oyliklarga yetmasa — avval yostiqdan
         from_cushion = max(0, min(bal["yostiq"], need_oylik - avail))
         avail += from_cushion
+    if avail < need_oylik:                                 # keyin investitsiya fondidagi (aksiyaga qo'yilmagan) puldan
+        from_invest = max(0, min(bal["invest"], need_oylik - avail))
+        avail += from_invest
     parts = {k: 0 for k in FUNDS}
     parts["oylik"] = max(0, min(avail, need_oylik))
     avail -= parts["oylik"]
@@ -152,21 +158,22 @@ async def plan(s, month: str, until_utc: datetime | None = None) -> dict | None:
         want = round(base * SPLIT["yostiq"])
         room = max(0, cap - (bal["yostiq"] - from_cushion))
         parts["yostiq"] = min(want, room)
-        parts["rivoj"] = round(base * SPLIT["rivoj"]) + (want - parts["yostiq"])
-        owner_total = base - parts["ehson"] - parts["yostiq"] - parts["rivoj"]
+        parts["rivoj"] = round(base * SPLIT["rivoj"])
+        parts["invest"] = round(base * SPLIT["invest"]) + (want - parts["yostiq"])   # to'lgan yostiq ulushi ham
+        owner_total = base - parts["ehson"] - parts["yostiq"] - parts["rivoj"] - parts["invest"]
         parts["egasi"] = owner_total - draws
         if parts["egasi"] < 0:                # egasi ulushidan ko'p olgan — boshqa fondlar kamroq to'ladi
             over = -parts["egasi"]
             parts["egasi"] = 0
-            others = parts["ehson"] + parts["yostiq"] + parts["rivoj"]
+            others = parts["ehson"] + parts["yostiq"] + parts["rivoj"] + parts["invest"]
             k = rest / others if others else 0
-            for f in ("ehson", "yostiq"):
+            for f in ("ehson", "yostiq", "rivoj"):
                 parts[f] = int(parts[f] * k)
-            parts["rivoj"] = rest - parts["ehson"] - parts["yostiq"]
+            parts["invest"] = rest - parts["ehson"] - parts["yostiq"] - parts["rivoj"]
     short = max(0, need_oylik - parts["oylik"])
-    return {"month": month, "kassa": kassa, "cash": cash, "card": card, "parts": parts, "from_cushion": from_cushion, "unpaid": unpaid,
+    return {"month": month, "kassa": kassa, "cash": cash, "card": card, "parts": parts, "from_cushion": from_cushion, "from_invest": from_invest, "unpaid": unpaid,
             "unpaid_list": who, "need_yil": need_yil, "rest": rest, "cap": cap, "short": short,
-            "left": kassa + from_cushion - sum(parts.values()), "before": bal,
+            "left": kassa + from_cushion + from_invest - sum(parts.values()), "before": bal,
             "draws": draws, "owner_total": owner_total, "over": over, "base": base}
 
 
@@ -178,6 +185,8 @@ def plan_text(p: dict, done: bool) -> str:
                    f"karta {S.fmt_som(p.get('card', 0))})", ""]
     if p["from_cushion"]:
         lines.append(f"⚠️ Oyliklarga yetmadi — yostiqdan olindi: {S.fmt_som(p['from_cushion'])}")
+    if p.get("from_invest"):
+        lines.append(f"⚠️ Yostiq ham yetmadi — investitsiya fondidan olindi: {S.fmt_som(p['from_invest'])}")
     lines.append(f"1️⃣ {FUNDS['oylik']}: <b>{S.fmt_som(pt['oylik'])}</b>"
                  + (f" (berilmagan oyliklar {S.fmt_som(p['unpaid'])})" if p["unpaid"] else ""))
     lines.append(f"2️⃣ {FUNDS['yillik']}: <b>{S.fmt_som(pt['yillik'])}</b>")
@@ -187,10 +196,10 @@ def plan_text(p: dict, done: bool) -> str:
                      f"oy davomida o'zingiz olgan {S.fmt_som(dr)}")
     else:
         lines.append(f"3️⃣ Sof foyda: <b>{S.fmt_som(p['rest'])}</b>")
-    for k in ("ehson", "yostiq", "rivoj"):
+    for k in ("ehson", "yostiq", "rivoj", "invest"):
         extra = ""
         if k == "yostiq" and pt["yostiq"] < round(p.get("base", p["rest"]) * SPLIT["yostiq"]) and not p.get("over"):
-            extra = " (yostiq to'lgan — ortig'i rivojga)"
+            extra = " (3 oylik to'lgan — ortig'i investitsiyaga)"
         lines.append(f"   {FUNDS[k]} ({SPLIT[k] * 100:.0f}%): <b>{S.fmt_som(pt[k])}</b>{extra}")
     if dr:
         lines.append(f"   {FUNDS['egasi']} (50%): {S.fmt_som(p['owner_total'])} − oldin olgansiz {S.fmt_som(dr)} "
@@ -201,7 +210,8 @@ def plan_text(p: dict, done: bool) -> str:
         lines.append(f"\n⚠️ Siz ulushingizdan <b>{S.fmt_som(p['over'])}</b> ko'p olgansiz — shuncha pul boshqa fondlarga "
                      "yetmadi (ular kamroq to'ldi).")
     if p["short"]:
-        lines.append(f"\n🔴 Oyliklar uchun yana <b>{S.fmt_som(p['short'])}</b> yetmaydi!")
+        lines.append(f"\n🔴 Oyliklar uchun yana <b>{S.fmt_som(p['short'])}</b> yetmaydi! "
+                     "Yostiq va investitsiya fondi tugadi — aksiyalarning bir qismini sotish kerak bo'ladi.")
     lines.append(f"\n👤 Sizda: <b>{S.fmt_som(p['left'] if done else p['kassa'])}</b>"
                  + (" — yangi oy 0 dan boshlandi." if done and p["left"] == 0 else ""))
     return "\n".join(lines)
@@ -220,10 +230,12 @@ async def distribute(month: str, by_id: int | None = None) -> dict | None:
         note = f"{month_name(month)} taqsimoti"
         if p["from_cushion"]:
             await fund_move(s, "yostiq", None, p["from_cushion"], note + ": oyliklarga", by_id)
+        if p.get("from_invest"):
+            await fund_move(s, "invest", None, p["from_invest"], note + ": oyliklarga", by_id)
         for k, v in p["parts"].items():
             if v:
                 s.add(KassaMove(kassa=f"fond_{k}", amount=v, kind="taqsimot", note=note, by_id=by_id))
-        moved = sum(p["parts"].values()) - p["from_cushion"]
+        moved = sum(p["parts"].values()) - p["from_cushion"] - p.get("from_invest", 0)
         from_cash = min(max(0, p["cash"]), moved) if moved > 0 else moved   # avval naqddan, qolgani kartadan
         from_card = moved - from_cash
         if from_cash:
@@ -302,7 +314,8 @@ async def funds_text(s) -> str:
 
 
 def funds_kb() -> IM:
-    return IM(inline_keyboard=[[IB(text="📅 Oylar bo'yicha foyda (yil)", callback_data="fdh")],
+    return IM(inline_keyboard=[[IB(text="📈 Investitsiya (aksiyalar)", callback_data="fdi")],
+                               [IB(text="📅 Oylar bo'yicha foyda (yil)", callback_data="fdh")],
                                [IB(text="📊 Shu oy taqsimoti (taxminiy)", callback_data="fdp")],
                                [IB(text="➖ Fonddan pul olish / sarflash", callback_data="fdw")],
                                [IB(text="📋 Fond harakatlari", callback_data="fdl")]])
@@ -369,7 +382,7 @@ async def fw_pick(c: CallbackQuery) -> None:
     await c.answer()
     await c.message.answer("Qaysi fonddan?", reply_markup=IM(inline_keyboard=[
         [IB(text=f"{FUNDS[k]} · {S.fmt_som(bal[k])}", callback_data=f"fwf:{k}")]
-        for k in ("egasi", "ehson", "rivoj", "yostiq", "yillik")]))
+        for k in ("egasi", "ehson", "rivoj", "invest", "yostiq", "yillik")]))
 
 
 @router.callback_query(F.data.startswith("fwf:"))
@@ -393,7 +406,8 @@ async def fw_amount(m: Message, state: FSMContext) -> None:
     d = await state.get_data()
     hint = {"egasi": "Izoh (masalan: o'z ulushimni oldim)", "ehson": "Kimga / nimaga ehson?",
             "rivoj": "Nimaga sarflandi? (masalan: proyektor, ta'mir)", "yostiq": "Nima uchun yostiqdan olindi?",
-            "yillik": "Nima uchun? (yillik bonuslar oy yopilganda o'zi beriladi)"}[d["fund"]]
+            "yillik": "Nima uchun? (yillik bonuslar oy yopilganda o'zi beriladi)",
+            "invest": "Nima uchun? (aksiyaga qo'yish uchun «📈 Investitsiya» bo'limidagi tugmadan foydalaning)"}[d["fund"]]
     await m.answer(hint)
 
 
@@ -490,4 +504,170 @@ async def funds_history(c: CallbackQuery) -> None:
         if best:
             lines.append(f"🏆 Eng yaxshi: {month_name(best)} · 🔻 Eng past: {month_name(worst)}" if worst else
                          f"🏆 Eng yaxshi: {month_name(best)}")
+    await c.message.answer("\n".join(lines)[:3900])
+
+
+# ---------- 📈 investitsiya: aksiyaga qo'yilgan pul, portfel qiymati, natija ----------
+async def invest_info(s) -> dict:
+    async def tot(q):
+        return int((await s.execute(q)).scalar() or 0)
+    bought = await tot(select(func.coalesce(func.sum(KassaMove.amount), 0)).where(
+        KassaMove.kassa == "portfel", KassaMove.amount > 0))
+    back = -await tot(select(func.coalesce(func.sum(KassaMove.amount), 0)).where(
+        KassaMove.kassa == "portfel", KassaMove.amount < 0))
+    row = await s.get(Setting, "invest_value")
+    value = int(row.value["v"]) if row else None
+    at = row.value.get("at") if row else None
+    res = (value if value is not None else bought - back) + back - bought
+    return {"cash": await balance(s, "invest"), "bought": bought, "back": back, "value": value, "at": at,
+            "result": res, "pct": res / bought * 100 if bought else 0}
+
+
+def invest_text(i: dict) -> str:
+    lines = ["📈 <b>Investitsiya (aksiyalar)</b>", "",
+             f"Fondda (aksiyaga qo'yishga tayyor): <b>{S.fmt_som(i['cash'])}</b>", "",
+             f"Jami aksiyaga qo'yilgan: {S.fmt_som(i['bought'])}"]
+    if i["back"]:
+        lines.append(f"Qaytgan pul (dividend, sotuv): {S.fmt_som(i['back'])}")
+    if i["value"] is not None:
+        lines.append(f"Portfelning hozirgi qiymati: <b>{S.fmt_som(i['value'])}</b> ({i['at']})")
+        sign = "+" if i["result"] >= 0 else ""
+        lines.append(f"Natija: <b>{sign}{S.fmt_som(i['result'])} ({sign}{i['pct']:.1f}%)</b>"
+                     + (" 🟢" if i["result"] > 0 else " 🔴" if i["result"] < 0 else ""))
+    elif i["bought"]:
+        lines.append("<i>Portfel qiymati hali kiritilmagan — «📊 Qiymatni yangilash».</i>")
+    lines += ["", "<i>Qoida: oyliklarga pul yetmasa — avval yostiq, keyin shu fonddagi naqd ishlatiladi; "
+              "ular ham tugasa, bot aksiya sotishni eslatadi.</i>"]
+    return "\n".join(lines)
+
+
+def invest_kb() -> IM:
+    return IM(inline_keyboard=[[IB(text="💸 Aksiyaga qo'ydim (brokerga o'tkazdim)", callback_data="fi:buy")],
+                               [IB(text="📊 Portfel qiymatini yangilash", callback_data="fi:val")],
+                               [IB(text="💵 Dividend / sotuvdan pul keldi", callback_data="fi:ret")],
+                               [IB(text="📋 Investitsiya tarixi", callback_data="fi:log")]])
+
+
+@router.callback_query(F.data == "fdi")
+async def invest_view(c: CallbackQuery) -> None:
+    if not await _is_boss(c.from_user.id):
+        await c.answer("Faqat rahbar.", show_alert=True)
+        return
+    async with Session() as s:
+        i = await invest_info(s)
+    await c.answer()
+    await c.message.answer(invest_text(i), reply_markup=invest_kb())
+
+
+class Fi(StatesGroup):
+    amount = State()
+    note = State()
+
+
+FI_ASK = {"buy": "💸 Brokerga qancha o'tkazdingiz (so'mda)? Summani yozing:",
+          "val": "📊 Portfelingiz hozir jami qancha turadi (so'mga aylantirib)? Summani yozing:",
+          "ret": "💵 Qancha pul qaytdi (dividend yoki aksiya sotuvidan, so'mda)? Summani yozing:"}
+
+
+@router.callback_query(F.data.in_({"fi:buy", "fi:val", "fi:ret"}))
+async def fi_ask(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _is_boss(c.from_user.id):
+        await c.answer("Faqat rahbar.", show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(Fi.amount)
+    await state.update_data(act=c.data.split(":")[1])
+    await c.answer()
+    await c.message.answer(FI_ASK[c.data.split(":")[1]])
+
+
+@router.message(Fi.amount)
+async def fi_amount(m: Message, state: FSMContext) -> None:
+    a = _amount(m.text)
+    if not a:
+        await m.answer("Summani raqam bilan yozing: 5000000")
+        return
+    await state.update_data(amount=a)
+    await state.set_state(Fi.note)
+    d = await state.get_data()
+    await m.answer({"buy": "Izoh: qaysi aksiyalar? (masalan: Apple, Microsoft, S&P 500 ETF)",
+                    "val": "Izoh (ixtiyoriy, masalan: dollar kursi 12 800). Yo'q bo'lsa — «-»",
+                    "ret": "Izoh: dividendmi yoki sotuv? Qaysi aksiya?"}[d["act"]])
+
+
+@router.message(Fi.note)
+async def fi_note(m: Message, state: FSMContext) -> None:
+    d = await state.get_data()
+    d["note"] = (m.text or "").strip()[:250]
+    if d["note"] == "-":
+        d["note"] = ""
+    PENDING[m.from_user.id] = {**d, "kind": "fi"}
+    await state.clear()
+    title = {"buy": "💸 Aksiyaga qo'yildi", "val": "📊 Portfel qiymati", "ret": "💵 Investitsiyadan qaytdi"}[d["act"]]
+    await m.answer(f"{title}: <b>{S.fmt_som(d['amount'])}</b>" + (f"\nIzoh: {d['note']}" if d["note"] else "")
+                   + ("\n(PIN so'raladi)" if d["act"] == "buy" and d["amount"] >= 1_000_000 else ""),
+                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data="fiok"),
+                                                     IB(text="❌ Bekor", callback_data="fwno")]]))
+
+
+@router.callback_query(F.data == "fiok")
+async def fi_save(c: CallbackQuery, state: FSMContext) -> None:
+    from app.bot.pin import need_pin
+    st = await _is_boss(c.from_user.id)
+    d = PENDING.get(c.from_user.id)
+    if not st or not d or d.get("kind") != "fi":
+        await c.answer("Ma'lumot eskirgan, qaytadan boshlang.", show_alert=True)
+        return
+    if d["act"] == "buy" and await need_pin(c, state, d["amount"]):
+        return
+    a, note = d["amount"], d.get("note") or None
+    async with Session() as s:
+        if d["act"] == "buy":
+            cash = await balance(s, "invest")
+            if a > cash:
+                PENDING.pop(c.from_user.id, None)
+                await c.message.edit_text(f"❌ Investitsiya fondida faqat {S.fmt_som(cash)} bor.")
+                return
+            await fund_move(s, "invest", None, a, "Aksiyaga: " + (note or ""), st.id)
+            s.add(KassaMove(kassa="portfel", amount=a, kind="xarid", note=note, by_id=st.id))
+        elif d["act"] == "ret":
+            s.add(KassaMove(kassa="fond_invest", amount=a, kind="daromad", note="Qaytdi: " + (note or ""), by_id=st.id))
+            s.add(KassaMove(kassa="portfel", amount=-a, kind="qaytdi", note=note, by_id=st.id))
+        else:
+            row = await s.get(Setting, "invest_value")
+            val = {"v": a, "at": f"{now():%d.%m.%Y}", "note": note}
+            if row:
+                row.value = val
+            else:
+                s.add(Setting(key="invest_value", value=val))
+        await S.audit(s, st, "investitsiya_" + d["act"], amount=a, note=note)
+        await s.commit()
+        i = await invest_info(s)
+    PENDING.pop(c.from_user.id, None)
+    await c.answer("Saqlandi")
+    await c.message.edit_text("✅ Saqlandi.\n\n" + invest_text(i))
+
+
+@router.callback_query(F.data == "fi:log")
+async def fi_log(c: CallbackQuery) -> None:
+    if not await _is_boss(c.from_user.id):
+        await c.answer("Faqat rahbar.", show_alert=True)
+        return
+    async with Session() as s:
+        rows = (await s.execute(select(KassaMove).where(
+            (KassaMove.kassa == "portfel") | (KassaMove.kassa == "fond_invest")).order_by(KassaMove.id))).scalars().all()
+    lines = ["📋 <b>Investitsiya tarixi</b>", ""]
+    for x in rows[-50:]:
+        what = ("Aksiyaga qo'yildi" if x.kassa == "portfel" and x.amount > 0 else
+                "Qaytdi (dividend/sotuv)" if x.kassa == "portfel" else
+                "Fondga tushdi" if x.amount > 0 else "Fonddan chiqdi")
+        if x.kassa == "fond_invest" and x.kind == "fond" and x.note and x.note.startswith("Aksiyaga"):
+            continue                    # xaridning ikkinchi yarmi — bir marta ko'rsatamiz
+        if x.kassa == "fond_invest" and x.kind == "daromad":
+            continue
+        lines.append(f"{x.created_at + SHIFT:%d.%m.%Y} · {what} · <b>{S.fmt_som(abs(x.amount))}</b>"
+                     + (f" · {x.note}" if x.note and x.kassa == "portfel" else ""))
+    if len(lines) == 2:
+        lines.append("—")
+    await c.answer()
     await c.message.answer("\n".join(lines)[:3900])
