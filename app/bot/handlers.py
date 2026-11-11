@@ -357,3 +357,9 @@ async def quick_search(m: Message, state: FSMContext) -> None:
     else:
         kb = [[IB(text=labels[x.id], callback_data=f"st:{x.id}")] for x in found]
         await m.answer("🔎 Topildi — kartasini ochish uchun tanlang:", reply_markup=IM(inline_keyboard=kb))
+
+
+# ---------- menyu yo'qolsa: noto'g'ri buyruq (/strat, /menu ...) yoki "menyu" so'zi — menyuni qayta chiqaradi ----------
+@router.message(F.text.func(lambda t: t.strip().startswith("/") or t.strip().lower() in ("menyu", "menu", "меню", "start")))
+async def any_command(m: Message, state: FSMContext) -> None:
+    await start(m, state)

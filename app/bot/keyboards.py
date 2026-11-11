@@ -44,7 +44,7 @@ B_PARENT_PAY = "💳 To'lov chekini yuborish"
 def guest_kb() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_APPLY)],
                                          [KeyboardButton(text=B_CONTACT, request_contact=True)]],
-                               resize_keyboard=True)
+                               resize_keyboard=True, is_persistent=True)
 
 
 def contact_kb() -> ReplyKeyboardMarkup:
@@ -82,19 +82,19 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     else:
         rows.append([B_MY_TASKS, B_MY_SALARY])
     rows.append([B_HELP] + ([B_SWITCH] if multi else []))
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in r] for r in rows], resize_keyboard=True)
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in r] for r in rows], resize_keyboard=True, is_persistent=True)
 
 
 def parent_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD), KeyboardButton(text=B_HOMEWORK)],
                                          [KeyboardButton(text=B_PARENT_PAY), KeyboardButton(text=B_MARKET)],
-                                         [KeyboardButton(text=B_HELP)]], resize_keyboard=True)
+                                         [KeyboardButton(text=B_HELP)]], resize_keyboard=True, is_persistent=True)
 
 
 def student_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_ME), KeyboardButton(text=B_HOMEWORK)],
                                          [KeyboardButton(text=B_MARKET), KeyboardButton(text=B_HELP)]],
-                               resize_keyboard=True)
+                               resize_keyboard=True, is_persistent=True)
 
 
 def roles_kb(roles: list[str]) -> InlineKeyboardMarkup:
