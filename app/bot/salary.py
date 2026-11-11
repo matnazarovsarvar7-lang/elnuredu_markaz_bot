@@ -517,7 +517,8 @@ async def negative_notice(bot: Bot) -> None:
 
 
 # ================= 📈 foyda taqsimoti hisoboti =================
-async def profit_report(s, month: str, final: bool = False) -> str:
+async def profit_numbers(s, month: str) -> dict:
+    """Oy natijasi raqamlarda (hisobot, yillik solishtirish uchun)."""
     start, end = PR.period(month)
     y, m = map(int, month.split("-"))
     tushum = await PR.income(s, start, end)
@@ -545,6 +546,24 @@ async def profit_report(s, month: str, final: bool = False) -> str:
     before = tushum - teachers - okl - mol - rew - expenses
     after = before - bonus
     pct = after / tushum * 100 if tushum else 0
+    return {"tushum": tushum, "teachers": teachers, "okl": okl, "mol": mol, "rew": rew, "expenses": expenses,
+            "exp_rows": [(c, int(v)) for c, v in exp_rows], "bonus": bonus, "pool": pool, "before": before,
+            "after": after, "pct": pct}
+
+
+async def profit_report(s, month: str, final: bool = False) -> str:
+    n = await profit_numbers(s, month)
+    tushum, teachers, okl, mol, rew = n["tushum"], n["teachers"], n["okl"], n["mol"], n["rew"]
+    expenses, exp_rows, bonus, before, after, pct = (n["expenses"], n["exp_rows"], n["bonus"], n["before"],
+                                                     n["after"], n["pct"])
+    y, m = map(int, month.split("-"))
+    if final:                 # oy natijasi muhrlanadi — keyin xodim/oklad o'zgarsa ham tarix o'zgarmaydi
+        row = await s.get(Setting, f"profit_{month}")
+        snap = {k: v for k, v in n.items() if k != "exp_rows"}
+        if row:
+            row.value = snap
+        else:
+            s.add(Setting(key=f"profit_{month}", value=snap))
     lines = [f"📈 <b>Foyda taqsimoti · {month}</b>" + ("" if final else " (taxminiy, oy davom etmoqda)"),
              f"Tushum: {S.fmt_som(tushum)}",
              f"− O'qituvchilar ulushi: {S.fmt_som(teachers)}", f"− Okladlar: {S.fmt_som(okl)}",

@@ -21,7 +21,7 @@ WIPE = [(Payment, "to'lov"), (Expense, "xarajat"), (ServiceSale, "xizmat sotuvi"
         (CashClose, "kassa yopish"), (Payout, "oylik/avans"), (Payroll, "oylik hisobi"), (BonusLedger, "bonus yozuvi"),
         (KassaMove, "kassa/fond harakati")]
 KEYS = ["cash_opening", "kassa_v2"]
-LIKE = ["closed_%", "dist_%", "fund_%"]
+LIKE = ["closed_%", "dist_%", "fund_%", "profit_%"]
 
 
 async def is_test(s) -> bool:

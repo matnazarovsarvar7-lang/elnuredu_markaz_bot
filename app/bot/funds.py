@@ -231,7 +231,8 @@ async def distribute(month: str, by_id: int | None = None) -> dict | None:
         if from_card:
             s.add(KassaMove(kassa="karta", amount=-from_card, kind="fond", note=note, by_id=by_id))
         s.add(Setting(key=f"dist_{month}", value={"at": f"{now():%Y-%m-%d %H:%M}", "parts": p["parts"],
-                                                   "kassa": p["kassa"], "from_cushion": p["from_cushion"]}))
+                                                   "kassa": p["kassa"], "from_cushion": p["from_cushion"],
+                                                   "draws": p["draws"], "owner_total": p["owner_total"]}))
         await s.commit()
     return p
 
@@ -301,7 +302,8 @@ async def funds_text(s) -> str:
 
 
 def funds_kb() -> IM:
-    return IM(inline_keyboard=[[IB(text="📊 Shu oy taqsimoti (taxminiy)", callback_data="fdp")],
+    return IM(inline_keyboard=[[IB(text="📅 Oylar bo'yicha foyda (yil)", callback_data="fdh")],
+                               [IB(text="📊 Shu oy taqsimoti (taxminiy)", callback_data="fdp")],
                                [IB(text="➖ Fonddan pul olish / sarflash", callback_data="fdw")],
                                [IB(text="📋 Fond harakatlari", callback_data="fdl")]])
 
@@ -436,3 +438,56 @@ async def fw_save(c: CallbackQuery, state: FSMContext) -> None:
     PENDING.pop(c.from_user.id, None)
     await c.answer()
     await c.message.edit_text(f"✅ {FUNDS[d['fund']]}: −{S.fmt_som(d['amount'])} ({d['note']}). Qoldiq: {S.fmt_som(left)}")
+
+
+# ---------- 📅 oylar bo'yicha foyda: qaysi oy yaxshi, qaysi oy yomon ----------
+@router.callback_query(F.data == "fdh")
+async def funds_history(c: CallbackQuery) -> None:
+    from app.bot.salary import profit_numbers
+    if not await _is_boss(c.from_user.id):
+        await c.answer("Faqat rahbar.", show_alert=True)
+        return
+    cur = PR.current_month(now())
+    months, m = [], cur
+    for _ in range(12):
+        months.append(m)
+        m = PR.prev_month(m)
+    rows = []
+    async with Session() as s:
+        for mo in reversed(months):
+            snap = await s.get(Setting, f"profit_{mo}")
+            dist = await s.get(Setting, f"dist_{mo}")
+            if snap:
+                v = snap.value
+            elif mo == cur:
+                v = await profit_numbers(s, mo)
+            else:
+                continue
+            owner = None
+            if dist:
+                pt = dist.value.get("parts", {})
+                owner = dist.value.get("owner_total", pt.get("egasi", 0) + dist.value.get("draws", 0))
+            elif v["after"] > 0:
+                owner = round(v["after"] * SPLIT["egasi"])
+            rows.append((mo, v["tushum"], v["after"], v["pct"], owner, mo == cur))
+    await c.answer()
+    if not rows:
+        await c.message.answer("📅 Hali yopilgan oy yo'q. Birinchi oy yopilgach (oyning oxirgi kuni) shu yerda ko'rinadi.")
+        return
+    done = [r for r in rows if not r[5]]
+    best = max(done, key=lambda r: r[2])[0] if done else None
+    worst = min(done, key=lambda r: r[2])[0] if len(done) > 1 else None
+    lines = ["📅 <b>Oylar bo'yicha natija</b>", "<i>tushum · sof foyda (%) · sizning ulushingiz</i>", ""]
+    for mo, t, a, pct, own, is_cur in rows:
+        mark = "🏆 " if mo == best else "🔻 " if mo == worst else ""
+        lines.append(f"{mark}<b>{month_name(mo)}</b>{' (davom etmoqda)' if is_cur else ''}\n"
+                     f"   {S.fmt_som(t)} · <b>{S.fmt_som(a)}</b> ({pct:.0f}%)"
+                     + (f" · 👤 {S.fmt_som(own)}" if own is not None else ""))
+    if len(done) >= 2:
+        tot = sum(r[2] for r in done)
+        lines += ["", f"Jami sof foyda ({len(done)} oy): <b>{S.fmt_som(tot)}</b>",
+                  f"O'rtacha oyiga: <b>{S.fmt_som(tot // len(done))}</b>"]
+        if best:
+            lines.append(f"🏆 Eng yaxshi: {month_name(best)} · 🔻 Eng past: {month_name(worst)}" if worst else
+                         f"🏆 Eng yaxshi: {month_name(best)}")
+    await c.message.answer("\n".join(lines)[:3900])
