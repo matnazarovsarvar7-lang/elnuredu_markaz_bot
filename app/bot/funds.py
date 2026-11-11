@@ -104,6 +104,19 @@ async def monthly_need(s, month: str) -> int:
     return nets + fixed
 
 
+async def owner_draws(s, until_utc: datetime | None = None) -> int:
+    """Oxirgi taqsimotdan keyin egasi kassadan oldindan olgan pul (👤 O'zim oldim)."""
+    last = (await s.execute(select(func.max(KassaMove.created_at)).where(
+        KassaMove.kassa == "rahbar", KassaMove.kind == "fond"))).scalar()
+    q = select(func.coalesce(func.sum(KassaMove.amount), 0)).where(
+        KassaMove.kassa.in_(("rahbar", "karta")), KassaMove.kind == "egasi")
+    if last:
+        q = q.where(KassaMove.created_at > last)
+    if until_utc:
+        q = q.where(KassaMove.created_at < until_utc)
+    return -int((await s.execute(q)).scalar() or 0)
+
+
 async def plan(s, month: str, until_utc: datetime | None = None) -> dict | None:
     """Taqsimot rejasi (bazaga yozmaydi). until_utc — kassa qaysi paytdagi holati bo'yicha (None — hozir)."""
     from app.bot.vault import boss_info
@@ -128,18 +141,33 @@ async def plan(s, month: str, until_utc: datetime | None = None) -> dict | None:
     parts["yillik"] = max(0, min(avail, need_yil))
     avail -= parts["yillik"]
     rest = max(0, avail)
+    # oy davomida egasi oldindan olgan pul — bu foyda emas, egasi ulushidan AVANS: taqsimotda ulushidan ayiriladi
+    draws = await owner_draws(s, until_utc)
+    base = rest + draws                       # ulushlar shu "haqiqiy sof foyda" dan hisoblanadi
     cap = CUSHION_MONTHS * await monthly_need(s, month)
-    if rest:
-        parts["ehson"] = round(rest * SPLIT["ehson"])
-        want = round(rest * SPLIT["yostiq"])
+    over = 0
+    owner_total = 0
+    if base:
+        parts["ehson"] = round(base * SPLIT["ehson"])
+        want = round(base * SPLIT["yostiq"])
         room = max(0, cap - (bal["yostiq"] - from_cushion))
         parts["yostiq"] = min(want, room)
-        parts["rivoj"] = round(rest * SPLIT["rivoj"]) + (want - parts["yostiq"])
-        parts["egasi"] = rest - parts["ehson"] - parts["yostiq"] - parts["rivoj"]
+        parts["rivoj"] = round(base * SPLIT["rivoj"]) + (want - parts["yostiq"])
+        owner_total = base - parts["ehson"] - parts["yostiq"] - parts["rivoj"]
+        parts["egasi"] = owner_total - draws
+        if parts["egasi"] < 0:                # egasi ulushidan ko'p olgan — boshqa fondlar kamroq to'ladi
+            over = -parts["egasi"]
+            parts["egasi"] = 0
+            others = parts["ehson"] + parts["yostiq"] + parts["rivoj"]
+            k = rest / others if others else 0
+            for f in ("ehson", "yostiq"):
+                parts[f] = int(parts[f] * k)
+            parts["rivoj"] = rest - parts["ehson"] - parts["yostiq"]
     short = max(0, need_oylik - parts["oylik"])
     return {"month": month, "kassa": kassa, "cash": cash, "card": card, "parts": parts, "from_cushion": from_cushion, "unpaid": unpaid,
             "unpaid_list": who, "need_yil": need_yil, "rest": rest, "cap": cap, "short": short,
-            "left": kassa + from_cushion - sum(parts.values()), "before": bal}
+            "left": kassa + from_cushion - sum(parts.values()), "before": bal,
+            "draws": draws, "owner_total": owner_total, "over": over, "base": base}
 
 
 def plan_text(p: dict, done: bool) -> str:
@@ -153,12 +181,25 @@ def plan_text(p: dict, done: bool) -> str:
     lines.append(f"1️⃣ {FUNDS['oylik']}: <b>{S.fmt_som(pt['oylik'])}</b>"
                  + (f" (berilmagan oyliklar {S.fmt_som(p['unpaid'])})" if p["unpaid"] else ""))
     lines.append(f"2️⃣ {FUNDS['yillik']}: <b>{S.fmt_som(pt['yillik'])}</b>")
-    lines.append(f"3️⃣ Sof qoldiq: <b>{S.fmt_som(p['rest'])}</b>")
-    for k in ("ehson", "yostiq", "rivoj", "egasi"):
+    dr = p.get("draws", 0)
+    if dr:
+        lines.append(f"3️⃣ Sof foyda: <b>{S.fmt_som(p['base'])}</b> = kassada qolgan {S.fmt_som(p['rest'])} + "
+                     f"oy davomida o'zingiz olgan {S.fmt_som(dr)}")
+    else:
+        lines.append(f"3️⃣ Sof foyda: <b>{S.fmt_som(p['rest'])}</b>")
+    for k in ("ehson", "yostiq", "rivoj"):
         extra = ""
-        if k == "yostiq" and pt["yostiq"] < round(p["rest"] * SPLIT["yostiq"]):
+        if k == "yostiq" and pt["yostiq"] < round(p.get("base", p["rest"]) * SPLIT["yostiq"]) and not p.get("over"):
             extra = " (yostiq to'lgan — ortig'i rivojga)"
         lines.append(f"   {FUNDS[k]} ({SPLIT[k] * 100:.0f}%): <b>{S.fmt_som(pt[k])}</b>{extra}")
+    if dr:
+        lines.append(f"   {FUNDS['egasi']} (50%): {S.fmt_som(p['owner_total'])} − oldin olgansiz {S.fmt_som(dr)} "
+                     f"= <b>{S.fmt_som(pt['egasi'])}</b>")
+    else:
+        lines.append(f"   {FUNDS['egasi']} (50%): <b>{S.fmt_som(pt['egasi'])}</b>")
+    if p.get("over"):
+        lines.append(f"\n⚠️ Siz ulushingizdan <b>{S.fmt_som(p['over'])}</b> ko'p olgansiz — shuncha pul boshqa fondlarga "
+                     "yetmadi (ular kamroq to'ldi).")
     if p["short"]:
         lines.append(f"\n🔴 Oyliklar uchun yana <b>{S.fmt_som(p['short'])}</b> yetmaydi!")
     lines.append(f"\n👤 Sizda: <b>{S.fmt_som(p['left'] if done else p['kassa'])}</b>"

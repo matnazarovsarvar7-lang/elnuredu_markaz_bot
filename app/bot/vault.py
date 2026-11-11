@@ -84,7 +84,7 @@ async def boss_info(s, until: datetime | None = None, since: datetime | None = N
     total = await moves()
     to_petty = -await moves("kichikka")
     to_funds = -await moves("fond")
-    taken = -await moves("egasi", "chiqim")
+    taken = -await moves("egasi", "chiqim", "bankka")
     other = total + to_petty + to_funds + taken          # ochilish, tuzatish, kirim
     hand = await _sum(s, select(func.coalesce(func.sum(CashHandover.amount), 0)).where(
         CashHandover.to_kind == "rahbar", CashHandover.status == "tasdiq", CashHandover.created_at >= st,
@@ -195,7 +195,7 @@ def boss_text(b: dict) -> str:
     if b["to_funds"]:
         lines.append(f"− Oy yakunida fondlarga taqsimlangan: {S.fmt_som(b['to_funds'])}")
     if b["taken"]:
-        lines.append(f"− Egasi olgan / boshqa chiqim: {S.fmt_som(b['taken'])}")
+        lines.append(f"− O'zingiz olgan / kartaga qo'yilgan / boshqa chiqim: {S.fmt_som(b['taken'])}")
     lines.append(f"= <b>Qoldiq: {S.fmt_som(b['balance'])}</b>")
     return "\n".join(lines)
 
@@ -326,8 +326,8 @@ async def kv_amount(m: Message, state: FSMContext) -> None:
                 "out": "Nima uchun? Tanlang yoki yozing:",
                 "fix": "Farq sababi? (masalan: avvalgi xarajat kiritilmagan edi)",
                 "pfix": "Sababi? (masalan: ochishda noto'g'ri kiritilgan)"}[d["act"]]
-        kb = IM(inline_keyboard=[[IB(text="👤 Egasi oldi (foydadan)", callback_data="kvn:egasi")],
-                                 [IB(text="🏦 Bankka/kartaga qo'ydim", callback_data="kvn:bank")]]) if d["act"] == "out" else None
+        kb = IM(inline_keyboard=[[IB(text="👤 O'zim oldim (ulushimdan oldindan)", callback_data="kvn:egasi")],
+                                 [IB(text="🏦 Naqdni kartaga qo'ydim", callback_data="kvn:bank")]]) if d["act"] == "out" else None
         await m.answer(hint, reply_markup=kb)
         return
     await _confirm(m, state, m.from_user.id)
@@ -336,9 +336,23 @@ async def kv_amount(m: Message, state: FSMContext) -> None:
 @router.callback_query(Kv.note, F.data.startswith("kvn:"))
 async def kv_note_pick(c: CallbackQuery, state: FSMContext) -> None:
     k = c.data.split(":")[1]
-    await state.update_data(note={"egasi": "Egasi oldi (foydadan)", "bank": "Bankka/kartaga qo'yildi"}[k],
-                            kind="egasi" if k == "egasi" else "chiqim")
+    await state.update_data(note={"egasi": "O'zim oldim (ulushimdan oldindan)", "bank": "Naqd kartaga qo'yildi"}[k],
+                            kind="egasi" if k == "egasi" else "bankka")
     await c.answer()
+    if k == "egasi":
+        from app.bot import funds as FD
+        d = await state.get_data()
+        async with Session() as s:
+            p = await FD.plan(s, FD.PR.current_month(FD.now()))
+        if p:
+            share = max(0, p["owner_total"] - p["draws"])
+            await c.message.answer(
+                "ℹ️ <b>Bu foyda emas, ulushingizdan oldindan olish (avans).</b>\n"
+                "Foyda oy oxirida (1-sana) hisoblanadi. Shunda ulushingizdan shu summa ayiriladi.\n\n"
+                f"Hozirgi holat bo'yicha bu oy taxminiy ulushingiz: <b>{S.fmt_som(share)}</b>"
+                + (f" (allaqachon olgansiz: {S.fmt_som(p['draws'])})" if p["draws"] else "")
+                + (f"\n⚠️ Olmoqchi bo'lgan {S.fmt_som(d['amount'])} taxminiy ulushdan ko'p — oy oxirida fondlar "
+                   "kamroq to'ladi yoki oyliklarga yetmay qolishi mumkin." if d["amount"] > share else ""))
     await _confirm(c.message, state, c.from_user.id)
 
 
@@ -430,6 +444,8 @@ async def kv_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                 msg = f"✅ Kirim: {S.fmt_som(a)}. Sizda: {S.fmt_som(bal + a)}"
             elif act == "out":
                 s.add(KassaMove(kassa="rahbar", amount=-a, kind=d.get("kind", "chiqim"), note=d.get("note"), by_id=st.id))
+                if d.get("kind") == "bankka":          # naqd kartaga o'tdi — pul yo'qolmaydi, kartada ko'rinadi
+                    s.add(KassaMove(kassa="karta", amount=a, kind="kirim", note="Naqddan", by_id=st.id))
                 msg = f"✅ Chiqim: {S.fmt_som(a)}. Sizda: {S.fmt_som(bal - a)}"
             elif act == "pfix":
                 pb = await petty_balance(s)
@@ -460,7 +476,7 @@ async def kv_list(c: CallbackQuery) -> None:
         rows: list[tuple[datetime, str, int]] = []
         for x in (await s.execute(select(KassaMove).where(KassaMove.kassa == "rahbar"))).scalars():
             name = {"boshlang": "Ochilish", "tuzatish": "Tuzatish", "kirim": "Kirim", "chiqim": "Chiqim",
-                    "egasi": "Egasi oldi", "kichikka": "Moliyaga xarajat puli", "fond": "Fondlarga taqsimot"}.get(x.kind, x.kind)
+                    "egasi": "O'zim oldim (ulushdan oldindan)", "bankka": "Naqd kartaga", "kichikka": "Moliyaga xarajat puli", "fond": "Fondlarga taqsimot"}.get(x.kind, x.kind)
             rows.append((x.created_at, name + (f" · {x.note}" if x.note and x.kind not in ("kichikka", "boshlang") else ""), x.amount))
         for h in (await s.execute(select(CashHandover).where(
                 CashHandover.to_kind == "rahbar", CashHandover.status == "tasdiq", CashHandover.created_at >= st))).scalars():
