@@ -107,6 +107,21 @@ async def _fix_kassa_2026_11_10(s) -> None:
     await s.commit()
 
 
+async def _fix_petty_2026_11_11(s) -> None:
+    """Rahbar aniqlik kiritdi: 10.11 dagi 550 000 — o'quvchilar puli emas, rahbar bergan XARAJAT PULI.
+    Moliyadagi o'quvchilar pulidan olib, xarajat puliga o'tkazamiz (rahbar kassasi o'zgarmaydi)."""
+    from app.db.models import KassaMove, Setting
+    if await s.get(Setting, "fix_2026_11_11_petty"):
+        return
+    s.add(Setting(key="fix_2026_11_11_petty", value={"done": True}))
+    test, op, v2 = await s.get(Setting, "sinov"), await s.get(Setting, "cash_opening"), await s.get(Setting, "kassa_v2")
+    if test and (test.value or {}).get("on") and op and v2:
+        op.value = {**op.value, "amount": int(op.value["amount"]) - 550_000}
+        s.add(KassaMove(kassa="kichik", amount=550_000, kind="tuzatish",
+                        note="10.11: rahbar bergan xarajat puli (o'quvchilar pulidan ajratildi)"))
+    await s.commit()
+
+
 async def _one_time_fixes() -> None:
     """Rahbar qarorlarini bir marta qo'llash (keyin rahbar sozlamadan o'zgartirsa — qayta tegilmaydi)."""
     from sqlalchemy import select
@@ -119,6 +134,7 @@ async def _one_time_fixes() -> None:
             s.add(Setting(key="fix_2026_11_sinov", value={"done": True}))
             await s.commit()
         await _fix_kassa_2026_11_10(s)
+        await _fix_petty_2026_11_11(s)
         if await s.get(Setting, "fix_2026_11_pay"):
             return
         for st in (await s.execute(select(Staff))).scalars():
