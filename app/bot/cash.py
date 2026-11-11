@@ -152,7 +152,12 @@ async def close_start(m: Message, state: FSMContext) -> None:
                        " Natija: ⚠️ farq — rahbar ko'rib chiqadi."))
         return
     await state.set_state(Cl.counted)
-    await m.answer("🔐 <b>Kassani yopish</b>\nKassadagi naqd pulni sanang va summani yozing (masalan: 3 450 000).\n"
+    from app.bot.vault import petty_balance
+    async with Session() as s:
+        pb = await petty_balance(s)
+    await m.answer("🔐 <b>Kassani yopish</b>\n📥 Faqat <b>o'quvchilar to'lagan naqd pulni</b> sanang va summani yozing "
+                   "(masalan: 3 450 000).\n"
+                   f"💳 Xarajat pulini (sizda {S.fmt_som(pb or 0)}) <b>qo'shmang</b> — u alohida konvertda turadi.\n"
                    "Bot faqat «mos» yoki «farq bor» deb javob beradi.")
 
 

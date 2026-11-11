@@ -101,8 +101,12 @@ async def evening_report(bot: Bot) -> None:
         early = await early_lessons(s, t)
         cl = (await s.execute(select(CashClose).where(CashClose.date == t).order_by(CashClose.id.desc()))).scalars().first()
         exp_cash = await expected_cash(s)
-        from app.bot.vault import boss_balance, petty_balance
-        bb, pb = await boss_balance(s), await petty_balance(s)
+        from app.bot.vault import boss_balance, card_balance, petty_balance
+        bb, pb, cbal = await boss_balance(s), await petty_balance(s), await card_balance(s)
+        from app.db.models import Expense
+        day0 = datetime.combine(t, datetime.min.time()) - timedelta(hours=5)
+        spent_today = int((await s.execute(select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.source == "kichik", Expense.status == "tasdiq", Expense.created_at >= day0))).scalar() or 0)
         from app.db.models import CashHandover
         pend = (await s.execute(select(CashHandover).where(CashHandover.status == "kutilmoqda",
                                                            CashHandover.to_kind == "rahbar"))).scalars().all()
@@ -117,10 +121,18 @@ async def evening_report(bot: Bot) -> None:
             f"Darsga kelmaganlar: {absent}\n"
             f"Uy vazifasi berilmagan: {len(no_hw)}" + (f" ({', '.join(no_hw)})" if no_hw else " ✅")
             + (f"\nErta tugagan darslar: {'; '.join(early)}" if early else "")
-            + "\nKassa: " + ({"mos": "✅ yopildi, mos", "farq": "⚠️ yopildi, farq bor", "boshlang": "▫️ boshlang'ich qoldiq"}
-                             .get(cl.status, "") if cl else "❌ yopilmadi")
-            + (f" · kassada bo'lishi kerak {S.fmt_som(exp_cash)}" if exp_cash is not None else "")
-            + (f"\n👤 Sizda: {S.fmt_som(bb)} · 💳 Moliyadagi xarajat puli: {S.fmt_som(pb)}" if bb is not None else ""))
+            )
+    # pul holati — har bir pul o'z qatorida, aralashmaydi
+    close_txt = ({"mos": "✅ yopildi, mos", "farq": "⚠️ yopildi, farq bor", "boshlang": "▫️ boshlandi"}
+                 .get(cl.status, "") if cl else "❌ hali yopilmadi")
+    text += ("\n\n💼 <b>Pul holati</b>"
+             f"\n📥 <b>Moliyada — o'quvchilar puli:</b> {S.fmt_som(exp_cash or 0)}"
+             + ("  <i>(sizga topshiriladi)</i>" if exp_cash else "")
+             + f"\n      kassa: {close_txt}"
+             + (f"\n💳 <b>Moliyada — xarajat puli:</b> {S.fmt_som(pb)}  <i>(alohida konvert)</i>"
+                + (f"\n      bugun xarajat: {S.fmt_som(spent_today)}" if spent_today else "") if pb is not None else "")
+             + (f"\n👤 <b>Qo'lingizda (naqd):</b> {S.fmt_som(bb)}" if bb is not None else "")
+             + (f"\n🏦 <b>Kartada:</b> {S.fmt_som(cbal)}" if cbal is not None else ""))
     if test:
         text = "🧪 <i>Sinov rejimi — summalar haqiqiy emas</i>\n" + text
     text += "\n\n" + payers
