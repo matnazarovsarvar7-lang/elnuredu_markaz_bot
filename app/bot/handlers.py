@@ -115,6 +115,22 @@ async def set_role(c: CallbackQuery) -> None:
     await show_menu(c.message, who)
     if role == "rahbar":
         await _boss_waiting(c.message)
+    elif role in ("oqituvchi", "yordamchi"):
+        await _teacher_waiting(c.message, who.staff.id)
+
+
+async def _teacher_waiting(msg: Message, sid: int) -> None:
+    """O'qituvchi roliga o'tganda: ko'rib chiqishi kerak bo'lgan testlar."""
+    from aiogram.types import InlineKeyboardButton as IB, InlineKeyboardMarkup as IM
+    from app.db.models import Test
+    async with Session() as s:
+        rows = (await s.execute(select(Test, Group.name).join(Group, Group.id == Test.group_id).where(
+            Test.status == "korib",
+            (Test.requested_by == sid) | (Group.teacher_id == sid) | (Group.assistant_id == sid)))).all()
+    if rows:
+        await msg.answer("👀 <b>Ko'rib chiqishingiz kerak bo'lgan testlar:</b>",
+                         reply_markup=IM(inline_keyboard=[[IB(text=f"#{t.id} · {g} · {t.topic[:30]}",
+                                                              callback_data=f"trv:{t.id}")] for t, g in rows]))
 
 
 async def _boss_waiting(msg: Message) -> None:

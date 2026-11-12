@@ -24,6 +24,8 @@ from app.logic import sheets as SH
 from app.logic import testfile as TF
 from app import services as S
 
+import logging
+log = logging.getLogger(__name__)
 router = Router()
 TZ = ZoneInfo(settings.timezone)
 ST = {"sorov": "📨 so'rov yuborilgan", "korib": "👀 o'qituvchi ko'rib chiqmoqda", "qaytarildi": "↩️ tuzatishga qaytarilgan",
@@ -504,20 +506,35 @@ async def up_file(m: Message, state: FSMContext, bot: Bot) -> None:
         await m.answer(summary + "\n\nO'zingiz yuklaganingiz uchun tasdiqlandi. Varaqlar tayyorlanmoqda...")
         await make_papers(bot, tid, m.chat.id)
     else:
-        await m.answer(summary + "\n\nO'qituvchiga ko'rib chiqishga yuborildi.")
-        await send_review(bot, tid)
+        async with Session() as s:
+            t = await s.get(Test, tid)
+            names = []
+            g = await s.get(Group, t.group_id)
+            for i in dict.fromkeys(x for x in (t.requested_by, g.teacher_id, g.assistant_id) if x):
+                st2 = await s.get(Staff, i)
+                if st2 and st2.tg_id:
+                    names.append(st2.full_name)
+        n = await send_review(bot, tid)
+        await m.answer(summary + f"\n\n👀 Ko'rib chiqishga yuborildi ({n} ta): " + (", ".join(names) or "rahbar")
+                       + ".\nO'qituvchi tasdiqlagach varaqlar adminga chop etishga ketadi.")
 
 
 # ================= 3. Ko'rib chiqish =================
 async def _reviewers(s, t: Test) -> list[int]:
+    """Ko'rib chiquvchilar: so'ragan xodim (har doim), guruh o'qituvchisi va yordamchisi.
+    Faylni yuklagan rahbar o'zi so'ramagan va guruh o'qituvchisi bo'lmasa — unga yuborilmaydi."""
     g = await s.get(Group, t.group_id)
-    ids = {x for x in (g.teacher_id, g.assistant_id, t.requested_by) if x}
-    out = []
-    for i in ids:
+    ids = [x for x in (t.requested_by, g.teacher_id, g.assistant_id) if x]
+    out: list[int] = []
+    for i in dict.fromkeys(ids):
         st = await s.get(Staff, i)
-        if st and st.tg_id and not st.roles.startswith("rahbar"):
+        if not (st and st.tg_id):
+            continue
+        if i == t.uploaded_by and i not in (t.requested_by, g.teacher_id):
+            continue
+        if st.tg_id not in out:
             out.append(st.tg_id)
-    if not out:                                   # rahbarning o'z guruhi
+    if not out:                                   # hech kim topilmasa — rahbar
         out = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
     return out
 
@@ -536,24 +553,36 @@ async def _review_file(s, t: Test) -> bytes:
     return SH.review_pdf(f"#{t.id} · {g.name} · {t.topic} · {t.version}-nusxa", rows)
 
 
-async def send_review(bot: Bot, tid: int) -> None:
+async def send_review(bot: Bot, tid: int, only: int | None = None) -> int:
+    """Ko'rib chiqish uchun PDF + tugmalar. only — faqat shu chatga (qayta so'ralganda). Qaytaradi: nechta yuborildi."""
     async with Session() as s:
         t = await s.get(Test, tid)
         g = await s.get(Group, t.group_id)
         pdf = await _review_file(s, t)
-        to = await _reviewers(s, t)
+        to = [only] if only else await _reviewers(s, t)
     cap = (f"👀 <b>Test #{tid} ko'rib chiqish uchun</b> ({t.version}-nusxa)\n{g.name} · {t.topic}\n"
            f"{t.n_questions} savol · " + ("bank rejimi (har o'quvchiga shaxsiy)" if t.n_variants == 0
                                              else f"{t.n_variants} variant") + "\n\n"
            "Faylda har savolning to'g'ri javobi belgilangan. Tekshiring:\n"
            "• hammasi to'g'ri — «✅ Tasdiqlash»;\n• kichik xato — «✏️ Savolni tuzatish» (raqami bilan);\n"
            "• ko'p xato — «↩️ Izoh bilan qaytarish».")
+    sent = 0
     for tg in to:
         try:
             await bot.send_document(tg, BufferedInputFile(pdf, f"test_{tid}_v{t.version}.pdf"), caption=cap,
                                     reply_markup=_review_kb(tid))
+            sent += 1
         except Exception:
-            await send(bot, tg, cap, reply_markup=_review_kb(tid))
+            log.exception("review pdf %s", tid)
+            sent += bool(await send(bot, tg, cap, reply_markup=_review_kb(tid)))
+    return sent
+
+
+@router.callback_query(F.data.startswith("trv:"))
+async def review_again(c: CallbackQuery, bot: Bot) -> None:
+    """Testlar holatidan: ko'rib chiqish faylini qayta olish."""
+    await c.answer()
+    await send_review(bot, int(c.data.split(":")[1]), only=c.message.chat.id)
 
 
 class Fx(StatesGroup):
@@ -1085,6 +1114,8 @@ async def tests_list(c: CallbackQuery) -> None:
              + (" · 🖨 chop etildi" if t.printed_at else "") for t, gname in rows]
     kb = [[IB(text=f"📎 #{t.id} faylini yuklash", callback_data=f"tup:{t.id}")]
           for t, _ in rows if _is_boss(st) and t.status in ("sorov", "qaytarildi")]
+    kb += [[IB(text=f"👀 #{t.id} ni ko'rib chiqish", callback_data=f"trv:{t.id}")]
+           for t, _ in rows if t.status == "korib"]
     await c.message.answer("📋 <b>Testlar</b>\n" + "\n".join(lines), reply_markup=IM(inline_keyboard=kb) if kb else None)
 
 
