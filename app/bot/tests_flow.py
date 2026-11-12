@@ -110,6 +110,7 @@ async def _open_exams(s, gid: int) -> list[tuple[Exam, int, int]]:
 
 # ================= 1. So'rov (o'qituvchi) =================
 class Rq(StatesGroup):
+    when = State()
     topic = State()
     count = State()
     photos = State()
@@ -136,15 +137,68 @@ async def pick_exam(c: CallbackQuery, state: FSMContext) -> None:
     async with Session() as s:
         exams = await _open_exams(s, gid)
     await state.update_data(gid=gid)
+    await state.set_state(Rq.when)              # sanani yozib ham yuborish mumkin
     rows = [[IB(text=f"📝 {_exam_label(e)}" + (f" · testi bor: {k}/{n}" if k else ""), callback_data=f"tse:{e.id}")]
             for e, k, n in exams]
-    rows.append([IB(text="Nazorat sanasi hali belgilanmagan", callback_data="tse:0")])
-    await c.message.edit_text("Qaysi nazorat uchun?", reply_markup=IM(inline_keyboard=rows))
+    rows.append([IB(text="Sana hali aniq emas", callback_data="tse:0")])
+    await c.message.edit_text("📅 <b>Test qachonga mo'ljallangan?</b>\n"
+                              + ("Rejadagi nazoratni tanlang yoki " if exams else "")
+                              + "sanani yozing: <i>14.11</i> yoki <i>14.11.2026</i>",
+                              reply_markup=IM(inline_keyboard=rows))
+
+
+def _parse_day(text: str) -> date | None:
+    import re
+    m_ = re.fullmatch(r"\s*(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\s*", text or "")
+    if not m_:
+        return None
+    d_, mo, y = int(m_.group(1)), int(m_.group(2)), m_.group(3)
+    t = now().date()
+    given = bool(y)
+    yr = (int(y) + 2000 if len(y) == 2 else int(y)) if y else t.year
+    try:
+        day = date(yr, mo, d_)
+        if not given and day < t:          # yil yozilmagan va sana o'tib ketgan — keyingi yil
+            day = date(yr + 1, mo, d_)
+    except ValueError:
+        return None
+    return day
+
+
+@router.message(Rq.when)
+async def when_typed(m: Message, state: FSMContext) -> None:
+    day = _parse_day(m.text or "")
+    t = now().date()
+    if not day:
+        await m.answer("Sanani shunday yozing: 14.11 yoki 14.11.2026")
+        return
+    if day < t or day > t + timedelta(days=90):
+        await m.answer(f"Sana bugundan ({t:%d.%m}) keyin va 3 oy ichida bo'lsin.")
+        return
+    d = await state.get_data()
+    async with Session() as s:
+        ex = (await s.execute(select(Exam).where(Exam.group_id == d["gid"], Exam.date == day,
+                                                 Exam.status == "reja"))).scalars().first()
+    await state.update_data(planned=day.isoformat())
+    text, kb = await _scope_prompt(state, ex.id if ex else 0)
+    note = (f"📅 {day:%d.%m.%Y} — rejadagi nazoratga biriktirildi.\n\n" if ex else
+            f"📅 Test sanasi: <b>{day:%d.%m.%Y}</b>\n\n")
+    await m.answer(note + text, reply_markup=kb)
 
 
 @router.callback_query(F.data.startswith("tse:"))
 async def got_exam(c: CallbackQuery, state: FSMContext) -> None:
     eid = int(c.data.split(":")[1])
+    if not (await state.get_data()).get("gid"):
+        await c.answer("Sessiya eskirgan — 📚 Testlar dan qaytadan boshlang.", show_alert=True)
+        return
+    text, kb = await _scope_prompt(state, eid)
+    await c.answer()
+    await c.message.edit_text(text, reply_markup=kb)
+
+
+async def _scope_prompt(state: FSMContext, eid: int) -> tuple[str, IM]:
+    await state.set_state(None)
     await state.update_data(eid=eid or None)
     d = await state.get_data()
     async with Session() as s:
@@ -161,13 +215,12 @@ async def got_exam(c: CallbackQuery, state: FSMContext) -> None:
     else:
         rows.append([IB(text=f"👥 Qolgan {len(free)} ta o'quvchi", callback_data="tws:rest")])
     rows.append([IB(text="✅ O'quvchilarni tanlash", callback_data="tws:pick")])
-    head = "Test kimlar uchun?"
+    head = "👥 <b>Test kimlar uchun?</b>"
     if taken:
         head = (f"Bu nazoratda {len(taken & set(order))} ta o'quvchiga boshqa mavzudan test bor.\n"
                 f"Qolgan {len(free)} ta o'quvchi uchun test kimlarga?")
-    await c.answer()
-    await c.message.edit_text(head + "\n\n<i>Bitta guruhni bir necha kichik guruhga bo'lib, har biriga alohida "
-                              "mavzudan test so'rash mumkin.</i>", reply_markup=IM(inline_keyboard=rows))
+    return (head + "\n\n<i>Bitta guruhni bir necha kichik guruhga bo'lib, har biriga alohida "
+            "mavzudan test so'rash mumkin.</i>", IM(inline_keyboard=rows))
 
 
 def _pick_kb(d: dict) -> IM:
@@ -271,19 +324,46 @@ async def rq_topic(m: Message, state: FSMContext) -> None:
 async def rq_count(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(n=int(c.data.split(":")[1]), photos=[])
     await state.set_state(Rq.photos)
-    await c.message.edit_text("📷 O'tilgan mavzuning kitob sahifalarini rasmga olib yuboring (bir nechta bo'lishi "
-                              "mumkin). Tugatgach «✅ So'rovni yuborish» ni bosing.",
+    await c.message.edit_text("📷 O'tilgan mavzuning kitob sahifalarini yuboring:\n"
+                              f"• <b>{MAX_PHOTOS} varaqgacha</b> — rasm yoki PDF\n"
+                              f"• <b>{MAX_PHOTOS} varaqdan ko'p</b> — faqat PDF (bitta fayl qilib)\n"
+                              "Tugatgach «✅ So'rovni yuborish» ni bosing.",
                               reply_markup=IM(inline_keyboard=[[IB(text="✅ So'rovni yuborish", callback_data="tsq:send")]]))
+
+
+MAX_PHOTOS = 3
+SEND_KB = IM(inline_keyboard=[[IB(text="✅ So'rovni yuborish", callback_data="tsq:send")]])
 
 
 @router.message(Rq.photos, F.photo)
 async def rq_photo(m: Message, state: FSMContext) -> None:
     d = await state.get_data()
-    photos = d.get("photos", []) + [m.photo[-1].file_id]
-    await state.update_data(photos=photos)
-    if len(photos) in (1, 5, 10):
-        await m.answer(f"Qabul qilindi: {len(photos)} ta rasm. Yana yuboring yoki «✅ So'rovni yuborish».",
-                       reply_markup=IM(inline_keyboard=[[IB(text="✅ So'rovni yuborish", callback_data="tsq:send")]]))
+    files = d.get("photos", [])
+    n_img = sum(1 for f in files if not f.startswith("doc:"))
+    if n_img >= MAX_PHOTOS:
+        if not d.get("warned"):
+            await state.update_data(warned=True)
+            await m.answer(f"⚠️ Rasm {MAX_PHOTOS} tadan oshdi. {MAX_PHOTOS} varaqdan ko'p bo'lsa — barcha sahifalarni "
+                           "<b>bitta PDF</b> qilib yuboring (ortiqcha rasmlar qabul qilinmadi).", reply_markup=SEND_KB)
+        return
+    files = files + [m.photo[-1].file_id]
+    await state.update_data(photos=files)
+    if n_img + 1 in (1, MAX_PHOTOS):
+        await m.answer(f"Qabul qilindi: {n_img + 1} ta rasm" + (" (eng ko'pi)." if n_img + 1 == MAX_PHOTOS else ".")
+                       + " Tugatgach «✅ So'rovni yuborish».", reply_markup=SEND_KB)
+
+
+@router.message(Rq.photos, F.document)
+async def rq_pdf(m: Message, state: FSMContext) -> None:
+    doc = m.document
+    if not ((doc.mime_type or "") == "application/pdf" or (doc.file_name or "").lower().endswith(".pdf")):
+        await m.answer("Faqat rasm yoki PDF fayl qabul qilinadi.")
+        return
+    d = await state.get_data()
+    files = d.get("photos", []) + ["doc:" + doc.file_id]
+    await state.update_data(photos=files)
+    n_pdf = sum(1 for f in files if f.startswith("doc:"))
+    await m.answer(f"📄 PDF qabul qilindi ({n_pdf} ta). Tugatgach «✅ So'rovni yuborish».", reply_markup=SEND_KB)
 
 
 @router.callback_query(Rq.photos, F.data == "tsq:send")
@@ -296,7 +376,7 @@ async def rq_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         ex = await s.get(Exam, d["eid"]) if d.get("eid") else None
         t = Test(group_id=g.id, exam_id=ex.id if ex else None, topic=d["topic"], n_questions=d["n"],
                  photos=d.get("photos", []), status="sorov", source="rahbar", requested_by=st.id,
-                 students=d.get("students"))
+                 students=d.get("students"), meta={"sana": d["planned"]} if d.get("planned") else {})
         s.add(t)
         await s.flush()
         if ex and not ex.test_id:
@@ -305,18 +385,26 @@ async def rq_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         await s.commit()
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         tid, gname, who = t.id, g.name, st.full_name
-    when = _exam_label(ex) if ex else "sana belgilanmagan"
+    when = (_exam_label(ex) if ex else
+            f"{date.fromisoformat(d['planned']):%d.%m.%Y}" if d.get("planned") else "sana hali aniq emas")
     text = (f"📨 <b>Test so'rovi #{tid}</b>\n{who} · {gname}\nNazorat: {when}\nKimlar uchun: {_scope_text(d)}\n"
             f"Mavzu: {d['topic']}\n"
-            f"Savollar: {d['n']} ta · rasmlar: {len(d.get('photos', []))} ta\n\n"
+            f"Savollar: {d['n']} ta · rasm: {sum(1 for f in d.get('photos', []) if not f.startswith('doc:'))} ta"
+            f" · PDF: {sum(1 for f in d.get('photos', []) if f.startswith('doc:'))} ta\n\n"
             "Rasmlarni «Test tuzish prompti» bilan Claude'ga yuboring, tayyor faylni shu yerga yuklang.")
     for b in bosses:
-        photos = d.get("photos", [])
+        photos = [f for f in d.get("photos", []) if not f.startswith("doc:")]
         for i in range(0, len(photos), 10):
             try:
                 await bot.send_media_group(b, [InputMediaPhoto(media=f) for f in photos[i:i + 10]])
             except Exception:
                 pass
+        for f in d.get("photos", []):
+            if f.startswith("doc:"):
+                try:
+                    await bot.send_document(b, f[4:])
+                except Exception:
+                    pass
         await send(bot, b, text, reply_markup=IM(inline_keyboard=[[IB(text="📎 Test faylini yuklash",
                                                                        callback_data=f"tup:{tid}")]]))
     rest = ""
@@ -378,7 +466,10 @@ async def up_file(m: Message, state: FSMContext, bot: Bot) -> None:
             s.add(TestQuestion(test_id=t.id, qid=q.qid, variant=q.variant, level=q.level, source=q.source[:120],
                                text=q.text, options=q.options, answer=q.answer))
         t.n_questions, t.n_variants, t.common = tf.n, tf.variants, tf.common
+        planned = d.get("planned") or (t.meta or {}).get("sana")      # so'rovdagi sana yo'qolmasin
         t.meta, t.version, t.uploaded_by = tf.meta, (t.version or 0) + 1, st.id
+        if planned:
+            t.meta = {**(tf.meta or {}), "sana": planned}
         own = not _is_boss(st)
         t.status = "tasdiq" if own else "korib"
         if own:
