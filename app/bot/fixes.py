@@ -406,6 +406,43 @@ async def void_reject(c: CallbackQuery, bot: Bot) -> None:
         await send(bot, req.tg_id, f"❌ {KIND[k][1]} #{oid} ni bekor qilish so'rovi rad etildi.")
 
 
+async def apply_void(s, k: str, obj, st, reason: str) -> tuple[str, list[tuple[int, str]]]:
+    """Teskari yozuv qo'shadi (o'chirmaydi). Qaytaradi: tavsif va ota-onaga xabarlar."""
+    family: list[tuple[int, str]] = []
+    desc = await _describe(s, k, obj)
+    at = utcnow()
+    if k == "p":
+        rows = await _batch(s, obj)
+        coins = 0
+        for r in rows:
+            s.add(Payment(enrollment_id=r.enrollment_id, month=r.month, amount=-r.amount, method=r.method,
+                          status="tasdiq", paid_date=r.paid_date, entered_by=st.id, confirmed_by=st.id, void_of=r.id,
+                          void_reason=reason))
+            r.voided_at, r.void_reason = at, reason
+            coins += r.coins_given or 0
+        e = await s.get(Enrollment, obj.enrollment_id, options=[selectinload(Enrollment.student)])
+        if coins:
+            await S.add_coins(s, e.student, -coins, "tolov", "To'lov bekor qilindi", st)
+        total = sum(r.amount for r in rows)
+        for tg in await S.parent_tg_ids(s, e.student_id):
+            family.append((tg, f"↩️ <b>To'lov bekor qilindi</b>\n{e.student.full_name}: {S.fmt_som(total)} "
+                               f"({obj.paid_date:%d.%m})\nSabab: {reason}\nHisobingiz yangilandi."
+                               + (f" Coin: −{coins}." if coins else "")))
+    elif k == "x":
+        s.add(Expense(date=obj.date, category=obj.category, amount=-obj.amount, note=f"Bekor qilindi: #{obj.id}",
+                      method=obj.method, source=obj.source, status="tasdiq", by_id=st.id, approved_by=st.id,
+                      void_of=obj.id, void_reason=reason))
+        obj.voided_at, obj.void_reason = at, reason
+    else:
+        s.add(ServiceSale(service_id=obj.service_id, qty=-obj.qty, amount=-obj.amount, profit=-(obj.profit or 0),
+                          method=obj.method, status="tasdiq", by_id=obj.by_id, void_of=obj.id, void_reason=reason))
+        obj.voided_at, obj.void_reason = at, reason
+        sv = await s.get(Service, obj.service_id)
+        if sv and sv.stock is not None:
+            sv.stock += obj.qty
+    return desc, family
+
+
 @router.callback_query(F.data.startswith("vdy:"))
 async def void_apply(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     from app.bot.pin import need_pin
@@ -428,37 +465,7 @@ async def void_apply(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             return
         reason = obj.void_reason or "rahbar qarori"
         req = await s.get(Staff, obj.void_req_by) if obj.void_req_by else None
-        desc = await _describe(s, k, obj)
-        t, at = today(), utcnow()
-        if k == "p":
-            rows = await _batch(s, obj)
-            coins = 0
-            for r in rows:
-                s.add(Payment(enrollment_id=r.enrollment_id, month=r.month, amount=-r.amount, method=r.method,
-                              status="tasdiq", paid_date=r.paid_date, entered_by=st.id, confirmed_by=st.id, void_of=r.id,
-                              void_reason=reason))
-                r.voided_at, r.void_reason = at, reason
-                coins += r.coins_given or 0
-            e = await s.get(Enrollment, obj.enrollment_id, options=[selectinload(Enrollment.student)])
-            if coins:
-                await S.add_coins(s, e.student, -coins, "tolov", "To'lov bekor qilindi", st)
-            total = sum(r.amount for r in rows)
-            for tg in await S.parent_tg_ids(s, e.student_id):
-                family.append((tg, f"↩️ <b>To'lov bekor qilindi</b>\n{e.student.full_name}: {S.fmt_som(total)} "
-                                   f"({obj.paid_date:%d.%m})\nSabab: {reason}\nHisobingiz yangilandi."
-                                   + (f" Coin: −{coins}." if coins else "")))
-        elif k == "x":
-            s.add(Expense(date=obj.date, category=obj.category, amount=-obj.amount, note=f"Bekor qilindi: #{obj.id}",
-                          method=obj.method, source=obj.source, status="tasdiq", by_id=st.id, approved_by=st.id,
-                          void_of=obj.id, void_reason=reason))
-            obj.voided_at, obj.void_reason = at, reason
-        else:
-            s.add(ServiceSale(service_id=obj.service_id, qty=-obj.qty, amount=-obj.amount, profit=-(obj.profit or 0),
-                              method=obj.method, status="tasdiq", by_id=obj.by_id, void_of=obj.id, void_reason=reason))
-            obj.voided_at, obj.void_reason = at, reason
-            sv = await s.get(Service, obj.service_id)
-            if sv and sv.stock is not None:
-                sv.stock += obj.qty
+        desc, family = await apply_void(s, k, obj, st, reason)
         await S.audit(s, st, "bekor_qilindi", kind=KIND[k][1], id=oid, reason=reason)
         await s.commit()
     await c.answer("Bekor qilindi")

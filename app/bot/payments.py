@@ -243,8 +243,27 @@ async def _got_amount(msg: Message, state: FSMContext, amount: int, tg_id: int) 
                  IB(text="💳 Karta · bugun", callback_data="pmd:karta:0")])
     rows.append([IB(text="💵 Naqd · boshqa sana", callback_data="pmd:naqd:x"),
                  IB(text="💳 Karta · boshqa sana", callback_data="pmd:karta:x")])
+    rows.append([IB(text="✏️ Summani o'zgartirish", callback_data="pfix:amt"),
+                 IB(text="❌ Bekor", callback_data="pfix:no")])
     await msg.answer(f"<b>{d.get('name', '')}</b> · {S.fmt_som(amount)} — qanday va qachon to'landi?",
                      reply_markup=IM(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("pfix:"))
+async def pay_fix_before(c: CallbackQuery, state: FSMContext) -> None:
+    """Saqlashdan oldin: summani qayta yozish yoki to'lovni umuman bekor qilish."""
+    d = await state.get_data()
+    await c.answer()
+    if c.data == "pfix:no" or not d.get("sid"):
+        last = d.get("last")
+        await state.clear()
+        await state.set_state(Pay.search)
+        if last:
+            await state.update_data(last=last)
+        await c.message.edit_text("❌ Bekor qilindi — hech narsa saqlanmadi.\n➡️ O'quvchi ismini yozing.")
+        return
+    await c.message.edit_text("✏️ Summa o'zgartiriladi.")
+    await _open_student(c.message, state, d["sid"], edit=False)
 
 
 @router.callback_query(F.data.startswith("pmd:"))
@@ -372,16 +391,59 @@ async def _save(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> None:
         items = [(e.group.name, p.amount) for e, p in res]
         coins = sum(p.coins_given for _, p in res)
         await s.commit()
+        pid = res[0][1].id if res else None
     paid = date.fromisoformat(d["paid"])
     await _next_series(state, d)
     await msg.answer(f"✅ Saqlandi: {d['name']} · {S.fmt_som(d['amount'])} "
                      f"({METHOD[d['method']].lower()}, {paid:%d.%m}).{_breakdown(items)}\n\n"
-                     "➡️ <b>Keyingi o'quvchi ismini yozing</b> (tugatish — menyudagi istalgan tugma).")
+                     "➡️ <b>Keyingi o'quvchi ismini yozing</b> (tugatish — menyudagi istalgan tugma).",
+                     reply_markup=IM(inline_keyboard=[[IB(text=f"↩️ Xato kiritildi — bekor qilish ({UNDO_MIN} daqiqa)",
+                                                          callback_data=f"pxu:{pid}")]]) if pid else None)
     await _send_receipt(bot, parents, d["name"], d["amount"], d["method"], d["month"], items, sd.debt, coins)
     for b in bosses:
         if b != tg_id:
             await send(bot, b, f"💵 {METHOD[d['method']]}: {d['name']} · {S.fmt_som(d['amount'])} "
                                f"({who.staff.full_name})")
+
+
+UNDO_MIN = 15
+
+
+@router.callback_query(F.data.startswith("pxu:"))
+async def pay_undo(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    """Kirituvchi o'z to'lovini 15 daqiqa ichida rahbarsiz bekor qiladi (teskari yozuv, rahbarga xabar)."""
+    from datetime import datetime, timedelta
+    from app.bot.fixes import apply_void
+    pid = int(c.data.split(":")[1])
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        p = await s.get(Payment, pid)
+        if not (who.staff and p and p.entered_by == who.staff.id):
+            await c.answer("Faqat to'lovni kiritgan xodim bekor qila oladi.", show_alert=True)
+            return
+        if p.voided_at or p.void_of is not None:
+            await c.answer("Allaqachon bekor qilingan.", show_alert=True)
+            return
+        if datetime.utcnow() - p.created_at > timedelta(minutes=UNDO_MIN):
+            await c.answer(f"{UNDO_MIN} daqiqa o'tdi. Endi o'quvchi kartasidan «💵 To'lovlar (bekor qilish)» orqali "
+                           "rahbar tasdig'i bilan bekor qilinadi.", show_alert=True)
+            return
+        desc, family = await apply_void(s, "p", p, who.staff, "Xato kiritildi — kirituvchi darhol bekor qildi")
+        await S.audit(s, who.staff, "bekor_qilindi", kind="To'lov", id=pid, reason="darhol (xato kiritildi)")
+        await s.commit()
+        e = await s.get(Enrollment, p.enrollment_id)
+        sid = e.student_id
+        bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+        name = who.staff.full_name
+    await c.answer("Bekor qilindi")
+    await c.message.edit_text(c.message.html_text.split("\n\n➡️")[0] + "\n\n↩️ <b>Bekor qilindi</b> (teskari yozuv qo'shildi).")
+    for b in bosses:
+        if b != c.from_user.id:
+            await send(bot, b, f"↩️ To'lov darhol bekor qilindi ({name}):\n{desc}")
+    for tg, text in family:
+        await send(bot, tg, text)
+    await c.message.answer("✏️ To'g'ri summani kiriting:")
+    await _open_student(c.message, state, sid, edit=False)
 
 
 async def _next_series(state: FSMContext, d: dict) -> None:
