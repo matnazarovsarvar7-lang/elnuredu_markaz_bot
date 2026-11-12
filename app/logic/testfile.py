@@ -51,16 +51,26 @@ class TestFile:
         return int(self.meta.get("savollar_soni", 0) or 0)
 
     @property
+    def is_bank(self) -> bool:
+        """Bank rejimi: har o'quvchiga shaxsiy savollar to'plami (variantsiz)."""
+        return str(self.meta.get("rejim", "")).strip().lower() == "bank"
+
+    @property
     def variants(self) -> int:
-        return int(self.meta.get("variantlar", 1) or 1)
+        return 0 if self.is_bank else int(self.meta.get("variantlar", 1) or 1)
+
+    @property
+    def overlap(self) -> int:
+        v = str(self.meta.get("takror", "")).strip()
+        return int(v) if v.isdigit() else max(1, round(self.n / 6))
 
     @property
     def common(self) -> int:
         return int(self.meta.get("umumiy", 0) or 0)
 
     def variant_questions(self, v: str) -> list[Q]:
-        """Variant savollari: umumiylar + shu variantniki (variant 1 ta bo'lsa — hammasi)."""
-        if self.variants == 1:
+        """Variant savollari: umumiylar + shu variantniki (variant 1 ta bo'lsa yoki bank — hammasi)."""
+        if self.variants <= 1:
             return list(self.questions)
         return [q for q in self.questions if q.variant in ("umumiy", v)]
 
@@ -82,7 +92,7 @@ def parse(raw: str) -> TestFile:
         if ":" in line:
             k, v = line.split(":", 1)
             tf.meta[k.strip().lower()] = v.strip()
-    for key in ("savollar_soni", "variantlar", "umumiy"):
+    for key in ("savollar_soni", "variantlar", "umumiy", "takror"):
         if key in tf.meta and not str(tf.meta[key]).isdigit():
             tf.errors.append(f"Sarlavhada «{key}» raqam bo'lishi kerak.")
     if tf.errors:
@@ -126,8 +136,8 @@ def _parse_q(block: str, i: int, errors: list[str]) -> Q | None:
     if ans not in LETTERS:
         bad.append("«javob:» A, B, C yoki D bo'lishi kerak")
     variant = (fields.get("variant") or "umumiy").strip()
-    variant = "umumiy" if variant.lower() == "umumiy" else variant.upper()
-    if variant != "umumiy" and variant not in VARIANTS:
+    variant = variant.lower() if variant.lower() in ("umumiy", "bank") else variant.upper()
+    if variant not in ("umumiy", "bank") and variant not in VARIANTS:
         bad.append(f"variant «{variant}» noto'g'ri")
     level = (fields.get("qiyinlik") or "oson").strip().lower().replace("o'rta", "orta")
     if level not in LEVELS:
@@ -151,10 +161,20 @@ def _validate(tf: TestFile) -> None:
     if dup:
         tf.errors.append("Takroriy id: " + ", ".join(map(str, dup)))
     v, n, c = tf.variants, tf.n, tf.common
-    if not 1 <= v <= 4:
+    if tf.is_bank:
+        if not n:
+            tf.errors.append("Bank rejimida «savollar_soni» (bir o'quvchiga) yozilishi kerak.")
+        elif len(tf.questions) < n:
+            tf.errors.append(f"Bankda {len(tf.questions)} ta savol — bitta o'quvchiga {n} ta kerak.")
+        lv = level_counts(tf.questions)
+        for L, share in (("oson", 0.5), ("orta", 0.3), ("qiyin", 0.2)):
+            if n and lv[L] < round(n * share):
+                tf.errors.append(f"Bankda «{L}» savollar {lv[L]} ta — bir o'quvchiga {round(n * share)} ta kerak.")
+        tf.meta["variantlar"], tf.meta["umumiy"] = "0", "0"
+    elif not 1 <= v <= 4:
         tf.errors.append("Variantlar soni 1 dan 4 gacha bo'lishi kerak.")
         return
-    if v == 1:
+    elif v == 1:
         if n and len(tf.questions) != n:
             tf.errors.append(f"savollar_soni: {n}, lekin faylda {len(tf.questions)} ta savol.")
         tf.meta["savollar_soni"] = str(len(tf.questions))

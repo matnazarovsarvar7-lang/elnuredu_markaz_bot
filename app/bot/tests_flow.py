@@ -393,9 +393,10 @@ async def rq_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             f"{date.fromisoformat(d['planned']):%d.%m.%Y}" if d.get("planned") else "sana hali aniq emas")
     text = (f"📨 <b>Test so'rovi #{tid}</b>\n{who} · {gname}\nNazorat: {when}\nKimlar uchun: {_scope_text(d)}\n"
             f"Mavzu: {d['topic']}\n"
+            + _bank_line(len(d["students"]) if d.get("students") is not None else len(d.get("order", [])), d["n"]) +
             f"Savollar: {d['n']} ta · rasm: {sum(1 for f in d.get('photos', []) if not f.startswith('doc:'))} ta"
             f" · PDF: {sum(1 for f in d.get('photos', []) if f.startswith('doc:'))} ta\n\n"
-            "Rasmlarni «Test tuzish prompti» bilan Claude'ga yuboring, tayyor faylni shu yerga yuklang.")
+            "Materiallarni «Test tuzuvchi» loyihasiga yuboring (yuqoridagi bank qatori bilan), tayyor .txt faylni shu yerga yuklang.")
     for b in bosses:
         photos = [f for f in d.get("photos", []) if not f.startswith("doc:")]
         for i in range(0, len(photos), 10):
@@ -481,9 +482,22 @@ async def up_file(m: Message, state: FSMContext, bot: Bot) -> None:
         await S.audit(s, st, "test_yuklash", test=t.id, version=t.version)
         await s.commit()
         tid = t.id
-    lv = TF.level_counts(tf.variant_questions("A"))
-    summary = (f"✅ Fayl qabul qilindi (#{tid}, {tf.n} savol, {tf.variants} variant).\n"
-               f"A-variant qiyinligi: oson {lv['oson']}, o'rta {lv['orta']}, qiyin {lv['qiyin']}.")
+    if tf.is_bank:
+        lv = TF.level_counts(tf.questions)
+        async with Session() as s:
+            n_st = len(await _paper_roster(s, tid))
+        need = P.bank_need(max(1, n_st), tf.n, tf.overlap)
+        summary = (f"✅ Fayl qabul qilindi (#{tid}) — <b>bank rejimi</b>: {len(tf.questions)} ta savol "
+                   f"(oson {lv['oson']}, o'rta {lv['orta']}, qiyin {lv['qiyin']}).\n"
+                   f"Har o'quvchiga {tf.n} ta shaxsiy savol; istalgan ikki o'quvchida ko'pi bilan {tf.overlap} ta bir xil.\n"
+                   f"{n_st} ta o'quvchi uchun tavsiya: {need['total']} ta"
+                   + (" ✅" if len(tf.questions) >= need["total"] else
+                      f" — ⚠️ bank kichikroq (matematik chegara {need['min']}); bot baribir urinib ko'radi, "
+                      "yetmasa takror chegarasini biroz oshiradi va xabar beradi."))
+    else:
+        lv = TF.level_counts(tf.variant_questions("A"))
+        summary = (f"✅ Fayl qabul qilindi (#{tid}, {tf.n} savol, {tf.variants} variant).\n"
+                   f"A-variant qiyinligi: oson {lv['oson']}, o'rta {lv['orta']}, qiyin {lv['qiyin']}.")
     if tf.warnings:
         summary += "\n⚠️ " + "\n⚠️ ".join(tf.warnings[:5])
     if own:
@@ -529,7 +543,8 @@ async def send_review(bot: Bot, tid: int) -> None:
         pdf = await _review_file(s, t)
         to = await _reviewers(s, t)
     cap = (f"👀 <b>Test #{tid} ko'rib chiqish uchun</b> ({t.version}-nusxa)\n{g.name} · {t.topic}\n"
-           f"{t.n_questions} savol · {t.n_variants} variant\n\n"
+           f"{t.n_questions} savol · " + ("bank rejimi (har o'quvchiga shaxsiy)" if t.n_variants == 0
+                                             else f"{t.n_variants} variant") + "\n\n"
            "Faylda har savolning to'g'ri javobi belgilangan. Tekshiring:\n"
            "• hammasi to'g'ri — «✅ Tasdiqlash»;\n• kichik xato — «✏️ Savolni tuzatish» (raqami bilan);\n"
            "• ko'p xato — «↩️ Izoh bilan qaytarish».")
@@ -677,6 +692,26 @@ async def approve(c: CallbackQuery, bot: Bot) -> None:
 
 
 # ================= 4. Varaqlar =================
+def _bank_line(n_students: int, n: int) -> str:
+    """So'rovga: Claude'ga yoziladigan bank hajmi (har o'quvchiga shaxsiy test uchun)."""
+    nd = P.bank_need(max(1, n_students), n)
+    return (f"O'quvchilar: {n_students} ta · har biriga {n} savol · takror ≤ {nd['k']}\n"
+            f"🧮 <b>Bank: {nd['total']} ta savol</b> (oson {nd['oson']}, o'rta {nd['orta']}, qiyin {nd['qiyin']})\n"
+            f"Claude'ga yozing: <code>bank {nd['total']}, har biriga {n}</code>\n")
+
+
+async def _paper_roster(s, tid: int) -> list:
+    """Varaq oladigan o'quvchilar: nazorat kunidagi guruh ro'yxati (test kimlar uchun bo'lsa — faqat ular)."""
+    t = await s.get(Test, tid)
+    ex = await s.get(Exam, t.exam_id) if t.exam_id else None
+    day = ex.date if ex else now().date()
+    roster = await S.group_roster(s, t.group_id, day)
+    if t.students is not None:
+        only = set(t.students)
+        roster = [e for e in roster if e.id in only]
+    return roster
+
+
 async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
     async with Session() as s:
         t = await s.get(Test, tid)
@@ -689,16 +724,37 @@ async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
                 await send(bot, report_to, "Bu test bo'yicha javoblar kiritilgan — varaqlar qayta tuzilmaydi.")
             return
         await s.execute(delete(TestPaper).where(TestPaper.test_id == tid))
-        roster = await S.group_roster(s, g.id, day)
-        if t.students is not None:
-            only = set(t.students)
-            roster = [e for e in roster if e.id in only]
+        roster = await _paper_roster(s, tid)
         qs = (await s.execute(select(TestQuestion).where(TestQuestion.test_id == tid))).scalars().all()
         by_id = {q.qid: q for q in qs}
-        variants = P.assign_variants(len(roster), max(1, t.n_variants))
+        bank_note = ""
+        if t.n_variants == 0:               # bank rejimi: har o'quvchiga shaxsiy to'plam
+            k0 = int((t.meta or {}).get("takror") or P.overlap_limit(t.n_questions))
+            levels = {q.qid: ("orta" if q.level in ("orta", "o'rta") else q.level) for q in qs}
+            sets, k = None, k0
+            while sets is None and k <= t.n_questions:
+                for sd in range(3):
+                    sets = P.assign_bank(levels, len(roster), t.n_questions, k, seed=tid * 7 + sd)
+                    if sets:
+                        break
+                if sets is None:
+                    k += 1
+            if sets is None:
+                if report_to:
+                    await send(bot, report_to, "❌ Bank juda kichik — varaqlar tuzilmadi. Ko'proq savol yuklang.")
+                return
+            bank_note = (f"\nHar o'quvchiga shaxsiy test: istalgan ikki o'quvchida ko'pi bilan {P.max_overlap(sets)} ta "
+                         "bir xil savol." + (f" ⚠️ Bank yetmagani uchun chegara {k0} → {k} ga oshirildi."
+                                             if k > k0 else ""))
+            variants = [f"S{i:02d}" for i in range(1, len(roster) + 1)]
+        else:
+            variants = P.assign_variants(len(roster), max(1, t.n_variants))
         booklets, sheets_ = [], []
         for i, (e, v) in enumerate(zip(roster, variants), 1):
-            vq = [q for q in qs if t.n_variants == 1 or q.variant in ("umumiy", v)]
+            if t.n_variants == 0:
+                vq = [by_id[q] for q in sets[i - 1]]
+            else:
+                vq = [q for q in qs if t.n_variants == 1 or q.variant in ("umumiy", v)]
             pp = P.make_paper(v, vq, seed=zlib.crc32(f"{tid}:{e.id}:{t.version}".encode()))
             code = f"T{tid}-{i:02d}"
             paper = TestPaper(test_id=tid, enrollment_id=e.id, code=code, variant=v, qids=pp.qids, perms=pp.perms,
@@ -741,7 +797,8 @@ async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
         except Exception:
             pass
     if report_to:
-        await send(bot, report_to, f"🖨 {len(booklets)} ta o'quvchi uchun varaqlar adminga chop etishga yuborildi.")
+        await send(bot, report_to, f"🖨 {len(booklets)} ta o'quvchi uchun varaqlar adminga chop etishga yuborildi."
+                   + bank_note)
 
 
 @router.callback_query(F.data.startswith("tpr:"))
@@ -881,7 +938,7 @@ async def manual_one(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(pid=pid, tid=p.test_id)
     cur = f"\nHozirgi: <code>{p.answers}</code>" if p.answers else ""
     await c.answer()
-    await c.message.answer(f"<b>{stu.full_name}</b> ({p.code}, {p.variant}-variant){cur}\n\n"
+    await c.message.answer(f"<b>{stu.full_name}</b> ({p.code}, " + ("shaxsiy test" if p.variant.startswith("S") else f"{p.variant}-variant") + f"){cur}\n\n"
                            f"Javob varag'idagi {len(p.key)} ta javobni tartib bilan yozing, masalan:\n"
                            f"<code>{('ABCD' * 20)[:len(p.key)]}</code>\nBo'sh qoldirilgan savol: <b>-</b>",
                            reply_markup=IM(inline_keyboard=[[IB(text="➖ Qatnashmadi", callback_data=f"tab:{pid}")]]))
@@ -1063,8 +1120,10 @@ async def send_request_cards(bot: Bot, chat: int) -> int:
                 except Exception:
                     pass
         status = "🔁 qaytarilgan, qayta yuklash kerak" if t.status == "qaytarildi" else "kutilmoqda"
+        async with Session() as s2:
+            n_st = len(await _paper_roster(s2, t.id))
         await send(bot, chat, f"📨 <b>Test so'rovi #{t.id}</b> ({status})\n{who} · {gname}\nNazorat: {when}\n"
-                              f"Mavzu: {t.topic}\nSavollar: {t.n_questions} ta"
+                              f"Mavzu: {t.topic}\n" + _bank_line(n_st, t.n_questions) + f"Savollar: {t.n_questions} ta"
                               + (f" · {len(t.students)} o'quvchi uchun" if t.students is not None else " · butun guruh")
                               + (f"\nIzoh: {t.review_note}" if t.status == "qaytarildi" and t.review_note else ""),
                    reply_markup=IM(inline_keyboard=[[IB(text="📎 Test faylini yuklash", callback_data=f"tup:{t.id}")]]))

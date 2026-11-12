@@ -80,3 +80,28 @@ def test_discount_amount_and_parse():
     assert isinstance(parse_discount("300000", 300000), str)
     assert name_key("Behruz Hasanov") == name_key("Xasanov Behruz")
     assert name_key("G'ofurov O'tkir") == name_key("Gofurov Otkir")
+
+
+def test_bank_mode_math_and_assignment():
+    from app.logic import papers as P
+    from app.logic import testfile as TF
+    assert P.overlap_limit(30) == 5
+    assert P.bank_min(20, 30, 5) == 145          # 20 o'quvchi × 30 savol, takror ≤ 5 → kamida 145
+    need = P.bank_need(20, 30)
+    assert need["total"] >= 145 and need["oson"] + need["orta"] + need["qiyin"] == need["total"]
+    levels = {i: ("oson" if i < need["oson"] else "orta" if i < need["oson"] + need["orta"] else "qiyin")
+              for i in range(need["total"])}
+    sets = P.assign_bank(levels, 20, 30, 5, seed=3)
+    assert sets and len(sets) == 20 and all(len(x) == 30 for x in sets)
+    assert P.max_overlap(sets) <= 5
+    for x in sets:                                # har o'quvchida 15 / 9 / 6
+        lv = [levels[q] for q in x]
+        assert (lv.count("oson"), lv.count("orta"), lv.count("qiyin")) == (15, 9, 6)
+    # fayl: bank rejimi
+    lines = ["#TEST", "rejim: bank", "savollar_soni: 3", "takror: 1"]
+    for i, lv in enumerate(["oson", "oson", "orta", "qiyin", "oson"], 1):
+        lines += ["#SAVOL", f"id: {i}", "variant: bank", f"qiyinlik: {lv}", "manba: x", f"savol: S{i}?",
+                  "A) a", "B) b", "C) c", "D) d", "javob: B"]
+    tf = TF.parse("\n".join(lines + ["#OXIRI"]))
+    assert not tf.errors, tf.errors
+    assert tf.is_bank and tf.variants == 0 and tf.overlap == 1 and len(tf.questions) == 5
