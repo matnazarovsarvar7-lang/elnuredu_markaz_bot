@@ -514,21 +514,46 @@ async def leave_save(c: CallbackQuery, bot: Bot) -> None:
 
 @router.callback_query(F.data.startswith("rf:"))
 async def refund(c: CallbackQuery, state: FSMContext) -> None:
+    """Pul qaytarish: qayerdan qaytarilganini so'raydi — hisob to'g'ri kassadan kamaysin."""
     from app.bot.pin import need_pin
-    if not c.data.startswith("rf:0") and await need_pin(c, state):
-        return
-    _, eid, amount = c.data.split(":")
-    if eid == "0":
+    parts = c.data.split(":")
+    if parts[1] == "0":
         await c.message.edit_text(c.message.html_text + "\n\n❌ Qaytarilmaydi.")
+        return
+    eid, amount = int(parts[1]), int(parts[2])
+    if len(parts) == 3:
+        await c.answer()
+        await c.message.edit_reply_markup(reply_markup=IM(inline_keyboard=[
+            [IB(text="📥 Moliya qaytardi (o'quvchilar pulidan)", callback_data=f"rf:{eid}:{amount}:m")],
+            [IB(text="👤 O'zim qaytardim (naqd)", callback_data=f"rf:{eid}:{amount}:r")],
+            [IB(text="🏦 Kartadan o'tkazdim", callback_data=f"rf:{eid}:{amount}:k")],
+            [IB(text="❌ Qaytarilmaydi", callback_data="rf:0:0")]]))
+        return
+    src = parts[3]
+    from app.bot.cash import BOSS_REFUND, expected_cash
+    from app.bot.vault import boss_can_pay, money_line
+    async with Session() as s:
+        if src == "m":
+            exp = await expected_cash(s)
+            why = None if exp is None or amount <= exp else f"Moliyada o'quvchilar puli faqat {S.fmt_som(exp)}."
+        else:
+            why = await boss_can_pay(s, amount, "naqd" if src == "r" else "karta")
+    if why:
+        await c.answer(why, show_alert=True)
+        return
+    if await need_pin(c, state, amount):
         return
     t = today()
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
-        s.add(Payment(enrollment_id=int(eid), month=f"{t:%Y-%m}", amount=-int(amount), method="naqd", status="tasdiq",
-                      paid_date=t, entered_by=who.staff.id, confirmed_by=who.staff.id))
-        await S.audit(s, who.staff, "qaytarish", enrollment=int(eid), amount=int(amount))
+        s.add(Payment(enrollment_id=eid, month=f"{t:%Y-%m}", amount=-amount, method="karta" if src == "k" else "naqd",
+                      status="tasdiq", paid_date=t, entered_by=who.staff.id, confirmed_by=who.staff.id,
+                      void_reason=BOSS_REFUND if src == "r" else "qaytarish"))
+        await S.audit(s, who.staff, "qaytarish", enrollment=eid, amount=amount, source=src)
         await s.commit()
-    await c.message.edit_text(c.message.html_text + "\n\n✅ Qaytarildi deb belgilandi.")
+        ml = await money_line(s)
+    where = {"m": "moliya o'quvchilar pulidan", "r": "qo'lingizdagi naqddan", "k": "kartadan"}[src]
+    await c.message.edit_text(c.message.html_text + f"\n\n✅ Qaytarildi ({where}).\n{ml}")
 
 
 @router.callback_query(F.data.startswith("lvp:"))

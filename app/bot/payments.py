@@ -599,7 +599,9 @@ async def _decide(c: CallbackQuery, bot: Bot, ok: bool) -> None:
         enterer = await s.get(Staff, pay.entered_by) if pay.entered_by else None
         enterer_tg = enterer.tg_id if enterer and enterer.tg_id and enterer.tg_id != c.from_user.id else None
         await s.commit()
-    mark = "\n\n✅ Tasdiqlandi" if ok else "\n\n❌ Rad etildi"
+        from app.bot.vault import money_line
+        ml = await money_line(s) if ok and method in ("karta", "kochirish") else ""
+    mark = ("\n\n✅ Tasdiqlandi" + (f"\n{ml}" if ml else "")) if ok else "\n\n❌ Rad etildi"
     if c.message.photo or c.message.document:
         await c.message.edit_caption(caption=(c.message.caption or "") + mark)
     else:

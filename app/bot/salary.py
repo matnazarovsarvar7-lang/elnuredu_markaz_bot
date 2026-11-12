@@ -153,6 +153,8 @@ async def av_amount(m: Message, state: FSMContext, bot: Bot) -> None:
         from app.bot.vault import boss_balance
         free = await free_cash(s)
         bb = await boss_balance(s)
+        from app.bot.vault import card_balance, money_line
+        cb, ml = await card_balance(s), await money_line(s)
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         pid, name = p.id, who.staff.full_name
     await m.answer("✅ Avans so'rovi rahbarga yuborildi.")
@@ -163,7 +165,7 @@ async def av_amount(m: Message, state: FSMContext, bot: Bot) -> None:
     kb = IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data=f"avy:{pid}"), IB(text="❌ Rad", callback_data=f"avn:{pid}")]])
     for b in bosses:
         await send(bot, b, f"💸 <b>Avans so'rovi</b>\n{name}: {S.fmt_som(a)}{lock}"
-                   + (f"\n👤 Sizda: {S.fmt_som(bb)}" + (" — ⚠️ yetmaydi" if a > bb else "") if bb is not None else
+                   + (f"\n{ml}" + (" — ⚠️ jamisi ham yetmaydi" if a > bb + (cb or 0) else "") if bb is not None else
                       "\n⚠️ Kassa hali ochilmagan (💼 Kassa → 🧮 Pulni sanab kiritish)"), reply_markup=kb)
 
 
@@ -205,7 +207,9 @@ async def av_give_amount(m: Message, state: FSMContext) -> None:
         from app.bot.vault import boss_balance
         free = await free_cash(s)
         bb = await boss_balance(s)
-    lock = f"\n👤 Sizda: {S.fmt_som(bb)}" + (" — ⚠️ yetmaydi" if a > bb else "") if bb is not None else ""
+        from app.bot.vault import card_balance, money_line
+        cb, ml = await card_balance(s), await money_line(s)
+    lock = f"\n{ml}" + (" — ⚠️ jamisi ham yetmaydi" if a > bb + (cb or 0) else "") if bb is not None else ""
     if free is not None:
         allowed = int(max(0, free) * SPEND_SHARE)
         lock += f"\nKassa qulfi: {S.fmt_som(allowed)} gacha" + (" ✅" if a <= allowed else " — ⚠️ oshadi")
@@ -269,7 +273,10 @@ async def av_give(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         await s.commit()
         pid, tg, name = p.id, st.tg_id, st.full_name
     await c.answer("Saqlandi")
-    await c.message.edit_text(f"✅ {name}: {S.fmt_som(int(a))} avans {MNAME[method]} berildi. Oy oxirida oylikdan ushlanadi.")
+    from app.bot.vault import money_line
+    async with Session() as s:
+        ml = await money_line(s)
+    await c.message.edit_text(f"✅ {name}: {S.fmt_som(int(a))} avans {MNAME[method]} berildi. Oy oxirida oylikdan ushlanadi.\n{ml}")
     if tg:
         await send(bot, tg, f"💸 Sizga {S.fmt_som(int(a))} avans {MNAME[method]} berildi. Olgach tasdiqlang:",
                    reply_markup=IM(inline_keyboard=[[IB(text="✅ Oldim", callback_data=f"got:{pid}")]]))
@@ -313,7 +320,12 @@ async def av_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         await s.commit()
         st = await s.get(Staff, p.staff_id)
         amt = p.amount
-    await c.message.edit_text(c.message.html_text + (f"\n\n✅ Tasdiqlandi va {MNAME[method]} berildi" if kind == "avy"
+    ml = ""
+    if kind == "avy":
+        from app.bot.vault import money_line
+        async with Session() as s:
+            ml = await money_line(s)
+    await c.message.edit_text(c.message.html_text + (f"\n\n✅ Tasdiqlandi va {MNAME[method]} berildi\n{ml}" if kind == "avy"
                                                      else "\n\n❌ Rad etildi"))
     if st.tg_id:
         if kind == "avy":
@@ -493,7 +505,10 @@ async def salary_given(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         await c.message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
-    await c.message.answer(f"✅ {st.full_name}: {pr.month} oyligi {S.fmt_som(amt)} {MNAME[method]} berildi.")
+    from app.bot.vault import money_line
+    async with Session() as s:
+        ml = await money_line(s)
+    await c.message.answer(f"✅ {st.full_name}: {pr.month} oyligi {S.fmt_som(amt)} {MNAME[method]} berildi.\n{ml}")
     if st.tg_id:
         await send(bot, st.tg_id, f"💰 {pr.month} oyligi {S.fmt_som(amt)} {MNAME[method]} berildi. Olgach tasdiqlang:",
                    reply_markup=IM(inline_keyboard=[[IB(text="✅ Oldim", callback_data=f"got:{pid}")]]))

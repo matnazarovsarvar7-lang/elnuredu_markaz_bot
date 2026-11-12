@@ -20,6 +20,7 @@ from app.db.session import Session
 from app import services as S
 
 router = Router()
+BOSS_REFUND = "qaytarish:rahbar"   # Payment.void_reason: rahbar o'z qo'lidan qaytargan pul
 TZ = ZoneInfo(settings.timezone)
 EARLY_MIN = 15
 
@@ -68,7 +69,8 @@ async def cash_breakdown(s) -> dict | None:
     async def total(q):
         return int((await s.execute(q)).scalar() or 0)
 
-    naqd = Payment.method == "naqd"
+    # rahbar o'z qo'lidan qaytargan pul moliyadagi o'quvchilar puliga tegmaydi
+    naqd = (Payment.method == "naqd") & (func.coalesce(Payment.void_reason, "") != BOSS_REFUND)
     ok = Payment.status == "tasdiq"
     pays = await total(select(func.coalesce(func.sum(Payment.amount), 0)).where(
         naqd, ok, Payment.created_at >= since, Payment.paid_date >= open_day))
@@ -402,10 +404,10 @@ async def ho_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         await s.commit()
         mol = await s.get(Staff, h.by_id) if h.by_id else None
         amt = h.amount
-        from app.bot.vault import boss_balance
-        bal = await boss_balance(s) if h.to_kind == "rahbar" else None
+        from app.bot.vault import money_line
+        line = await money_line(s)
     await c.message.edit_text(c.message.html_text + ("\n\n✅ Qabul qilindi" if kind == "hoy" else "\n\n❌ Mos emas")
-                              + (f"\n👤 Sizda endi: <b>{S.fmt_som(bal)}</b>" if bal is not None and kind == "hoy" else ""))
+                              + (f"\n{line}" if kind == "hoy" and line else ""))
     if mol and mol.tg_id:
         await send(bot, mol.tg_id, f"💼 {S.fmt_som(amt)} topshirish: " +
                    ("✅ rahbar qabul qildi." if kind == "hoy" else "❌ rahbar «mos emas» dedi — bog'laning."))
@@ -450,6 +452,7 @@ async def simple_view() -> tuple[str, IM]:
     else:
         lines += [f"👤 <b>Qo'lingizda (naqd):</b> {S.fmt_som(bi['balance'])}",
                   f"🏦 <b>Kartada:</b> {S.fmt_som(cbal or 0)}",
+                  f"💰 <b>Jami sizda:</b> {S.fmt_som(bi['balance'] + (cbal or 0))}", "",
                   f"📥 <b>Moliyada — o'quvchilar puli:</b> {S.fmt_som(exp or 0)}"
                   + ("  <i>(sizga topshiriladi)</i>" if exp else ""),
                   f"💳 <b>Moliyada — xarajat puli:</b> {S.fmt_som(pb)}", "",
@@ -537,7 +540,8 @@ async def cash_list(c: CallbackQuery) -> None:
             select(Payment, Student.full_name, Staff.full_name)
             .join(Enrollment, Enrollment.id == Payment.enrollment_id).join(Student, Student.id == Enrollment.student_id)
             .outerjoin(Staff, Staff.id == Payment.entered_by)
-            .where(Payment.method == "naqd", Payment.status == "tasdiq", Payment.created_at >= min(start, since))
+            .where(Payment.method == "naqd", Payment.status == "tasdiq", Payment.created_at >= min(start, since),
+                   func.coalesce(Payment.void_reason, "") != BOSS_REFUND)
             .order_by(Payment.created_at))).all()
     lines = [f"📋 <b>Naqd to'lovlar</b> ({open_day:%d.%m} dan beri)",
              f"Boshlang'ich qoldiq sanalgan vaqt: {since + timedelta(hours=5):%d.%m %H:%M}", ""]

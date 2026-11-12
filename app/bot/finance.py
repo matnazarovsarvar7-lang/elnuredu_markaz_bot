@@ -101,7 +101,9 @@ async def exp_start(m: Message, state: FSMContext, tg_id: int | None = None) -> 
     if who.staff.current_role == "moliya":
         head += f"💳 Xarajat pulingiz: <b>{S.fmt_som(pb)}</b>\n"
     elif bb is not None:
-        head += f"👤 Sizda: <b>{S.fmt_som(bb)}</b>\n"
+        from app.bot.vault import money_line
+        async with Session() as s2:
+            head += (await money_line(s2)) + "\n"
     rows = [[IB(text=c, callback_data=f"xc:{i}")] for i, c in enumerate(cats)]
     rows.append([IB(text="📋 Oxirgi xarajatlar / bekor qilish", callback_data="xl")])
     await m.answer(head + "Toifani tanlang:", reply_markup=IM(inline_keyboard=rows))
@@ -187,8 +189,12 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         name = who.staff.full_name
         bb = await boss_balance(s)
+        from app.bot.vault import money_line
+        ml = await money_line(s)
     if boss:
-        tail = f"\n👤 Sizda qoldi: {S.fmt_som(bb)}" if method == "naqd" and bb is not None else ""
+        from app.bot.vault import money_line
+        async with Session() as s2:
+            tail = "\n" + await money_line(s2)
         await m.answer(f"✅ Xarajat saqlandi: {d['cat']} · {S.fmt_som(d['amount'])}" +
                        (" (bank/karta)" if method != "naqd" else "") + "." + tail, reply_markup=AGAIN)
         return
@@ -204,7 +210,7 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
                    reply_markup=AGAIN)
     text = (f"🧾 <b>Moliyaning xarajat puli yetmayapti</b> ({name})\n{d['cat']}: <b>{S.fmt_som(d['amount'])}</b>\n{d['note']}\n"
             f"Xarajat pulida: {S.fmt_som(left)} · yetmayapti: <b>{S.fmt_som(need)}</b>\n"
-            f"Sizda: {S.fmt_som(bb)}")
+            f"{ml}")
     kb = IM(inline_keyboard=[[IB(text=f"💳 {S.fmt_som(need)} berib tasdiqlash", callback_data=f"xk:{eid}")],
                              [IB(text="❌ Rad", callback_data=f"xn:{eid}")]])
     for b in bosses:
@@ -254,7 +260,10 @@ async def exp_topup(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         by = await s.get(Staff, e.by_id) if e.by_id else None
         info = f"{e.category} · {S.fmt_som(e.amount)}"
         pb, bal = await petty_balance(s), await boss_balance(s)
-    note = f"✅ Moliyaga {S.fmt_som(need)} berildi, xarajat tasdiqlandi. Sizda: {S.fmt_som(bal)}"
+    from app.bot.vault import money_line
+    async with Session() as s:
+        ml = await money_line(s)
+    note = f"✅ Moliyaga {S.fmt_som(need)} berildi, xarajat tasdiqlandi.\n{ml}"
     try:
         await c.message.edit_caption(caption=(c.message.caption or "") + f"\n\n{note}")
     except Exception:
@@ -310,7 +319,10 @@ async def petty_ask(c: CallbackQuery, state: FSMContext) -> None:
     if pb is None:
         await c.message.answer("💼 Kassa hali ochilmagan.", reply_markup=kassa_kb(False))
         return
-    await c.message.answer(f"💳 Moliyadagi xarajat puli: <b>{S.fmt_som(pb)}</b>\n👤 Sizda: <b>{S.fmt_som(bb)}</b>",
+    from app.bot.vault import money_line
+    async with Session() as s:
+        ml = await money_line(s)
+    await c.message.answer(f"💳 Moliyadagi xarajat puli: <b>{S.fmt_som(pb)}</b>\n{ml}",
                            reply_markup=kassa_kb(True))
 
 
