@@ -563,7 +563,8 @@ async def pending(m: Message, bot: Bot) -> None:
                     shared = ("\n\n📎 Bitta chek: " + ", ".join(f"{n} {S.fmt_som(a)}" for _, n, a in uses)
                               + f" — jami {S.fmt_som(sum(a for *_, a in uses))}")
             views.append((head, name, sum(x.amount for x in pays), items, shared))
-    if not views:
+    other = await pending_other(bot, m.chat.id)
+    if not views and not other:
         await m.answer("Tasdiq kutayotgan narsa yo'q ✅")
         return
     for head, name, total, items, shared in views:
@@ -655,3 +656,37 @@ async def debts(m: Message) -> None:
         cut = text.rfind("\n", 0, 3800) if len(text) > 3800 else len(text)
         await m.answer(text[:cut])
         text = text[cut:].lstrip("\n")
+
+
+
+async def pending_other(bot: Bot, chat: int) -> int:
+    """Kutilayotganlar: to'lovlardan tashqari — topshirilgan pul, avans so'rovlari, xarajatlar, test so'rovlari."""
+    from sqlalchemy import select
+    from app.db.models import CashHandover, Expense, Payout
+    async with Session() as s:
+        hos = (await s.execute(select(CashHandover, Staff.full_name).outerjoin(Staff, Staff.id == CashHandover.by_id)
+                               .where(CashHandover.status == "kutilmoqda", CashHandover.to_kind == "rahbar"))).all()
+        avs = (await s.execute(select(Payout, Staff.full_name).join(Staff, Staff.id == Payout.staff_id)
+                               .where(Payout.status == "kutilmoqda", Payout.kind == "avans"))).all()
+        exs = (await s.execute(select(Expense, Staff.full_name).outerjoin(Staff, Staff.id == Expense.by_id)
+                               .where(Expense.status == "kutilmoqda"))).all()
+    n = 0
+    for h, nm in hos:
+        n += 1
+        await send(bot, chat, f"💼 <b>Sizga topshirilgan pul</b>\n{nm or ''}: {S.fmt_som(h.amount)} — konvertni sanab tasdiqlang",
+                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Qabul qildim", callback_data=f"hoy:{h.id}"),
+                                                     IB(text="❌ Mos emas", callback_data=f"hon:{h.id}")]]))
+    for p, nm in avs:
+        n += 1
+        await send(bot, chat, f"💸 <b>Avans so'rovi</b>\n{nm}: {S.fmt_som(p.amount)}",
+                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data=f"avy:{p.id}"),
+                                                     IB(text="❌ Rad", callback_data=f"avn:{p.id}")]]))
+    for e, nm in exs:
+        n += 1
+        ok = f"xk:{e.id}" if e.source == "kichik" else f"xy:{e.id}"
+        await send(bot, chat, f"🧾 <b>Xarajat</b> ({nm or ''})\n{e.category}: {S.fmt_som(e.amount)}\n{e.note or ''}",
+                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data=ok),
+                                                     IB(text="❌ Rad", callback_data=f"xn:{e.id}")]]))
+    from app.bot.tests_flow import send_request_cards
+    n += await send_request_cards(bot, chat)
+    return n

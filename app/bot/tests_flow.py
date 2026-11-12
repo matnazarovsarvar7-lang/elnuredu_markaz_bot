@@ -59,6 +59,10 @@ async def tests_menu(m: Message, state: FSMContext) -> None:
     rows = []
     if st.current_role != "rahbar":
         rows.append([IB(text="📨 Rahbardan test so'rash", callback_data="tsq:new")])
+    else:
+        async with Session() as s:
+            n_req = len(await pending_requests(s))
+        rows.append([IB(text=f"📥 Kelgan so'rovlar ({n_req})", callback_data="tsr:list")])
     rows.append([IB(text="📎 Tayyor testni yuklash (.txt)", callback_data="tsu:new")])
     rows.append([IB(text="📋 Testlar holati", callback_data="tsl:list")])
     await m.answer("📚 <b>Testlar</b>\n\n"
@@ -1025,3 +1029,55 @@ async def tests_list(c: CallbackQuery) -> None:
     kb = [[IB(text=f"📎 #{t.id} faylini yuklash", callback_data=f"tup:{t.id}")]
           for t, _ in rows if _is_boss(st) and t.status in ("sorov", "qaytarildi")]
     await c.message.answer("📋 <b>Testlar</b>\n" + "\n".join(lines), reply_markup=IM(inline_keyboard=kb) if kb else None)
+
+
+
+# ================= rahbar: kelgan test so'rovlari =================
+async def pending_requests(s) -> list[tuple[Test, str, str]]:
+    rows = (await s.execute(select(Test, Group.name, Staff.full_name).join(Group, Group.id == Test.group_id)
+                            .outerjoin(Staff, Staff.id == Test.requested_by)
+                            .where(Test.status.in_(("sorov", "qaytarildi"))).order_by(Test.id))).all()
+    return [(t, g, n or "") for t, g, n in rows]
+
+
+async def send_request_cards(bot: Bot, chat: int) -> int:
+    """Har bir kutilayotgan so'rov: materiallar (rasm/PDF) + «📎 Test faylini yuklash»."""
+    async with Session() as s:
+        reqs = await pending_requests(s)
+        exams = {t.exam_id: await s.get(Exam, t.exam_id) for t, *_ in reqs if t.exam_id}
+    for t, gname, who in reqs:
+        ex = exams.get(t.exam_id)
+        when = (_exam_label(ex) if ex else
+                f"{date.fromisoformat(t.meta['sana']):%d.%m.%Y}" if (t.meta or {}).get("sana") else "sana aniq emas")
+        files = t.photos or []
+        imgs = [f for f in files if not f.startswith("doc:")]
+        for i in range(0, len(imgs), 10):
+            try:
+                await bot.send_media_group(chat, [InputMediaPhoto(media=f) for f in imgs[i:i + 10]])
+            except Exception:
+                pass
+        for f in files:
+            if f.startswith("doc:"):
+                try:
+                    await bot.send_document(chat, f[4:])
+                except Exception:
+                    pass
+        status = "🔁 qaytarilgan, qayta yuklash kerak" if t.status == "qaytarildi" else "kutilmoqda"
+        await send(bot, chat, f"📨 <b>Test so'rovi #{t.id}</b> ({status})\n{who} · {gname}\nNazorat: {when}\n"
+                              f"Mavzu: {t.topic}\nSavollar: {t.n_questions} ta"
+                              + (f" · {len(t.students)} o'quvchi uchun" if t.students is not None else " · butun guruh")
+                              + (f"\nIzoh: {t.review_note}" if t.status == "qaytarildi" and t.review_note else ""),
+                   reply_markup=IM(inline_keyboard=[[IB(text="📎 Test faylini yuklash", callback_data=f"tup:{t.id}")]]))
+    return len(reqs)
+
+
+@router.callback_query(F.data == "tsr:list")
+async def requests_list(c: CallbackQuery, bot: Bot) -> None:
+    async with Session() as s:
+        st = await _staff(s, c.from_user.id)
+    if not _is_boss(st):
+        await c.answer("Faqat rahbar.", show_alert=True)
+        return
+    await c.answer()
+    if not await send_request_cards(bot, c.message.chat.id):
+        await c.message.answer("📥 Kutilayotgan test so'rovi yo'q ✅")

@@ -113,6 +113,28 @@ async def set_role(c: CallbackQuery) -> None:
         await s.commit()
     await c.message.delete()
     await show_menu(c.message, who)
+    if role == "rahbar":
+        await _boss_waiting(c.message)
+
+
+async def _boss_waiting(msg: Message) -> None:
+    """Rahbar roliga o'tganda: nima tasdiq kutmoqda (qisqa ro'yxat)."""
+    from app.bot.tests_flow import pending_requests
+    from app.db.models import CashHandover, Expense, Payout
+    from sqlalchemy import func
+    async with Session() as s:
+        pays = len(await S.pending_payments(s))
+        tests = len(await pending_requests(s))
+        hos = (await s.execute(select(func.count(CashHandover.id)).where(
+            CashHandover.status == "kutilmoqda", CashHandover.to_kind == "rahbar"))).scalar()
+        avs = (await s.execute(select(func.count(Payout.id)).where(
+            Payout.status == "kutilmoqda", Payout.kind == "avans"))).scalar()
+        exs = (await s.execute(select(func.count(Expense.id)).where(Expense.status == "kutilmoqda"))).scalar()
+    items = [(pays, "to'lov cheki"), (hos, "topshirilgan pul"), (avs, "avans so'rovi"), (exs, "xarajat"),
+             (tests, "test so'rovi")]
+    items = [f"• {n} ta {t}" for n, t in items if n]
+    if items:
+        await msg.answer("⏳ <b>Sizni kutmoqda:</b>\n" + "\n".join(items) + "\n\n«⏳ Kutilayotganlar» tugmasini bosing.")
 
 
 # ---------- o'qituvchi: davomat va vazifa ----------
