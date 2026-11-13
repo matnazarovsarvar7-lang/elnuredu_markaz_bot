@@ -471,6 +471,7 @@ async def up_file(m: Message, state: FSMContext, bot: Bot) -> None:
         await s.execute(delete(TestQuestion).where(TestQuestion.test_id == t.id))
         for q in tf.questions:
             s.add(TestQuestion(test_id=t.id, qid=q.qid, variant=q.variant, level=q.level, source=q.source[:120],
+                               figure=q.figure or None,
                                text=q.text, options=q.options, answer=q.answer))
         t.n_questions, t.n_variants, t.common = tf.n, tf.variants, tf.common
         planned = d.get("planned") or (t.meta or {}).get("sana")      # so'rovdagi sana yo'qolmasin
@@ -484,6 +485,8 @@ async def up_file(m: Message, state: FSMContext, bot: Bot) -> None:
         await S.audit(s, st, "test_yuklash", test=t.id, version=t.version)
         await s.commit()
         tid = t.id
+    n_fig = sum(1 for q in tf.questions if q.figure)
+    fig_note = f"\n🖼 Chizmali savollar: {n_fig} ta (varaqlarda rasm bo'lib chiqadi)." if n_fig else ""
     if tf.is_bank:
         lv = TF.level_counts(tf.questions)
         async with Session() as s:
@@ -500,6 +503,7 @@ async def up_file(m: Message, state: FSMContext, bot: Bot) -> None:
         lv = TF.level_counts(tf.variant_questions("A"))
         summary = (f"✅ Fayl qabul qilindi (#{tid}, {tf.n} savol, {tf.variants} variant).\n"
                    f"A-variant qiyinligi: oson {lv['oson']}, o'rta {lv['orta']}, qiyin {lv['qiyin']}.")
+    summary += fig_note
     if tf.warnings:
         summary += "\n⚠️ " + "\n⚠️ ".join(tf.warnings[:5])
     if own:
@@ -549,7 +553,7 @@ async def _review_file(s, t: Test) -> bytes:
     g = await s.get(Group, t.group_id)
     qs = (await s.execute(select(TestQuestion).where(TestQuestion.test_id == t.id)
                           .order_by(TestQuestion.variant, TestQuestion.qid))).scalars().all()
-    rows = [(q.qid, q.variant, q.level, q.source or "", q.text, q.options, q.answer) for q in qs]
+    rows = [(q.qid, q.variant, q.level, q.source or "", q.text, q.options, q.answer, q.figure) for q in qs]
     return SH.review_pdf(f"#{t.id} · {g.name} · {t.topic} · {t.version}-nusxa", rows)
 
 
@@ -654,6 +658,8 @@ async def fix_rewrite(m: Message, state: FSMContext) -> None:
     async with Session() as s:
         tq = await s.get(TestQuestion, d["tq"])
         tq.text, tq.options, tq.answer = q.text, q.options, q.answer
+        if q.figure:                         # yangi chizma yuborilsa — almashtiriladi, aks holda eskisi qoladi
+            tq.figure = q.figure
         st = await _staff(s, m.from_user.id)
         await S.audit(s, st, "test_tuzatish", test=tq.test_id, q=tq.qid, rewrite=True)
         await s.commit()
@@ -686,7 +692,7 @@ async def return_send(m: Message, state: FSMContext, bot: Bot) -> None:
         await s.commit()
         qs = (await s.execute(select(TestQuestion).where(TestQuestion.test_id == t.id)
                               .order_by(TestQuestion.qid))).scalars().all()
-        txt = TF.render(t.meta or {}, [TF.Q(q.qid, q.variant, q.level, q.source or "", q.text, q.options, q.answer)
+        txt = TF.render(t.meta or {}, [TF.Q(q.qid, q.variant, q.level, q.source or "", q.text, q.options, q.answer, q.figure or "")
                                        for q in qs])
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         g = await s.get(Group, t.group_id)
@@ -794,7 +800,7 @@ async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
             qtexts = []
             for qid, perm in zip(pp.qids, pp.perms):
                 q = by_id[qid]
-                qtexts.append((q.text, [q.options[j] for j in perm]))
+                qtexts.append((q.text, [q.options[j] for j in perm], q.figure))
             booklets.append(SH.BookletItem(e.student.full_name, g.name, f"{day:%d.%m.%Y}", code, v, title, qtexts))
             sheets_.append(SH.SheetInfo(paper.id, e.student.full_name, g.name, f"{day:%d.%m.%Y}", code, v,
                                         len(pp.qids), title))

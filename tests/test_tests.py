@@ -105,3 +105,20 @@ def test_bank_mode_math_and_assignment():
     tf = TF.parse("\n".join(lines + ["#OXIRI"]))
     assert not tf.errors, tf.errors
     assert tf.is_bank and tf.variants == 0 and tf.overlap == 1 and len(tf.questions) == 5
+
+
+def test_question_figure_svg():
+    from app.logic import testfile as TF, sheets as SH, figures as FG
+    svg = ('<svg viewBox="0 0 200 150" width="200" height="150"><polygon points="20,130 180,130 100,20" '
+           'fill="none" stroke="black" stroke-width="2"/><text x="10" y="145" font-size="14">A</text></svg>')
+    src = ("#TEST\nsavollar_soni: 1\n#SAVOL\nid: 1\nvariant: A\nqiyinlik: oson\nmanba: x\nsavol: Uchburchak perimetri?\n"
+           "chizma:\n" + svg.replace("><", ">\n<") + "\nA) 10\nB) 20\nC) 30\nD) 40\njavob: B\n#OXIRI")
+    tf = TF.parse(src)
+    assert not tf.errors, tf.errors
+    assert tf.questions[0].figure.startswith("<svg") and tf.questions[0].options[0] == "10"
+    assert TF.parse(TF.render(tf.meta, tf.questions)).questions[0].figure       # qayta yozishda saqlanadi
+    assert FG.check('<svg><image href="http://x/y.png"/></svg>')                 # tashqi rasm taqiqlangan
+    assert FG.check('<svg><script>alert(1)</script></svg>')
+    pdf = SH.booklets_pdf([SH.BookletItem("Ali", "G", "13.11.2026", "K1", "A", "T",
+                                          [("Uchburchak perimetri?", ["10", "20", "30", "40"], svg)])], "ELNUR")
+    assert pdf[:4] == b"%PDF" and len(pdf) > 1500

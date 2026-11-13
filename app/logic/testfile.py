@@ -11,6 +11,8 @@ variant: umumiy | A | B | C | D
 qiyinlik: oson | orta | qiyin
 manba: ...
 savol: ...
+chizma:            (ixtiyoriy — SVG, keyingi qatordan </svg> gacha)
+<svg ...> ... </svg>
 A) ...
 B) ...
 C) ...
@@ -37,6 +39,7 @@ class Q:
     text: str
     options: list[str]
     answer: str             # "A".."D"
+    figure: str = ""        # SVG chizma (bo'lmasa — bo'sh)
 
 
 @dataclass
@@ -111,7 +114,21 @@ def _parse_q(block: str, i: int, errors: list[str]) -> Q | None:
     fields: dict[str, str] = {}
     opts: dict[str, str] = {}
     cur = None
+    svg: list[str] | None = None
     for line in block.strip().splitlines():
+        if svg is not None:                      # chizma ichida: </svg> gacha hammasi SVG
+            svg.append(line)
+            if "</svg>" in line.lower():
+                fields["chizma"] = "\n".join(svg).strip()
+                svg, cur = None, None
+            continue
+        m_fig = re.match(r"^\s*chizma\s*:\s*(.*)$", line, flags=re.I)
+        if m_fig:
+            rest = m_fig.group(1).strip()
+            svg = [rest] if rest else []
+            if rest and "</svg>" in rest.lower():
+                fields["chizma"], svg = rest, None
+            continue
         m_opt = re.match(r"^\s*([A-Da-d])\s*[\)\.]\s*(.+)$", line)
         m_key = re.match(r"^\s*(id|variant|qiyinlik|manba|savol|javob)\s*:\s*(.*)$", line, flags=re.I)
         if m_key:
@@ -127,6 +144,13 @@ def _parse_q(block: str, i: int, errors: list[str]) -> Q | None:
                 fields[cur] += "\n" + line.strip()
     label = f"{fields.get('id', i)}-savol"
     bad = []
+    if svg is not None:
+        bad.append("chizma </svg> bilan yopilmagan")
+    if fields.get("chizma"):
+        from app.logic.figures import check
+        err = check(fields["chizma"])
+        if err:
+            bad.append(err)
     if not fields.get("savol"):
         bad.append("savol matni yo'q")
     missing = [x for x in LETTERS if not opts.get(x)]
@@ -149,7 +173,8 @@ def _parse_q(block: str, i: int, errors: list[str]) -> Q | None:
         qid = int(fields.get("id", i))
     except ValueError:
         qid = i
-    return Q(qid, variant, level, fields.get("manba", ""), fields["savol"], [opts[x] for x in LETTERS], ans)
+    return Q(qid, variant, level, fields.get("manba", ""), fields["savol"], [opts[x] for x in LETTERS], ans,
+             fields.get("chizma", ""))
 
 
 def _validate(tf: TestFile) -> None:
@@ -213,6 +238,8 @@ def render(meta: dict, questions: list[Q]) -> str:
     for q in questions:
         lines += ["#SAVOL", f"id: {q.qid}", f"variant: {q.variant}", f"qiyinlik: {q.level}",
                   f"manba: {q.source}", f"savol: {q.text}"]
+        if q.figure:
+            lines += ["chizma:", q.figure]
         lines += [f"{x}) {o}" for x, o in zip(LETTERS, q.options)]
         lines.append(f"javob: {q.answer}")
     lines.append("#OXIRI")

@@ -350,6 +350,7 @@ class TestQuestion(Base):
     text: Mapped[str] = mapped_column(Text)
     options: Mapped[list] = mapped_column(JSON)
     answer: Mapped[str] = mapped_column(String(20))
+    figure: Mapped[str | None] = mapped_column(Text)        # SVG chizma
 
 
 class TestPaper(Base):

@@ -125,7 +125,7 @@ class BookletItem:
     code: str
     variant: str
     title: str
-    questions: list[tuple[str, list[str]]]   # (savol, [A,B,C,D] varaqdagi tartibda)
+    questions: list[tuple]   # (savol, [A,B,C,D] varaqdagi tartibda[, SVG chizma])
 
 
 def booklets_pdf(items: list[BookletItem], center: str) -> bytes:
@@ -147,8 +147,12 @@ def booklets_pdf(items: list[BookletItem], center: str) -> bytes:
                     Paragraph("Javoblarni JAVOB VARAG'IGA belgilang", meta)]], colWidths=[105 * mm, 73 * mm])
         t.setStyle(TableStyle([("LINEBELOW", (0, 1), (-1, 1), 0.8, "#16202c"), ("BOTTOMPADDING", (0, 1), (-1, 1), 6)]))
         story += [t, Spacer(1, 4)]
-        for i, (q, opts) in enumerate(it.questions, 1):
+        for i, item in enumerate(it.questions, 1):
+            q, opts = item[0], item[1]
             block = [Paragraph(f"{i}. {_e(q)}", qs)]
+            fig = _figure(item[2] if len(item) > 2 else None)
+            if fig:
+                block += [Spacer(1, 3), fig, Spacer(1, 3)]
             block += [Paragraph(f"{x}) {_e(o)}", op) for x, o in zip("ABCD", opts)]
             story.append(KeepTogether(block))
     doc.build(story)
@@ -166,8 +170,12 @@ def review_pdf(title: str, rows: list[tuple[int, str, str, str, str, list[str], 
     ok = ParagraphStyle("ok", parent=op, fontName=_BOLD, textColor="#0f7c74")
     small = ParagraphStyle("s", fontName=_FONT, fontSize=8, leading=10, textColor="#5b6675", leftIndent=14)
     story = [Paragraph(_e(title), h), Spacer(1, 4)]
-    for qid, var, lvl, src, q, opts, ans in rows:
+    for row in rows:
+        qid, var, lvl, src, q, opts, ans = row[:7]
         block = [Paragraph(f"#{qid} · {var} · {lvl}", small), Paragraph(_e(q), qs)]
+        fig = _figure(row[7] if len(row) > 7 else None)
+        if fig:
+            block += [Spacer(1, 3), fig, Spacer(1, 3)]
         block += [Paragraph(f"{x}) {_e(o)}" + ("  — to'g'ri javob" if x == ans else ""), ok if x == ans else op)
                   for x, o in zip("ABCD", opts)]
         if src:
@@ -175,6 +183,18 @@ def review_pdf(title: str, rows: list[tuple[int, str, str, str, str, list[str], 
         story.append(KeepTogether(block))
     doc.build(story)
     return buf.getvalue()
+
+
+def _figure(svg: str | None):
+    """Savol chizmasi (SVG) — ko'pi bilan 85×65 mm, chapdan surilgan holda."""
+    if not svg:
+        return None
+    from app.logic.figures import to_drawing
+    d = to_drawing(svg, 85, 65)
+    if d is None:
+        return None
+    d.hAlign = "LEFT"
+    return d
 
 
 def _e(s: str) -> str:
