@@ -89,11 +89,17 @@ async def _open_student(msg: Message, state: FSMContext, sid: int, edit: bool) -
     """Xodim uchun bitta ekran: qarz + summa tugmalari (yoki summani yozish)."""
     t = today()
     async with Session() as s:
-        if not await S.student_enrollments(s, sid):
-            await msg.answer("Bu o'quvchi hech qaysi guruhda emas.")
-            return
         sd = await S.student_debt(s, sid, t.year, t.month)
+        old = await S.left_debts(s, sid, before=date(t.year, t.month, 1))
+        if not sd.parts and not old:
+            await s.commit()
+            await msg.answer("Bu o'quvchi hech qaysi guruhda emas va qarzi yo'q.")
+            return
         label = (await S.student_labels(s, [sd.student]))[sid]
+        await s.commit()
+    if old and not sd.parts:                  # guruhdan ketgan, eski oydan qarzi qolgan
+        await _open_left(msg, state, sd.student.full_name, sid, old, label)
+        return
     tail = label.split("☎")[-1] if "☎" in label else ""
     lines = [f"<b>{sd.student.full_name}</b> · {t:%m.%Y}" + (f" · ota-ona ☎{tail}" if tail else "")]
     for p in sd.parts:
@@ -105,17 +111,40 @@ async def _open_student(msg: Message, state: FSMContext, sid: int, edit: bool) -
     if len(sd.parts) > 1:
         rows += [[IB(text=f"Faqat {p.enrollment.group.name}: {S.fmt_som(p.debt)}",
                      callback_data=f"pq:{sid}:{p.enrollment.id}:{p.debt}")] for p in sd.parts if p.debt]
+    for st in old:                            # boshqa guruhdan ketgandagi eski qarz
+        e = st.enrollment
+        lines.append(f"🚪 {e.group.name} (ketgan {e.left_date:%d.%m.%Y}): eski qarz {S.fmt_som(st.debt)}")
+        rows.append([IB(text=f"🚪 Eski qarz · {e.group.name}: {S.fmt_som(st.debt)}",
+                        callback_data=f"pq:{sid}:{e.id}:{st.debt}")])
     rows.append([IB(text="👤 Kartasi", callback_data=f"st:{sid}")])
     d = await state.get_data()
     await state.set_state(Pay.amount)
     await state.update_data(mode="all", sid=sid, eid=None, month=month_key(t), name=sd.student.full_name,
-                            last=d.get("last"))
+                            last=d.get("last"), lock_month=False)
     text = "\n".join(lines) + ("\n\nTugmani bosing yoki summani yozing (masalan 300000):" if sd.debt else
                                "\n\nQarzi yo'q ✅ Oldindan to'lov bo'lsa, summani yozing:")
     if edit:
         await msg.edit_text(text, reply_markup=IM(inline_keyboard=rows))
     else:
         await msg.answer(text, reply_markup=IM(inline_keyboard=rows))
+
+
+async def _open_left(msg: Message, state: FSMContext, name: str, sid: int, old: list, label: str) -> None:
+    tail = label.split("☎")[-1] if "☎" in label else ""
+    lines = [f"<b>{name}</b> · 🚪 guruhdan ketgan" + (f" · ota-ona ☎{tail}" if tail else ""), ""]
+    for st in old:
+        e = st.enrollment
+        lines.append(f"• {e.group.name} ({e.left_date:%m.%Y}, ketgan {e.left_date:%d.%m}): "
+                     f"qarz <b>{S.fmt_som(st.debt)}</b>")
+    rows = [[IB(text=f"✅ {st.enrollment.group.name}: {S.fmt_som(st.debt)}",
+                callback_data=f"pq:{sid}:{st.enrollment.id}:{st.debt}")] for st in old]
+    first = old[0].enrollment
+    d = await state.get_data()
+    await state.set_state(Pay.amount)
+    await state.update_data(mode="one", sid=sid, eid=first.id, month=month_key(first.left_date), lock_month=True,
+                            name=name, last=d.get("last"))
+    await msg.answer("\n".join(lines) + "\n\nTugmani bosing yoki summani yozing:",
+                     reply_markup=IM(inline_keyboard=rows))
 
 
 @router.callback_query(F.data.startswith("pq:"))
@@ -125,10 +154,14 @@ async def pay_quick_amount(c: CallbackQuery, state: FSMContext) -> None:
     if d.get("sid") != int(sid):
         await _open_student(c.message, state, int(sid), edit=False)
         d = await state.get_data()
-    if target != "a":
+    if target == "a":
+        await state.update_data(mode="all", eid=None, month=month_key(today()), lock_month=False)
+    else:
         async with Session() as s:
             e = await s.get(Enrollment, int(target), options=[selectinload(Enrollment.group)])
         await state.update_data(mode="one", eid=e.id)
+        if not e.active and e.left_date and month_key(e.left_date) != month_key(today()):
+            await state.update_data(month=month_key(e.left_date), lock_month=True)   # ketgan oyi hisobiga
     await c.answer()
     await _got_amount(c.message, state, int(amount), c.from_user.id)
 
@@ -279,7 +312,8 @@ async def pay_method_date(c: CallbackQuery, state: FSMContext, bot: Bot) -> None
         if not last:
             return
         paid = date.fromisoformat(last["paid"])
-        await state.update_data(method=last["method"], paid=paid.isoformat(), month=month_key(paid))
+        await state.update_data(method=last["method"], paid=paid.isoformat(),
+                                **({} if d.get("lock_month") else {"month": month_key(paid)}))
         await c.message.edit_text(f"{_last_text(last)} ✅")
         await _after_date(c.message, state, bot, c.from_user.id)
         return
@@ -341,7 +375,8 @@ async def pay_date_custom(m: Message, state: FSMContext, bot: Bot) -> None:
     if (t - d).days > 62:
         await m.answer("Juda eski sana. Oxirgi 2 oy ichidagi sanani yozing.")
         return
-    await state.update_data(paid=d.isoformat(), month=month_key(d))
+    lock = (await state.get_data()).get("lock_month")
+    await state.update_data(paid=d.isoformat(), **({} if lock else {"month": month_key(d)}))
     await _after_date(m, state, bot, m.from_user.id)
 
 
@@ -384,6 +419,8 @@ async def _save(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> None:
     async with Session() as s:
         who = await S.who_by_tg(s, tg_id)
         res = await _record(s, d, who, "tasdiq")
+        await s.flush()
+        closed = await S.settle_left_debts(s, d["sid"])
         y, m = map(int, d["month"].split("-"))
         sd = await S.student_debt(s, d["sid"], y, m)
         parents = await S.parent_tg_ids(s, d["sid"])
@@ -395,7 +432,8 @@ async def _save(msg: Message, state: FSMContext, bot: Bot, tg_id: int) -> None:
     paid = date.fromisoformat(d["paid"])
     await _next_series(state, d)
     await msg.answer(f"✅ Saqlandi: {d['name']} · {S.fmt_som(d['amount'])} "
-                     f"({METHOD[d['method']].lower()}, {paid:%d.%m}).{_breakdown(items)}\n\n"
+                     f"({METHOD[d['method']].lower()}, {paid:%d.%m}).{_breakdown(items)}\n"
+                     + (f"🚪 Ketgan o'quvchi qarzi yopildi: {', '.join(closed)} ✅\n" if closed else "") + "\n"
                      "➡️ <b>Keyingi o'quvchi ismini yozing</b> (tugatish — menyudagi istalgan tugma).",
                      reply_markup=IM(inline_keyboard=[[IB(text=f"↩️ Xato kiritildi — bekor qilish ({UNDO_MIN} daqiqa)",
                                                           callback_data=f"pxu:{pid}")]]) if pid else None)
@@ -655,6 +693,9 @@ async def _decide(c: CallbackQuery, bot: Bot, ok: bool) -> None:
                 coins += await S.confirm_payment(s, p, who.staff)
             else:
                 await S.reject_payment(s, p, who.staff)
+        if ok:
+            await s.flush()
+            await S.settle_left_debts(s, sid)
         y, m = map(int, pay.month.split("-"))
         left = (await S.student_debt(s, sid, y, m)).debt
         parents = await S.parent_tg_ids(s, sid)
@@ -704,15 +745,25 @@ async def debts(m: Message) -> None:
     t = today()
     async with Session() as s:
         items = await S.student_debtors(s, t.year, t.month)
-    if not items:
+        old = await S.left_debts(s, before=date(t.year, t.month, 1))
+        await s.commit()
+    if not items and not old:
         await m.answer(f"{t:%m.%Y}: qarzdor yo'q ✅")
         return
     out = [f"<b>Qarzdorlar · {t:%m.%Y}</b>"]
     for sd in items:
         groups = ", ".join(p.enrollment.group.name for p in sd.parts)
         out.append(f"• <b>{sd.student.full_name}</b> — {S.fmt_som(sd.debt)}\n   {groups}")
+    if not items:
+        out.append("Bu oy qarzdor yo'q ✅")
+    if old:
+        out.append("\n<b>🚪 Guruhdan ketganlar qarzi</b>")
+        for st in old:
+            e = st.enrollment
+            out.append(f"• <b>{e.student.full_name}</b> — {S.fmt_som(st.debt)}\n   {e.group.name}, ketgan {e.left_date:%d.%m.%Y}")
     if who.staff.current_role == "rahbar" or t.day > 25:
-        out.append(f"\nJami: {len(items)} o'quvchi, {S.fmt_som(sum(x.debt for x in items))}")
+        out.append(f"\nJami: {len(items) + len(old)} ta, "
+                   f"{S.fmt_som(sum(x.debt for x in items) + sum(x.debt for x in old))}")
     text = "\n".join(out)
     while text:
         cut = text.rfind("\n", 0, 3800) if len(text) > 3800 else len(text)

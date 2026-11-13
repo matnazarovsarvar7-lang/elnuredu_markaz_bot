@@ -462,16 +462,23 @@ async def leave_confirm(c: CallbackQuery) -> None:
     diff = st.paid - st.payable
     money = (f"Bu oy: hisob {S.fmt_som(st.payable)} (oxirgi dars {t:%d.%m} gacha), to'langan {S.fmt_som(st.paid)}.\n"
              + (f"↩️ Qaytariladigan pul: <b>{S.fmt_som(diff)}</b> — rahbar tasdig'iga boradi." if diff > 0 else
-                f"Qarz: <b>{S.fmt_som(-diff)}</b>." if diff < 0 else "Hisob teng."))
+                f"⚠️ Qarz: <b>{S.fmt_som(-diff)}</b>\n\n<b>Qarzni to'laydimi?</b>" if diff < 0 else "Hisob teng."))
+    if diff < 0:                               # qarz bor — qanday hal bo'lishini so'raymiz
+        kb = [[IB(text="💵 Hozir to'laydi", callback_data=f"lvy:{eid}:{code}:p")],
+              [IB(text="📅 Keyinroq to'laydi (qarzdor bo'lib qoladi)", callback_data=f"lvy:{eid}:{code}:l")],
+              [IB(text="🤝 Qarz kechiriladi (rahbar qarori)", callback_data=f"lvy:{eid}:{code}:k")],
+              [IB(text="❌ Bekor", callback_data=f"en:{eid}")]]
+    else:
+        kb = [[IB(text="✅ Tasdiqlash", callback_data=f"lvy:{eid}:{code}"), IB(text="❌ Bekor", callback_data=f"en:{eid}")]]
     await c.message.edit_text(f"🚪 <b>{name}</b> «{gname}» guruhidan chiqariladi.\n"
-                              f"Sabab: {LEAVE_REASONS[code]}\n{money}",
-                              reply_markup=IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data=f"lvy:{eid}:{code}"),
-                                                                IB(text="❌ Bekor", callback_data=f"en:{eid}")]]))
+                              f"Sabab: {LEAVE_REASONS[code]}\n{money}", reply_markup=IM(inline_keyboard=kb))
 
 
 @router.callback_query(F.data.startswith("lvy:"))
-async def leave_save(c: CallbackQuery, bot: Bot) -> None:
-    _, eid, code = c.data.split(":")
+async def leave_save(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
+    parts = c.data.split(":")
+    eid, code = parts[1], parts[2]
+    how = parts[3] if len(parts) > 3 else ""          # p — hozir to'laydi, l — keyin, k — kechiriladi
     t = today()
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
@@ -485,6 +492,11 @@ async def leave_save(c: CallbackQuery, bot: Bot) -> None:
         e.left_date = t
         st = await S.month_status(s, e, t.year, t.month)
         e.active = False
+        debt = max(0, st.payable - st.paid)
+        boss = who.staff.current_role == "rahbar"
+        if debt and how:
+            e.leave_debt = debt
+            e.leave_debt_status = ("kechirildi" if how == "k" and boss else "kutilmoqda")
         await _sync_student_status(s, e.student)
         await S.audit(s, who.staff, "ketdi", student=e.student.full_name, group=e.group.name,
                       reason=LEAVE_REASONS[code])
@@ -493,10 +505,40 @@ async def leave_save(c: CallbackQuery, bot: Bot) -> None:
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         teacher = await s.get(Staff, e.group.teacher_id) if e.group.teacher_id else None
         name, gname, refund = e.student.full_name, e.group.name, st.paid - st.payable
-    await c.message.edit_text(f"✅ {name} «{gname}» guruhidan chiqarildi ({t:%d.%m.%Y}). Coinlari va tarixi saqlanadi.")
+        sid = e.student_id
+        fins = [x.tg_id for x in await S.staff_with_role(s, "moliya") if x.tg_id]
+        actor = who.staff.full_name
+    debt_txt = {"p": f"\n💵 Qarz {S.fmt_som(debt)} — hozir to'lanadi.",
+                "l": f"\n📅 Qarz {S.fmt_som(debt)} — keyinroq to'laydi. «📒 Qarzdorlar» ro'yxatida turadi.",
+                "k": (f"\n🤝 Qarz {S.fmt_som(debt)} kechirildi." if boss else
+                      f"\n🤝 Qarzni kechirish ({S.fmt_som(debt)}) rahbar tasdig'iga yuborildi; tasdiqlanguncha qarz turadi.")
+                }.get(how, "") if debt else ""
+    await c.message.edit_text(f"✅ {name} «{gname}» guruhidan chiqarildi ({t:%d.%m.%Y}). Coinlari va tarixi saqlanadi."
+                              + debt_txt)
     for x in fam:
         await send(bot, x, f"{name} «{gname}» guruhidagi o'qishini yakunladi. Biz bilan o'qiganingiz uchun rahmat! "
-                           "Har doim qaytishingizni kutamiz.")
+                           "Har doim qaytishingizni kutamiz."
+                   + (f"\n\nHisob-kitob: {S.fmt_som(debt)} to'lov qolgan. Iltimos, imkon qadar tezroq to'lang."
+                      if debt and how == "l" else ""))
+    if debt and how == "l":
+        for f in set(fins) | set(bosses):
+            if f != c.from_user.id:
+                await send(bot, f, f"📅 {name} «{gname}» guruhidan ketdi, qarzini keyinroq to'laydi: "
+                                   f"<b>{S.fmt_som(debt)}</b>. «📒 Qarzdorlar» ro'yxatida turadi.")
+    if debt and how == "p":
+        if await _can_pay(c.from_user.id):
+            from app.bot.payments import _open_student
+            await _open_student(c.message, state, sid, edit=False)
+        else:
+            for f in fins:
+                await send(bot, f, f"💵 {name} guruhdan ketdi va qarzini hozir to'laydi: <b>{S.fmt_som(debt)}</b>. "
+                                   "«💵 To'lov kiritish» orqali kiriting.")
+    if debt and how == "k" and not boss:
+        for b in bosses:
+            await send(bot, b, f"🤝 <b>Qarzni kechirish so'rovi</b> ({actor})\n{name} · {gname} guruhidan ketdi.\n"
+                               f"Qarz: <b>{S.fmt_som(debt)}</b>. Kechirilsinmi?",
+                       reply_markup=IM(inline_keyboard=[[IB(text="✅ Kechirilsin", callback_data=f"lvk:{eid}:y"),
+                                                         IB(text="❌ Yo'q, to'lasin", callback_data=f"lvk:{eid}:n")]]))
     if teacher and teacher.tg_id:
         await send(bot, teacher.tg_id, f"🚪 {name} «{gname}» guruhidan ketdi. Sabab: {LEAVE_REASONS[code]}.")
     for b in bosses:
@@ -510,6 +552,34 @@ async def leave_save(c: CallbackQuery, bot: Bot) -> None:
                                f"O'qituvchi ({teacher.full_name}) ga −5 jarima bali yozilsinmi?",
                        reply_markup=IM(inline_keyboard=[[IB(text="Ha, −5", callback_data=f"lvp:{teacher.id}:{eid}"),
                                                          IB(text="Yo'q", callback_data="lvp:0:0")]]))
+
+
+async def _can_pay(tg: int) -> bool:
+    async with Session() as s:
+        who = await S.who_by_tg(s, tg)
+    return bool(who.staff and who.staff.current_role in ("moliya", "rahbar"))
+
+
+@router.callback_query(F.data.startswith("lvk:"))
+async def leave_forgive(c: CallbackQuery) -> None:
+    """Rahbar: ketgan o'quvchining qarzini kechirish yoki to'latish."""
+    _, eid, yes = c.data.split(":")
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        if not (who.staff and who.staff.current_role == "rahbar"):
+            await c.answer("Faqat rahbar.", show_alert=True)
+            return
+        e = await s.get(Enrollment, int(eid))
+        if e.leave_debt_status != "kutilmoqda":
+            await c.answer("Allaqachon hal qilingan.", show_alert=True)
+            return
+        if yes == "y":
+            e.leave_debt_status = "kechirildi"
+        await S.audit(s, who.staff, "qarz_kechirish", enrollment=e.id, amount=e.leave_debt, decision=yes)
+        await s.commit()
+    await c.answer()
+    await c.message.edit_text(c.message.html_text + ("\n\n✅ Kechirildi." if yes == "y" else
+                                                     "\n\n❌ Kechirilmadi — qarzdorlar ro'yxatida turadi."))
 
 
 @router.callback_query(F.data.startswith("rf:"))

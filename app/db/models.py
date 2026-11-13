@@ -108,6 +108,8 @@ class Enrollment(Base):
     discount_amount: Mapped[int | None] = mapped_column(Integer)   # chegirma summada (oyiga, so'm); bo'lsa foiz o'rniga
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     left_date: Mapped[date | None] = mapped_column(Date)
+    leave_debt: Mapped[int | None] = mapped_column(Integer)              # ketishdagi qarz
+    leave_debt_status: Mapped[str | None] = mapped_column(String(20))    # kutilmoqda | tolandi | kechirildi
     student: Mapped[Student] = relationship(back_populates="enrollments")
     group: Mapped[Group] = relationship()
 

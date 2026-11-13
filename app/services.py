@@ -492,6 +492,8 @@ async def debtors(s: AsyncSession, year: int, month: int) -> list[MonthStatus]:
          .options(selectinload(Enrollment.group), selectinload(Enrollment.student)))
     out = []
     for e in (await s.execute(q)).scalars():
+        if e.leave_debt_status == "kechirildi":
+            continue
         st = await month_status(s, e, year, month)
         if st.debt > 0:
             out.append(st)
@@ -550,6 +552,7 @@ async def debt_enrollments(s: AsyncSession, student_id: int, year: int, month: i
 
 async def student_debt(s: AsyncSession, student_id: int, year: int, month: int) -> StudentDebt:
     enrs = await debt_enrollments(s, student_id, year, month)
+    enrs = [e for e in enrs if e.leave_debt_status != "kechirildi"]   # kechirilgan qarz hisobga kirmaydi
     parts = [await month_status(s, e, year, month) for e in enrs]
     stu = enrs[0].student if enrs else await s.get(Student, student_id)
     return StudentDebt(stu, parts)
@@ -590,3 +593,38 @@ async def student_debtors(s: AsyncSession, year: int, month: int) -> list[Studen
     out = [StudentDebt(v[0].enrollment.student, v) for v in by_student.values()]
     out.sort(key=lambda x: x.student.full_name)
     return out
+
+
+
+# ---------- guruhdan ketgan o'quvchining qarzi ----------
+async def left_debts(s: AsyncSession, student_id: int | None = None, before: date | None = None
+                     ) -> list[MonthStatus]:
+    """«Keyinroq to'laydi» deb belgilangan, hali yopilmagan qarzlar (ketgan oyi bo'yicha hisob)."""
+    q = (select(Enrollment).where(Enrollment.leave_debt_status == "kutilmoqda")
+         .options(selectinload(Enrollment.group), selectinload(Enrollment.student))
+         .execution_options(populate_existing=True))
+    if student_id:
+        q = q.where(Enrollment.student_id == student_id)
+    if before:
+        q = q.where(Enrollment.left_date < before)
+    out = []
+    for e in (await s.execute(q)).scalars():
+        st = await month_status(s, e, e.left_date.year, e.left_date.month)
+        if st.debt > 0:
+            out.append(st)
+        else:
+            e.leave_debt_status = "tolandi"
+    return out
+
+
+async def settle_left_debts(s: AsyncSession, student_id: int) -> list[str]:
+    """To'lovdan keyin: ketgan o'quvchining qarzi yopilgan bo'lsa — «to'landi». Qaytaradi: yopilgan guruhlar."""
+    q = select(Enrollment).where(Enrollment.student_id == student_id, Enrollment.leave_debt_status == "kutilmoqda"
+                                 ).options(selectinload(Enrollment.group))
+    done = []
+    for e in (await s.execute(q)).scalars():
+        st = await month_status(s, e, e.left_date.year, e.left_date.month)
+        if st.debt <= 0:
+            e.leave_debt_status = "tolandi"
+            done.append(e.group.name)
+    return done
