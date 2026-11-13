@@ -100,7 +100,7 @@ def _answer_sheet(c: canvas.Canvas, it: SheetInfo, center: str) -> None:
     c.drawString(140, Y(230), "Noto'g'ri:")
     c.circle(192, Y(227), 6, stroke=1, fill=0)
     c.line(186, Y(221), 198, Y(233))
-    qr = QrCodeWidget(f"ELN:{it.paper_id}")
+    qr = QrCodeWidget(f"ELN:{it.paper_id}:{it.n}")   # varaq id va savollar soni
     b = qr.getBounds()
     x, y, s = QR
     d = Drawing(s, s, transform=[s / (b[2] - b[0]), 0, 0, s / (b[3] - b[1]), 0, 0])

@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     center_name: str = "ELNUR_EDU"
     # Birinchi ishga tushirishda rahbar shu raqam bilan tanib olinadi
     owner_phone: str = ""
+    # Jonli skaner sahifasi (GitHub Pages, docs/scan.html)
+    scanner_url: str = "https://matnazarovsarvar7-lang.github.io/elnuredu_markaz_bot/scan.html"
 
 
 settings = Settings()

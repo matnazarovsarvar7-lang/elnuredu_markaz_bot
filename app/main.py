@@ -14,7 +14,7 @@ from app.bot.register import router as register_router
 from app.bot.homework import router as homework_router
 from app.bot.exams import router as exams_router
 from app.bot.delegate import router as delegate_router
-from app.bot.tests_flow import router as tests_router
+from app.bot.tests_flow import router as tests_router, scan_router
 from app.bot.status import router as status_router
 from app.bot.cash import router as cash_router
 from app.bot.market import router as market_router
@@ -49,6 +49,31 @@ async def ensure_owner() -> None:
             await s.commit()
 
 
+async def announce_scanner(bot: Bot) -> None:
+    """Bir marta: o'qituvchilarga yangi menyu (📷 Skaner tugmasi bilan) yuboriladi."""
+    from app.db.session import Session
+    from sqlalchemy import select
+    from app.db.models import Setting, Staff
+    from app.bot import keyboards as K
+    async with Session() as s:
+        if await s.get(Setting, "menu_scan_v1"):
+            return
+        s.add(Setting(key="menu_scan_v1", value={"on": True}))
+        staff = list((await s.execute(select(Staff).where(Staff.tg_id.is_not(None)))).scalars())
+        await s.commit()
+    for st in staff:
+        if st.current_role not in ("oqituvchi", "yordamchi", "rahbar"):
+            continue
+        try:
+            await bot.send_message(st.tg_id, "📷 <b>Yangi: jonli skaner</b>\nPastki menyudagi «📷 Skaner» tugmasini "
+                                   "bosing — kamera ochiladi. Javob varaqlarini birin-ketin kameraga tuting: bot har "
+                                   "bir varaqning o'quvchisi va guruhini QR koddan o'zi aniqlaydi. Tugatgach "
+                                   "«✅ Tugatdim» — natijalar shu yerga keladi.",
+                                   reply_markup=K.staff_menu(st.current_role, len(st.role_list()) > 1))
+        except Exception:
+            pass
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     await init_db()
@@ -64,6 +89,7 @@ async def main() -> None:
     top = Router()
     top.message.register(start_handler, CommandStart())
     dp.include_router(top)
+    dp.include_router(scan_router)
     dp.include_router(pin_router)
     dp.include_router(pay_router)
     dp.include_router(manage_router)
@@ -88,6 +114,7 @@ async def main() -> None:
     dp.include_router(edit_router)
     dp.include_router(router)
     setup_jobs(bot)
+    await announce_scanner(bot)
     await dp.start_polling(bot)
 
 

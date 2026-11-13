@@ -13,6 +13,14 @@ CW, CH = int(W * S), int(H * S)
 FILLED, EMPTY = 0.50, 0.30                # qoralik: bo'yalgan >= 0.50, bo'sh <= 0.30
 
 
+def _pid(data: str) -> int | None:
+    """QR matni: «ELN:<varaq id>» yoki yangi varaqlarda «ELN:<varaq id>:<savollar soni>»."""
+    parts = (data or "").split(":")
+    if len(parts) in (2, 3) and parts[0] == "ELN" and all(x.isdigit() for x in parts[1:]):
+        return int(parts[1])
+    return None
+
+
 @dataclass
 class OmrResult:
     paper_id: int | None
@@ -28,8 +36,8 @@ def _decode_qr(img) -> int | None:
             data, _, _ = det.detectAndDecode(im)
         except cv2.error:
             data = ""
-        if data and data.startswith("ELN:") and data[4:].isdigit():
-            return int(data[4:])
+        if _pid(data):
+            return _pid(data)
     return None
 
 
@@ -92,9 +100,9 @@ def read_sheet(data: bytes, n_for=None) -> OmrResult:
             data, qpts, _ = det.detectAndDecode(cand)
         except cv2.error:
             data, qpts = "", None
-        if data and data.startswith("ELN:") and qpts is not None:
+        if _pid(data) and qpts is not None:
             if np.linalg.norm(qpts.reshape(-1, 2).mean(axis=0) - want) < qs * S * 0.6:
-                flat, pid = cand, int(data[4:])
+                flat, pid = cand, _pid(data)
                 break
     if flat is None:
         pid = _decode_qr(img)

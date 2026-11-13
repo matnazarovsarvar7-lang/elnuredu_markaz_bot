@@ -1,5 +1,7 @@
 from aiogram.types import (InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
-                           ReplyKeyboardMarkup)
+                           ReplyKeyboardMarkup, WebAppInfo)
+
+from app.config import settings
 
 from app.services import ROLE_TITLES
 
@@ -26,6 +28,7 @@ B_APPLY = "✍️ Kursga yozilish"
 B_NEW_STUDENT = "➕ Yangi o'quvchi"
 B_EXAMS = "📝 Nazoratlar"
 B_TESTS = "📚 Testlar"
+B_SCAN = "📷 Skaner"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
@@ -56,7 +59,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     rows: list[list[str]] = []
     if role in ("oqituvchi", "yordamchi", "rahbar"):
         rows.append([B_TODAY, B_EXAMS])
-        rows.append([B_TESTS])
+        rows.append([B_TESTS, B_SCAN])
     if role == "oqituvchi":
         rows.append([B_DELEGATE, B_ACHIEVE])
     if role in ("moliya", "rahbar"):
@@ -82,7 +85,11 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     else:
         rows.append([B_MY_TASKS, B_MY_SALARY])
     rows.append([B_HELP] + ([B_SWITCH] if multi else []))
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=t) for t in r] for r in rows], resize_keyboard=True, is_persistent=True)
+    def btn(t: str) -> KeyboardButton:
+        if t == B_SCAN and settings.scanner_url:          # jonli kamera (Telegram Mini App)
+            return KeyboardButton(text=t, web_app=WebAppInfo(url=settings.scanner_url))
+        return KeyboardButton(text=t)
+    return ReplyKeyboardMarkup(keyboard=[[btn(t) for t in r] for r in rows], resize_keyboard=True, is_persistent=True)
 
 
 def parent_menu() -> ReplyKeyboardMarkup:

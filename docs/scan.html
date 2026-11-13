@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>ELNUR EDU · Skaner</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<script src="omr.js?v=1"></script>
+<style>
+  :root { --bg:#0b1724; --fg:#f4f1ea; --muted:#9fb0c3; --ok:#2fbf71; --warn:#e9a23b; --bad:#e5484d; --card:rgba(11,23,36,.82); }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--fg);
+    font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; overflow:hidden; }
+  #wrap { position:fixed; inset:0; }
+  video { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  #ov { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; }
+  #guide { position:absolute; left:50%; top:46%; transform:translate(-50%,-50%); width:min(78vw, 58vh);
+    aspect-ratio:595/842; border:2px dashed rgba(255,255,255,.55); border-radius:10px; pointer-events:none; transition:border-color .2s; }
+  #guide.ok { border:3px solid var(--ok); }
+  #top { position:absolute; left:0; right:0; top:0; padding:10px 14px; background:linear-gradient(var(--card),transparent);
+    display:flex; justify-content:space-between; align-items:center; gap:8px; }
+  #count { font-weight:700; font-size:17px; }
+  #status { position:absolute; left:12px; right:12px; bottom:118px; text-align:center; padding:9px 12px; border-radius:12px;
+    background:var(--card); font-weight:600; }
+  #status.ok { background:rgba(47,191,113,.92); color:#04170d; }
+  #status.warn { background:rgba(233,162,59,.95); color:#2a1700; }
+  #list { position:absolute; left:0; right:0; bottom:0; max-height:108px; overflow-y:auto; padding:8px 12px 12px;
+    background:var(--card); font-size:13.5px; }
+  #list div { padding:3px 0; border-bottom:1px solid rgba(255,255,255,.08); display:flex; justify-content:space-between; gap:8px; }
+  #list .u { color:var(--warn); }
+  #flash { position:absolute; inset:0; background:var(--ok); opacity:0; pointer-events:none; transition:opacity .35s; }
+  #msg { position:absolute; inset:0; display:none; align-items:center; justify-content:center; padding:28px; text-align:center;
+    background:var(--bg); font-size:16px; }
+  button.small { background:rgba(255,255,255,.14); color:var(--fg); border:0; border-radius:10px; padding:7px 11px; font-size:13px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <video id="v" playsinline muted autoplay></video>
+  <canvas id="ov"></canvas>
+  <div id="guide"></div>
+  <div id="flash"></div>
+  <div id="top"><span id="count">Tekshirildi: 0</span><button class="small" id="torch" hidden>🔦 Chiroq</button></div>
+  <div id="status">Kamera ochilmoqda…</div>
+  <div id="list"></div>
+  <div id="msg"></div>
+</div>
+<script>
+(function () {
+  "use strict";
+  var tg = window.Telegram && Telegram.WebApp, KEY = "eln_scans_v1", MAX = 1600, LIMIT = 4000;
+  var v = document.getElementById("v"), ov = document.getElementById("ov"), guide = document.getElementById("guide");
+  var statusEl = document.getElementById("status"), listEl = document.getElementById("list"), countEl = document.getElementById("count");
+  var work = document.createElement("canvas"), wctx = work.getContext("2d", { willReadFrequently: true });
+  var scans = load(), last = null, coolPid = 0, coolUntil = 0, track = null, busy = false;
+
+  function load() { try { return JSON.parse(localStorage.getItem(KEY) || "{}"); } catch (e) { return {}; } }
+  function save() { try { localStorage.setItem(KEY, JSON.stringify(scans)); } catch (e) {} }
+  function haptic(t) { try { tg && tg.HapticFeedback.notificationOccurred(t); } catch (e) {} }
+  function beep() {
+    try {
+      var A = window.AudioContext || window.webkitAudioContext, a = beep.ctx || (beep.ctx = new A()), o = a.createOscillator(), g = a.createGain();
+      o.frequency.value = 1320; g.gain.value = 0.12; o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.12);
+    } catch (e) {}
+  }
+  function setStatus(t, cls) { statusEl.textContent = t; statusEl.className = cls || ""; }
+  function fatal(t) { var m = document.getElementById("msg"); m.textContent = t; m.style.display = "flex"; }
+
+  function render() {
+    var ids = Object.keys(scans);
+    countEl.textContent = "Tekshirildi: " + ids.length;
+    listEl.innerHTML = "";
+    ids.sort(function (a, b) { return scans[b].t - scans[a].t; }).forEach(function (id, i) {
+      var s = scans[id], u = (s.a.match(/[a-d?*]/g) || []).length, d = document.createElement("div");
+      d.innerHTML = "<span>" + (ids.length - i) + ". Varaq №" + id + "</span><span" + (u ? " class=u" : "") + ">" +
+        s.a.length + " javob" + (u ? " · ⚠️ " + u + " noaniq" : " ✓") + "</span>";
+      listEl.appendChild(d);
+    });
+    if (tg) {
+      if (ids.length) { tg.MainButton.setText("✅ Tugatdim — botga yuborish (" + ids.length + ")"); tg.MainButton.show(); }
+      else tg.MainButton.hide();
+    }
+  }
+
+  function drawMarks(r, sx, sy) {
+    var c = ov.getContext("2d"); ov.width = ov.clientWidth; ov.height = ov.clientHeight; c.clearRect(0, 0, ov.width, ov.height);
+    if (!r || !r.marks) return;
+    // video object-fit:cover koordinatalari
+    var vw = v.videoWidth, vh = v.videoHeight, k = Math.max(ov.width / vw, ov.height / vh), ox = (ov.width - vw * k) / 2, oy = (ov.height - vh * k) / 2;
+    c.fillStyle = r.answers ? "#2fbf71" : "#e9a23b";
+    r.marks.forEach(function (p) { c.beginPath(); c.arc(ox + p[0] / sx * k, oy + p[1] / sy * k, 9, 0, 7); c.fill(); });
+  }
+
+  function accept(r) {
+    var old = scans[r.pid], same = old && old.a === r.answers;
+    scans[r.pid] = { a: r.answers, t: Date.now() }; save(); render();
+    coolPid = r.pid; coolUntil = Date.now() + 2500;
+    if (same) { setStatus("Bu varaq allaqachon o'qilgan ✓ — keyingisini qo'ying", "ok"); return; }
+    beep(); haptic("success");
+    var f = document.getElementById("flash"); f.style.opacity = .45; setTimeout(function () { f.style.opacity = 0; }, 180);
+    guide.className = "ok"; setTimeout(function () { guide.className = ""; }, 700);
+    var u = (r.answers.match(/[a-d?*]/g) || []).length;
+    setStatus((old ? "Qayta o'qildi: №" : "✓ O'qildi: varaq №") + r.pid + " · " + r.answers.length + " javob" +
+              (u ? " · " + u + " ta noaniq (botda tuzatasiz)" : "") + ". Keyingi varaq!", u ? "warn" : "ok");
+  }
+
+  var HINT = { noqr: "Varaqni ramkaga to'liq sig'diring", foreign: "Bu ELNUR javob varag'i emas",
+               marks: "4 ta qora burchak ko'rinsin — telefonni varaqqa parallel tuting", layout: "Yaqinroq keltiring, varaq tekis tursin" };
+
+  function tick() {
+    if (busy || !v.videoWidth) return setTimeout(tick, 200);
+    busy = true;
+    var vw = v.videoWidth, vh = v.videoHeight, k = Math.min(1, MAX / Math.max(vw, vh)), w = Math.round(vw * k), h = Math.round(vh * k);
+    if (work.width !== w) { work.width = w; work.height = h; }
+    wctx.drawImage(v, 0, 0, w, h);
+    var r;
+    try { r = ElnOmr.readFrame(wctx.getImageData(0, 0, w, h).data, w, h, jsQR); } catch (e) { r = { error: "noqr" }; }
+    drawMarks(r, w / vw, h / vh);
+    if (r.answers) {
+      if (r.pid === coolPid && Date.now() < coolUntil) { /* hozir o'qildi, kutamiz */ }
+      else if (scans[r.pid] && scans[r.pid].a === r.answers) { last = null; setStatus("Bu varaq o'qilgan ✓ — keyingisini qo'ying", "ok"); }
+      else if (last && last.pid === r.pid && last.answers === r.answers) { accept(r); last = null; }
+      else { last = r; setStatus("Ushlab turing…"); }
+    } else {
+      last = null;
+      if (!(coolPid && Date.now() < coolUntil)) setStatus(HINT[r.error] || HINT.noqr);
+    }
+    busy = false;
+    setTimeout(tick, 120);
+  }
+
+  function send() {
+    var ids = Object.keys(scans).sort(function (a, b) { return scans[a].t - scans[b].t; }), out = "E1|", sent = [];
+    for (var i = 0; i < ids.length; i++) {
+      var part = (sent.length ? ";" : "") + ids[i] + ":" + scans[ids[i]].a;
+      if (out.length + part.length > LIMIT) break;
+      out += part; sent.push(ids[i]);
+    }
+    var rest = {};
+    ids.slice(sent.length).forEach(function (id) { rest[id] = scans[id]; });
+    try { localStorage.setItem(KEY, JSON.stringify(rest)); } catch (e) {}
+    if (!tg || !tg.sendData) { fatal("Skaner faqat Telegram ichida, botdagi «📷 Skaner» tugmasi orqali ishlaydi."); return; }
+    tg.sendData(out);                          // ilova yopiladi, bot natijani yozadi
+  }
+
+  async function start() {
+    if (tg) { tg.ready(); tg.expand(); try { tg.setHeaderColor("#0b1724"); tg.setBackgroundColor("#0b1724"); } catch (e) {}
+              tg.MainButton.onClick(send); try { tg.disableVerticalSwipes(); } catch (e) {} }
+    render();
+    if (Object.keys(scans).length) setStatus("Avvalgi " + Object.keys(scans).length + " ta varaq saqlangan — davom eting");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return fatal("Bu qurilmada kamera ochilmadi. Telegram ilovasini yangilang.");
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: false,
+        video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1080 } } });
+      v.srcObject = stream; await v.play();
+      track = stream.getVideoTracks()[0];
+      try {
+        var cap = track.getCapabilities ? track.getCapabilities() : {};
+        if (cap.focusMode && cap.focusMode.indexOf("continuous") >= 0) track.applyConstraints({ advanced: [{ focusMode: "continuous" }] });
+        if (cap.torch) {
+          var b = document.getElementById("torch"), on = false; b.hidden = false;
+          b.onclick = function () { on = !on; track.applyConstraints({ advanced: [{ torch: on }] }); b.textContent = on ? "🔦 O'chirish" : "🔦 Chiroq"; };
+        }
+      } catch (e) {}
+      setStatus(HINT.noqr);
+      tick();
+    } catch (e) {
+      fatal("Kameraga ruxsat berilmadi. Telegram sozlamalarida kameraga ruxsat bering va skanerni qayta oching.");
+    }
+  }
+  start();
+})();
+</script>
+</body>
+</html>

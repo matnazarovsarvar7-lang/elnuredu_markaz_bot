@@ -398,6 +398,6 @@ async def quick_search(m: Message, state: FSMContext) -> None:
 
 
 # ---------- menyu yo'qolsa: noto'g'ri buyruq (/strat, /menu ...) yoki "menyu" so'zi — menyuni qayta chiqaradi ----------
-@router.message(F.text.func(lambda t: t.strip().startswith("/") or t.strip().lower() in ("menyu", "menu", "меню", "start")))
+@router.message(F.text.func(lambda t: bool(t) and (t.strip().startswith("/") or t.strip().lower() in ("menyu", "menu", "меню", "start"))))
 async def any_command(m: Message, state: FSMContext) -> None:
     await start(m, state)

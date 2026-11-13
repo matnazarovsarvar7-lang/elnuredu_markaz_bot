@@ -27,6 +27,7 @@ from app import services as S
 import logging
 log = logging.getLogger(__name__)
 router = Router()
+scan_router = Router()          # jonli skaner natijasi — boshqa holatlardan oldin ushlanadi
 TZ = ZoneInfo(settings.timezone)
 ST = {"sorov": "📨 so'rov yuborilgan", "korib": "👀 o'qituvchi ko'rib chiqmoqda", "qaytarildi": "↩️ tuzatishga qaytarilgan",
       "tasdiq": "✅ tasdiqlangan"}
@@ -892,9 +893,11 @@ async def entry_menu(tid: int) -> tuple[str, IM]:
                                   + (f"{sum(1 for p in ps if p.test_id == t.id)} ta varaq" if any(p.test_id == t.id for p in ps)
                                      else ST.get(t.status, t.status)) for t in ts)
     text = (f"📝 Nazorat natijalari: kiritildi {done} / {len(ps)}{parts}\n\n"
-            "📷 <b>Skaner</b>: javob varaqlarini rasmga olib ketma-ket yuboring — bot QR koddan o'quvchini "
-            "taniydi va o'zi tekshiradi.\n⌨️ <b>Qo'lda</b>: o'quvchini tanlab, javoblarini harflar bilan yozasiz.")
-    kb = [[IB(text="📷 Varaqlarni skaner qilish", callback_data=f"tsc:{tid}")],
+            "📷 <b>Skaner</b>: pastki menyudagi «📷 Skaner» tugmasini bosing — kamera ochiladi. Varaqlarni "
+            "birin-ketin kameraga tuting: bot QR koddan o'quvchi va guruhni o'zi aniqlaydi va tekshiradi.\n"
+            "🖼 <b>Rasm bilan</b>: varaq rasmlarini botga yuborasiz.\n"
+            "⌨️ <b>Qo'lda</b>: o'quvchini tanlab, javoblarini harflar bilan yozasiz.")
+    kb = [[IB(text="🖼 Rasm yuborib tekshirish", callback_data=f"tsc:{tid}")],
           [IB(text="⌨️ Qo'lda kiritish", callback_data=f"tmn:{tid}")],
           [IB(text="✅ Yakunlash va natijalarni yuborish", callback_data=f"tfin:{tid}")]]
     return text, IM(inline_keyboard=kb)
@@ -919,16 +922,105 @@ async def scan_start(c: CallbackQuery, state: FSMContext) -> None:
 @router.message(Sc.scan, F.photo | F.document)
 async def scan_photo(m: Message, state: FSMContext, bot: Bot) -> None:
     from app.logic.omr import read_sheet
-    d = await state.get_data()
     fid = m.photo[-1].file_id if m.photo else m.document.file_id
     data = (await bot.download(fid, destination=io.BytesIO())).getvalue()
-    async with Session() as s:
-        ps = {p.id: p for p in await scope_papers(s, d["tid"])}
-    res = read_sheet(data, lambda pid: len(ps[pid].qids) if pid in ps else None)
+    res = read_sheet(data)                         # avval QR: qaysi varaq ekanini bilamiz
+    if res.paper_id:
+        async with Session() as s:
+            st = await _staff(s, m.from_user.id)
+            p = await s.get(TestPaper, res.paper_id)
+            why = await _paper_block(s, st, p)
+        if why:
+            await m.reply("⚠️ " + why)
+            return
+        res = read_sheet(data, lambda pid: len(p.key) if pid == p.id else None)
     if res.error:
         await m.reply("⚠️ " + res.error)
         return
     await _save_answers(m, res.paper_id, res.answers, scanned=True, unsure=res.unsure)
+
+
+async def _paper_block(s, st: Staff | None, p: TestPaper | None) -> str | None:
+    """Varaq natijasini shu xodim kirita oladimi? Mumkin bo'lsa None, aks holda sabab."""
+    if not p:
+        return "Bu varaq bazada topilmadi."
+    if not st or st.current_role not in ("rahbar", "oqituvchi", "yordamchi", "admin"):
+        return "Ruxsat yo'q."
+    t = await s.get(Test, p.test_id)
+    ex = await s.get(Exam, t.exam_id) if t.exam_id else None
+    if ex and ex.status == "otdi":
+        return f"«{(await s.get(Group, t.group_id)).name}» nazorati natijalari allaqachon e'lon qilingan."
+    if _is_boss(st) or (ex and ex.conductor_id == st.id):
+        return None
+    if t.group_id in {g.id for g in await _groups_for(s, st)}:
+        return None
+    return "Bu varaq sizning guruhingizga tegishli emas."
+
+
+# ---------- jonli skaner (Telegram Mini App, docs/scan.html) ----------
+@scan_router.message(F.web_app_data)
+async def live_scan_result(m: Message, bot: Bot) -> None:
+    data = m.web_app_data.data or ""
+    if not data.startswith("E1|"):
+        return
+    items = []
+    for part in data[3:].split(";"):
+        pid, _, ans = part.partition(":")
+        if pid.isdigit() and ans and all(ch in "ABCDabcd-*?" for ch in ans):
+            items.append((int(pid), ans))
+    if not items:
+        await m.answer("Skanerdan ma'lumot kelmadi.")
+        return
+    by_test: dict[int, list[str]] = {}
+    fixes, errors, tids = [], [], []
+    async with Session() as s:
+        st = await _staff(s, m.from_user.id)
+        for pid, raw in items:
+            p = await s.get(TestPaper, pid)
+            why = await _paper_block(s, st, p)
+            if why:
+                errors.append(f"№{pid}: {why}")
+                continue
+            enr = await s.get(Enrollment, p.enrollment_id)
+            name = (await s.get(Student, enr.student_id)).full_name
+            n = len(p.key)
+            if len(raw) != n:
+                errors.append(f"{name}: varaqdagi savollar soni ({len(raw)}) testga ({n}) mos emas — qayta skaner qiling "
+                              "yoki qo'lda kiriting.")
+                continue
+            unsure = [i + 1 for i, ch in enumerate(raw) if ch in "abcd?*"]
+            ans = raw.upper()
+            p.answers, p.absent, p.scanned, p.entered_by = ans, False, True, st.id
+            p.correct = P.score(ans, p.key)
+            line = f"• {name} — <b>{p.correct}/{n}</b> ({p.correct / n * 100:.0f}%)"
+            if unsure:
+                line += f" ⚠️ noaniq: {', '.join(map(str, unsure))}"
+                fixes.append((p.id, name))
+            by_test.setdefault(p.test_id, []).append(line)
+        await s.commit()
+        blocks = []
+        for tid, lines in by_test.items():
+            t = await s.get(Test, tid)
+            g = await s.get(Group, t.group_id)
+            ps = await scope_papers(s, tid)
+            done = sum(1 for p in ps if p.answers or p.absent)
+            blocks.append(f"<b>{g.name}</b> · test #{tid} — tekshirildi {done}/{len(ps)}\n" + "\n".join(lines))
+            tids.append((tid, g.name, done, len(ps)))
+    saved = sum(len(v) for v in by_test.values())
+    text = (f"📷 <b>Skaner natijasi</b>: {saved} ta varaq\n\n" + "\n\n".join(blocks)) if saved else \
+        "📷 <b>Skaner natijasi</b>: hech bir varaq saqlanmadi."
+    if fixes:
+        text += "\n\n⚠️ Noaniq savollarni varaqqa qarab tuzating (bo'sh, ikkita yoki chala bo'yalgan)."
+    if errors:
+        text += "\n\n❗ " + "\n❗ ".join(errors)
+    kb = [[IB(text=f"✏️ {nm} — tuzatish", callback_data=f"tpe:{pid}")] for pid, nm in fixes[:20]]
+    for tid, gname, done, total in tids:
+        kb.append([IB(text=f"📝 {gname}: {done}/{total} — davom etish / yakunlash", callback_data=f"tme:{tid}")])
+    while len(text) > 3900:                                  # Telegram chegarasi
+        cut = text.rfind("\n", 0, 3900)
+        await m.answer(text[:cut])
+        text = text[cut:].lstrip("\n")
+    await m.answer(text, reply_markup=IM(inline_keyboard=kb) if kb else None)
 
 
 async def _save_answers(m: Message, paper_id: int, answers: str, scanned: bool, unsure: list[int] | None = None) -> None:
