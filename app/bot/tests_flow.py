@@ -70,7 +70,9 @@ async def tests_menu(m: Message, state: FSMContext) -> None:
     await m.answer("📚 <b>Testlar</b>\n\n"
                    "• So'rov — mavzu va kitob rasmlarini rahbarga yuborasiz, u test tuzib beradi.\n"
                    "• Tayyor test — andoza bo'yicha yozilgan .txt faylni yuklaysiz.\n"
-                   "Bot har bir o'quvchi uchun alohida varaq tayyorlab, adminga chop etishga yuboradi.",
+                   "Bot har bir o'quvchi uchun alohida varaq tayyorlab, adminga chop etishga yuboradi.\n"
+                   "• Test o'tgach — «📋 Testlar holati» → «📷 Tekshirish»: javob varaqlarini rasmga olasiz, "
+                   "bot o'zi tekshiradi.",
                    reply_markup=IM(inline_keyboard=rows))
 
 
@@ -852,11 +854,18 @@ async def printed(c: CallbackQuery, bot: Bot) -> None:
                          test_id=tid, by_id=who.staff.id if who.staff else None))
         ex = await s.get(Exam, t.exam_id) if t.exam_id else None
         cond = await s.get(Staff, ex.conductor_id) if ex and ex.conductor_id else None
+        teacher = await s.get(Staff, g.teacher_id) if g.teacher_id else None
         await s.commit()
     await c.answer("Belgilandi (test varaqlari printerda bepul chop etish sifatida qayd etildi)")
     await c.message.edit_reply_markup(reply_markup=None)
-    if cond and cond.tg_id:
-        await send(bot, cond.tg_id, f"🖨 «{g.name}» nazorati uchun varaqlar chop etildi — admindan olib keting.")
+    scan_kb = IM(inline_keyboard=[[IB(text="📷 Test o'tgach: tekshirish (skaner)", callback_data=f"tme:{tid}")]])
+    told = set()
+    for x, txt in ((cond, "admindan olib keting."), (teacher, "")):
+        if x and x.tg_id and x.tg_id not in told:
+            told.add(x.tg_id)
+            await send(bot, x.tg_id, f"🖨 «{g.name}» nazorati uchun varaqlar chop etildi{' — ' + txt if txt else '.'}\n"
+                                     "Test o'tgach, javob varaqlarini shu tugma orqali telefon kamerasi bilan tekshirasiz "
+                                     "(yoki: 📚 Testlar → 📋 Testlar holati).", reply_markup=scan_kb)
 
 
 # ================= 5. Natijalar: skaner va qo'lda =================
@@ -1112,16 +1121,36 @@ async def tests_list(c: CallbackQuery) -> None:
             gids = [g.id for g in await _groups_for(s, st)]
             q = q.where(Test.group_id.in_(gids or [0]))
         rows = (await s.execute(q)).all()
+        prog = {}                                   # test -> (tekshirilgan, jami, yakunlanganmi, exam_id)
+        for t, _ in rows:
+            ps = list((await s.execute(select(TestPaper).where(TestPaper.test_id == t.id))).scalars())
+            if ps:
+                ex = await s.get(Exam, t.exam_id) if t.exam_id else None
+                prog[t.id] = (sum(1 for p in ps if p.answers or p.absent), len(ps),
+                              bool(ex and ex.status == "otdi"), t.exam_id)
     if not rows:
         await c.message.answer("Hozircha test yo'q.")
         return
-    lines = [f"#{t.id} · {gname} · {t.topic[:40]}" + (f" · {len(t.students)} o'quvchi" if t.students is not None else "")
-             + f" — {ST.get(t.status, t.status)}"
-             + (" · 🖨 chop etildi" if t.printed_at else "") for t, gname in rows]
+    lines = []
+    for t, gname in rows:
+        line = (f"#{t.id} · {gname} · {t.topic[:40]}" + (f" · {len(t.students)} o'quvchi" if t.students is not None else "")
+                + f" — {ST.get(t.status, t.status)}" + (" · 🖨 chop etildi" if t.printed_at else ""))
+        if t.id in prog:
+            done, total, fin, _ = prog[t.id]
+            line += " · 📊 natija e'lon qilindi" if fin else f" · 📝 tekshirildi {done}/{total}"
+        lines.append(line)
     kb = [[IB(text=f"📎 #{t.id} faylini yuklash", callback_data=f"tup:{t.id}")]
           for t, _ in rows if _is_boss(st) and t.status in ("sorov", "qaytarildi")]
     kb += [[IB(text=f"👀 #{t.id} ni ko'rib chiqish", callback_data=f"trv:{t.id}")]
            for t, _ in rows if t.status == "korib"]
+    for t, _ in rows:
+        if t.id not in prog:
+            continue
+        done, total, fin, eid = prog[t.id]
+        if fin:
+            kb.append([IB(text=f"📊 #{t.id} natijalari", callback_data=f"exv:{eid}")])
+        else:
+            kb.append([IB(text=f"📷 #{t.id} ni tekshirish (skaner)", callback_data=f"tme:{t.id}")])
     await c.message.answer("📋 <b>Testlar</b>\n" + "\n".join(lines), reply_markup=IM(inline_keyboard=kb) if kb else None)
 
 
