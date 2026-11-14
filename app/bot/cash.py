@@ -268,12 +268,51 @@ async def ho_start(m: Message, state: FSMContext) -> None:
         return
     async with Session() as s:
         exp = await expected_cash(s)
+        pend = await _pending(s)
     await state.set_state(Ho.amount)
+    rows = [[IB(text=f"Hammasini — {S.fmt_som(exp)}", callback_data="hoall")]] if exp and exp > 0 else []
+    ptxt = ""
+    if pend:
+        ptxt = ("\n⏳ <b>Rahbar hali tasdiqlamagan topshirishlar</b> (bu pul sizdan chiqqan deb hisoblanadi):\n"
+                + "\n".join(f"• {S.fmt_som(h.amount)} — {h.created_at + timedelta(hours=5):%d.%m %H:%M}" for h in pend)
+                + "\nXato yuborgan bo'lsangiz — bekor qiling.\n")
+        rows += [[IB(text=f"↩️ {S.fmt_som(h.amount)} ni bekor qilish", callback_data=f"hoc:{h.id}")] for h in pend]
     await m.answer("💼 <b>Kassani topshirish</b>\n"
                    + (f"Sizda o'quvchilar puli: <b>{S.fmt_som(exp)}</b> bo'lishi kerak.\n" if exp is not None else "")
-                   + "Qancha topshiryapsiz? Summani yozing:",
-                   reply_markup=IM(inline_keyboard=[[IB(text=f"Hammasini — {S.fmt_som(exp)}", callback_data=f"hoall:{exp}")]])
-                   if exp and exp > 0 else None)
+                   + ptxt + "\nQancha topshiryapsiz? Summani yozing:",
+                   reply_markup=IM(inline_keyboard=rows) if rows else None)
+
+
+async def _pending(s) -> list[CashHandover]:
+    return list((await s.execute(select(CashHandover).where(CashHandover.status == "kutilmoqda")
+                                 .order_by(CashHandover.id))).scalars())
+
+
+@router.callback_query(F.data.startswith("hoc:"))
+async def ho_cancel(c: CallbackQuery, bot: Bot) -> None:
+    """Moliya: xato yuborilgan (rahbar hali tasdiqlamagan) topshirishni bekor qiladi."""
+    hid = int(c.data.split(":")[1])
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        h = await s.get(CashHandover, hid)
+        if not (who.staff and h and h.by_id == who.staff.id):
+            await c.answer("Faqat o'zingiz yuborgan topshirishni bekor qila olasiz.", show_alert=True)
+            return
+        if h.status != "kutilmoqda":
+            await c.answer("Rahbar allaqachon hal qilgan — endi rahbar o'zgartiradi.", show_alert=True)
+            return
+        h.status = "rad"
+        await S.audit(s, who.staff, "inkassatsiya_bekor", id=h.id, amount=h.amount)
+        await s.commit()
+        amt, name = h.amount, who.staff.full_name
+        exp = await expected_cash(s)
+        bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+    await c.answer("Bekor qilindi")
+    await c.message.answer(f"↩️ {S.fmt_som(amt)} topshirish bekor qilindi. Sizda o'quvchilar puli: "
+                           f"<b>{S.fmt_som(exp or 0)}</b>.")
+    for b in bosses:
+        await send(bot, b, f"↩️ {name} {S.fmt_som(amt)} topshirishni bekor qildi (xato yuborilgan). "
+                           "Bu pul hali moliyada.")
 
 
 _HOQ: dict[int, float] = {}
@@ -305,9 +344,13 @@ async def ho_quick(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     await _ho_save(c.message, state, bot, c.from_user.id, "rahbar", None)
 
 
-@router.callback_query(Ho.amount, F.data.startswith("hoall:"))
+@router.callback_query(Ho.amount, F.data.startswith("hoall"))
 async def ho_all(c: CallbackQuery, state: FSMContext) -> None:
-    amt = int(c.data.split(":")[1])
+    async with Session() as s:
+        amt = await expected_cash(s) or 0              # tugma eski bo'lsa ham — hozirgi qoldiq
+    if amt <= 0:
+        await c.answer("Topshiriladigan pul yo'q.", show_alert=True)
+        return
     await state.update_data(amount=amt)
     await c.answer()
     await c.message.answer(f"{S.fmt_som(amt)} — kimga?", reply_markup=IM(inline_keyboard=[[
@@ -324,7 +367,8 @@ async def ho_amount(m: Message, state: FSMContext) -> None:
     async with Session() as s:
         exp = await expected_cash(s)
     if exp is not None and amt > exp:
-        await m.answer(f"⚠️ Sizda o'quvchilar puli {S.fmt_som(exp)} bo'lishi kerak — {S.fmt_som(amt)} ko'p.\n"
+        await m.answer(f"⚠️ Sizda o'quvchilar puli {S.fmt_som(exp)} qolgan (tasdiq kutayotgan topshirishlar "
+                       f"ayirilgan) — {S.fmt_som(amt)} ko'p.\n"
                        "Xarajat pulini topshirmang. Agar haqiqatan ortiqcha pul bo'lsa — rahbarga ayting: "
                        "«🧮 Qayta sanash» qiladi.")
         return
@@ -362,6 +406,12 @@ async def _ho_save(msg: Message, state: FSMContext, bot: Bot, tg: int, to: str, 
     await state.clear()
     async with Session() as s:
         who = await S.who_by_tg(s, tg)
+        exp = await expected_cash(s)
+        if exp is not None and d["amount"] > exp:      # oxirgi tekshiruv: ikki marta bosish, eski tugma
+            await msg.answer(f"⚠️ Topshirilmadi: sizda o'quvchilar puli {S.fmt_som(exp)} qolgan, "
+                             f"{S.fmt_som(d['amount'])} ko'p. «💼 Kassani topshirish» ni qayta oching.")
+            return
+        others = await _pending(s)
         h = CashHandover(amount=d["amount"], to_kind=to, receipt_file_id=fid, by_id=who.staff.id)
         s.add(h)
         await s.flush()
@@ -369,16 +419,84 @@ async def _ho_save(msg: Message, state: FSMContext, bot: Bot, tg: int, to: str, 
         await s.commit()
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         hid, name = h.id, who.staff.full_name
-    await msg.answer(f"✅ {S.fmt_som(d['amount'])} topshirildi deb qayd etildi. Rahbar tasdiqlaydi.")
-    kb = IM(inline_keyboard=[[IB(text="✅ Qabul qildim", callback_data=f"hoy:{hid}"),
-                              IB(text="❌ Mos emas", callback_data=f"hon:{hid}")]])
-    text = (f"💼 <b>Inkassatsiya</b>\n{name}: {S.fmt_som(d['amount'])} → "
-            + ("sizga (konvertda)" if to == "rahbar" else "bankka (kvitansiya ilova)"))
+    left = (exp or 0) - d["amount"]
+    await msg.answer(f"✅ {S.fmt_som(d['amount'])} topshirildi deb qayd etildi. Rahbar tasdiqlaydi.\n"
+                     f"Sizda qoladi: {S.fmt_som(left)}.\nXato bo'lsa: «💼 Kassani topshirish» → «↩️ bekor qilish».")
+    kb = _decide_kb(hid)
+    text = (f"💼 <b>Inkassatsiya</b>\n{name}: <b>{S.fmt_som(d['amount'])}</b> → "
+            + ("sizga (konvertda)" if to == "rahbar" else "bankka (kvitansiya ilova)")
+            + f"\nMoliyada shundan keyin qoladi: {S.fmt_som(left)}")
+    if others:
+        text += ("\n\n⚠️ <b>Diqqat:</b> bundan oldingi topshirish(lar) ham tasdiqlanmagan: "
+                 + ", ".join(S.fmt_som(x.amount) for x in others)
+                 + ". Har birini qo'lingizga kelgan pulga qarab alohida tasdiqlang.")
     for b in bosses:
         if fid:
             from app.bot.notify import send_photo
             await send_photo(bot, b, fid, text)
         await send(bot, b, text if not fid else "Tasdiqlang:", reply_markup=kb)
+
+
+def _decide_kb(hid: int) -> IM:
+    return IM(inline_keyboard=[[IB(text="✅ Qabul qildim", callback_data=f"hoy:{hid}")],
+                               [IB(text="✏️ Boshqa summa oldim", callback_data=f"hos:{hid}")],
+                               [IB(text="❌ Olmadim (pul moliyada)", callback_data=f"hon:{hid}")]])
+
+
+class HoFix(StatesGroup):
+    amount = State()
+
+
+@router.callback_query(F.data.startswith("hos:"))
+async def ho_other_start(c: CallbackQuery, state: FSMContext) -> None:
+    hid = int(c.data.split(":")[1])
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        h = await s.get(CashHandover, hid)
+        if not (who.staff and who.staff.current_role == "rahbar"):
+            await c.answer("Faqat rahbar.", show_alert=True)
+            return
+        if not h or h.status != "kutilmoqda":
+            await c.answer("Bu topshirish allaqachon hal qilingan.", show_alert=True)
+            return
+        can = (await expected_cash(s) or 0) + h.amount
+    await state.set_state(HoFix.amount)
+    await state.update_data(hid=hid)
+    await c.answer()
+    await c.message.answer(f"Qo'lingizga aslida qancha keldi? Summani yozing (moliyada ko'pi bilan {S.fmt_som(can)}):")
+
+
+@router.message(HoFix.amount)
+async def ho_other_save(m: Message, state: FSMContext, bot: Bot) -> None:
+    amt = _amount(m.text)
+    if not amt:
+        await m.answer("Summani raqam bilan yozing: 1100000")
+        return
+    d = await state.get_data()
+    async with Session() as s:
+        who = await S.who_by_tg(s, m.from_user.id)
+        h = await s.get(CashHandover, d["hid"])
+        if not (who.staff and who.staff.current_role == "rahbar") or not h or h.status != "kutilmoqda":
+            await state.clear()
+            await m.answer("Bu topshirish allaqachon hal qilingan.")
+            return
+        can = (await expected_cash(s) or 0) + h.amount
+        if amt > can:
+            await m.answer(f"⚠️ Moliyada {S.fmt_som(can)} dan ortiq bo'lmasligi kerak. Qayta yozing yoki "
+                           "«🧮 Qayta sanash» qiling.")
+            return
+        old = h.amount
+        h.amount, h.status, h.confirmed_by = amt, "tasdiq", who.staff.id
+        await S.audit(s, who.staff, "inkassatsiya_qaror", id=h.id, status="tasdiq", old=old, amount=amt)
+        await s.commit()
+        mol = await s.get(Staff, h.by_id) if h.by_id else None
+        left = await expected_cash(s)
+    await state.clear()
+    await m.answer(f"✅ {S.fmt_som(amt)} qabul qilindi (moliya {S.fmt_som(old)} deb yozgan edi). "
+                   f"Moliyada qoldi: {S.fmt_som(left or 0)}.")
+    if mol and mol.tg_id:
+        await send(bot, mol.tg_id, f"💼 Siz {S.fmt_som(old)} topshirdingiz, rahbar <b>{S.fmt_som(amt)}</b> qabul qildi.\n"
+                                   f"Sizda o'quvchilar puli: {S.fmt_som(left or 0)} bo'lishi kerak — sanab ko'ring.")
 
 
 @router.callback_query(F.data.startswith(("hoy:", "hon:")))
@@ -406,11 +524,13 @@ async def ho_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         amt = h.amount
         from app.bot.vault import money_line
         line = await money_line(s)
-    await c.message.edit_text(c.message.html_text + ("\n\n✅ Qabul qilindi" if kind == "hoy" else "\n\n❌ Mos emas")
+    await c.message.edit_text(c.message.html_text + ("\n\n✅ Qabul qilindi" if kind == "hoy" else
+                                                     "\n\n❌ Olinmadi — pul moliyada qoldi")
                               + (f"\n{line}" if kind == "hoy" and line else ""))
     if mol and mol.tg_id:
         await send(bot, mol.tg_id, f"💼 {S.fmt_som(amt)} topshirish: " +
-                   ("✅ rahbar qabul qildi." if kind == "hoy" else "❌ rahbar «mos emas» dedi — bog'laning."))
+                   ("✅ rahbar qabul qildi." if kind == "hoy" else
+                    "❌ rahbar «olmadim» dedi — bu pul sizda turibdi deb hisoblanadi. Sanab, qayta topshiring."))
 
 
 # ================= 💼 Kassa (rahbar) =================
@@ -517,7 +637,93 @@ async def cash_detail(c: CallbackQuery) -> None:
     await c.message.answer("\n".join(lines)[:3900], reply_markup=IM(inline_keyboard=[
         [IB(text="📋 Sizdagi pul harakatlari", callback_data="kv:list")],
         [IB(text="📋 O'quvchilar naqd to'lovlari", callback_data="cnl")],
+        [IB(text="💼 Moliyadan olingan pullar", callback_data="hol")],
         [IB(text="✏️ Raqam haqiqiy pulga mos emas — tuzatish", callback_data="kv:open")]]))
+
+
+@router.callback_query(F.data == "hol")
+async def ho_list(c: CallbackQuery) -> None:
+    """Rahbar: oxirgi topshirishlar; xato qabul qilinganini bekor qilish mumkin (3 kun ichida)."""
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        if not (who.staff and who.staff.current_role == "rahbar"):
+            await c.answer()
+            return
+        rows = (await s.execute(select(CashHandover, Staff.full_name).outerjoin(Staff, Staff.id == CashHandover.by_id)
+                                .order_by(CashHandover.id.desc()).limit(12))).all()
+        exp = await expected_cash(s)
+    mark = {"tasdiq": "✅ qabul qilingan", "kutilmoqda": "⏳ tasdiq kutmoqda", "rad": "❌ olinmagan / bekor"}
+    lines = ["💼 <b>Moliyadan olingan pullar</b> (oxirgilari)", ""]
+    kb = []
+    edge = utcnow() - timedelta(days=3)
+    for h, nm in rows:
+        lines.append(f"{h.created_at + timedelta(hours=5):%d.%m %H:%M} · <b>{S.fmt_som(h.amount)}</b> · "
+                     f"{'bankka' if h.to_kind == 'bank' else 'sizga'} · {mark.get(h.status, h.status)}")
+        if h.status == "kutilmoqda":
+            kb.append([IB(text=f"⏳ {S.fmt_som(h.amount)} — hal qilish", callback_data=f"hod:{h.id}")])
+        elif h.status == "tasdiq" and h.created_at >= edge:
+            kb.append([IB(text=f"↩️ {S.fmt_som(h.amount)} — xato qabul qilingan, bekor qilish", callback_data=f"hox:{h.id}")])
+    if not rows:
+        lines.append("—")
+    lines += ["", f"📥 Hozir moliyada o'quvchilar puli: <b>{S.fmt_som(exp or 0)}</b>"]
+    await c.answer()
+    await c.message.answer("\n".join(lines), reply_markup=IM(inline_keyboard=kb) if kb else None)
+
+
+@router.callback_query(F.data.startswith("hod:"))
+async def ho_pending_one(c: CallbackQuery) -> None:
+    hid = int(c.data.split(":")[1])
+    async with Session() as s:
+        h = await s.get(CashHandover, hid)
+    await c.answer()
+    if h and h.status == "kutilmoqda":
+        await c.message.answer(f"💼 {S.fmt_som(h.amount)} — qo'lingizga qancha keldi?", reply_markup=_decide_kb(hid))
+
+
+@router.callback_query(F.data.startswith("hox:"))
+async def ho_undo(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
+    """Rahbar: xato «qabul qildim» bosilgan topshirishni bekor qiladi — pul yana moliyada hisoblanadi."""
+    from app.bot.pin import need_pin
+    parts = c.data.split(":")
+    hid, sure = int(parts[1]), len(parts) > 2
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        h = await s.get(CashHandover, hid)
+        if not (who.staff and who.staff.current_role == "rahbar"):
+            await c.answer("Faqat rahbar.", show_alert=True)
+            return
+        if not h or h.status != "tasdiq":
+            await c.answer("Bu topshirish qabul qilingan holatda emas.", show_alert=True)
+            return
+        amt = h.amount
+    if not sure:
+        await c.answer()
+        await c.message.answer(f"↩️ {S.fmt_som(amt)} ni bekor qilamizmi?\nBu pul sizning qo'lingizdan ayiriladi va "
+                               "yana moliyada turibdi deb hisoblanadi.",
+                               reply_markup=IM(inline_keyboard=[[IB(text="✅ Ha, bekor qilish", callback_data=f"hox:{hid}:y"),
+                                                                 IB(text="⬅️ Yo'q", callback_data="hol")]]))
+        return
+    if await need_pin(c, state, amt):
+        return
+    async with Session() as s:
+        who = await S.who_by_tg(s, c.from_user.id)
+        h = await s.get(CashHandover, hid)
+        if h.status != "tasdiq":
+            await c.answer("Allaqachon o'zgargan.", show_alert=True)
+            return
+        h.status = "rad"
+        await S.audit(s, who.staff, "inkassatsiya_qaytarildi", id=h.id, amount=h.amount)
+        await s.commit()
+        mol = await s.get(Staff, h.by_id) if h.by_id else None
+        exp = await expected_cash(s)
+        from app.bot.vault import money_line
+        line = await money_line(s)
+    await c.answer("Bekor qilindi")
+    await c.message.edit_text(f"↩️ {S.fmt_som(amt)} bekor qilindi.\n📥 Moliyada: {S.fmt_som(exp or 0)}"
+                              + (f"\n{line}" if line else ""))
+    if mol and mol.tg_id:
+        await send(bot, mol.tg_id, f"↩️ Rahbar {S.fmt_som(amt)} topshirishni bekor qildi (xato qabul qilingan edi). "
+                                   f"Sizda o'quvchilar puli: <b>{S.fmt_som(exp or 0)}</b> bo'lishi kerak — sanab ko'ring.")
 
 
 @router.callback_query(F.data == "cnl")

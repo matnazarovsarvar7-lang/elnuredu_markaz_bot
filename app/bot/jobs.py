@@ -147,6 +147,7 @@ async def evening_report(bot: Bot) -> None:
         from aiogram.types import InlineKeyboardButton as IB, InlineKeyboardMarkup as IM
         parts[-1] += "\n\n💼 <b>Sizga topshirilgan, tasdiqlanmagan:</b>"
         kb = IM(inline_keyboard=[[IB(text=f"✅ Qabul qildim — {S.fmt_som(h.amount)}", callback_data=f"hoy:{h.id}"),
+                                  IB(text="✏️", callback_data=f"hos:{h.id}"),
                                   IB(text="❌", callback_data=f"hon:{h.id}")] for h in pend[:5]])
     for b in bosses:
         for i, part in enumerate(parts):

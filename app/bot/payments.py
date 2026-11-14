@@ -772,6 +772,11 @@ async def debts(m: Message) -> None:
 
 
 
+def _ho_kb(hid: int):
+    from app.bot.cash import _decide_kb
+    return _decide_kb(hid)
+
+
 async def pending_other(bot: Bot, chat: int) -> int:
     """Kutilayotganlar: to'lovlardan tashqari — topshirilgan pul, avans so'rovlari, xarajatlar, test so'rovlari."""
     from sqlalchemy import select
@@ -787,8 +792,7 @@ async def pending_other(bot: Bot, chat: int) -> int:
     for h, nm in hos:
         n += 1
         await send(bot, chat, f"💼 <b>Sizga topshirilgan pul</b>\n{nm or ''}: {S.fmt_som(h.amount)} — konvertni sanab tasdiqlang",
-                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Qabul qildim", callback_data=f"hoy:{h.id}"),
-                                                     IB(text="❌ Mos emas", callback_data=f"hon:{h.id}")]]))
+                   reply_markup=_ho_kb(h.id))
     for p, nm in avs:
         n += 1
         await send(bot, chat, f"💸 <b>Avans so'rovi</b>\n{nm}: {S.fmt_som(p.amount)}",

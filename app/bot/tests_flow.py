@@ -1111,6 +1111,31 @@ async def manual_absent(c: CallbackQuery, state: FSMContext) -> None:
     await c.message.answer(text, reply_markup=kb)
 
 
+async def _ensure_exam(s, t: Test, st: Staff | None) -> Exam:
+    """Test nazoratga bog'lanmagan bo'lsa: shu guruhning yaqin rejadagi nazoratiga bog'laydi, bo'lmasa yangisini ochadi."""
+    today = now().date()
+    try:
+        day = date.fromisoformat((t.meta or {}).get("sana") or "")
+    except ValueError:
+        day = today
+    day = min(day, today)
+    ex = (await s.execute(select(Exam).where(Exam.group_id == t.group_id, Exam.status == "reja",
+                                             Exam.date >= day - timedelta(days=7), Exam.date <= today + timedelta(days=1))
+                          .order_by(Exam.date.desc()))).scalars().first()
+    if ex and (await exam_tests(s, ex.id)):
+        ex = None                              # bu nazoratning o'z testi bor — aralashtirmaymiz
+    if not ex:
+        week = day - timedelta(days=day.weekday())
+        n = len((await s.execute(select(Exam.id).where(Exam.group_id == t.group_id, Exam.week == week))).all())
+        ex = Exam(group_id=t.group_id, date=day, week=week, slot=n + 1, conductor_id=st.id if st else None,
+                  kind="test", topic=(t.topic or "")[:200], test_id=t.id)
+        s.add(ex)
+        await s.flush()
+    t.exam_id = ex.id
+    await s.flush()
+    return ex
+
+
 @router.callback_query(F.data.startswith("tfin:"))
 async def finish(c: CallbackQuery, bot: Bot) -> None:
     tid = int(c.data.split(":")[1])
@@ -1135,10 +1160,9 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
                                                                      IB(text="⬅️ Orqaga", callback_data=f"tme:{tid}")]]))
             await c.answer()
             return
-        if not t.exam_id:
-            await c.answer("Bu test nazoratga bog'lanmagan.", show_alert=True)
-            return
         st = await _staff(s, c.from_user.id)
+        if not t.exam_id:                      # rejadan tashqari test — nazoratga o'zi bog'lanadi
+            await _ensure_exam(s, t, st)
         ex = await s.get(Exam, t.exam_id)
         g = await s.get(Group, ex.group_id)
         rules = await S.get_rules(s)
