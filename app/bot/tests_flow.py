@@ -897,7 +897,13 @@ async def entry_menu(tid: int) -> tuple[str, IM]:
             "birin-ketin kameraga tuting: bot QR koddan o'quvchi va guruhni o'zi aniqlaydi va tekshiradi.\n"
             "🖼 <b>Rasm bilan</b>: varaq rasmlarini botga yuborasiz.\n"
             "⌨️ <b>Qo'lda</b>: o'quvchini tanlab, javoblarini harflar bilan yozasiz.")
-    kb = [[IB(text="🖼 Rasm yuborib tekshirish", callback_data=f"tsc:{tid}")],
+    kb = []
+    uns = [p for p in ps if p.unsure and p.answers]
+    if uns:
+        text += (f"\n\n⚠️ <b>{len(uns)} ta o'quvchida noaniq savol bor</b> ("
+                 f"{sum(len(p.unsure) for p in uns)} ta). Yakunlashdan oldin varaqqa qarab tanlang.")
+        kb.append([IB(text=f"⚠️ Noaniqlarni tanlash ({len(uns)} ta o'quvchi)", callback_data=f"tpe:{uns[0].id}")])
+    kb += [[IB(text="🖼 Rasm yuborib tekshirish", callback_data=f"tsc:{tid}")],
           [IB(text="⌨️ Qo'lda kiritish", callback_data=f"tmn:{tid}")],
           [IB(text="✅ Yakunlash va natijalarni yuborish", callback_data=f"tfin:{tid}")]]
     return text, IM(inline_keyboard=kb)
@@ -991,6 +997,7 @@ async def live_scan_result(m: Message, bot: Bot) -> None:
             unsure = [i + 1 for i, ch in enumerate(raw) if ch in "abcd?*"]
             ans = raw.upper()
             p.answers, p.absent, p.scanned, p.entered_by = ans, False, True, st.id
+            p.unsure = unsure or None
             p.correct = P.score(ans, p.key)
             line = f"• {name} — <b>{p.correct}/{n}</b> ({p.correct / n * 100:.0f}%)"
             if unsure:
@@ -1010,10 +1017,11 @@ async def live_scan_result(m: Message, bot: Bot) -> None:
     text = (f"📷 <b>Skaner natijasi</b>: {saved} ta varaq\n\n" + "\n\n".join(blocks)) if saved else \
         "📷 <b>Skaner natijasi</b>: hech bir varaq saqlanmadi."
     if fixes:
-        text += "\n\n⚠️ Noaniq savollarni varaqqa qarab tuzating (bo'sh, ikkita yoki chala bo'yalgan)."
+        text += ("\n\n⚠️ Noaniq savollar: o'quvchining varag'iga qarang va qaysi doiracha bo'yalganini tugma bilan "
+                 "tanlang. To'g'ri javobni bilish shart emas — bot o'zi tekshiradi.")
     if errors:
         text += "\n\n❗ " + "\n❗ ".join(errors)
-    kb = [[IB(text=f"✏️ {nm} — tuzatish", callback_data=f"tpe:{pid}")] for pid, nm in fixes[:20]]
+    kb = [[IB(text=f"✏️ {nm} — noaniqlarni tanlash", callback_data=f"tpe:{pid}")] for pid, nm in fixes[:20]]
     for tid, gname, done, total in tids:
         kb.append([IB(text=f"📝 {gname}: {done}/{total} — davom etish / yakunlash", callback_data=f"tme:{tid}")])
     while len(text) > 3900:                                  # Telegram chegarasi
@@ -1028,6 +1036,7 @@ async def _save_answers(m: Message, paper_id: int, answers: str, scanned: bool, 
         p = await s.get(TestPaper, paper_id)
         st = await _staff(s, m.from_user.id)
         p.answers, p.absent, p.scanned, p.entered_by = answers, False, scanned, st.id if st else None
+        p.unsure = list(unsure or []) or None
         p.correct = P.score(answers, p.key)
         enr = await s.get(Enrollment, p.enrollment_id)
         stu = await s.get(Student, enr.student_id)
@@ -1036,9 +1045,9 @@ async def _save_answers(m: Message, paper_id: int, answers: str, scanned: bool, 
     text = f"✅ {name}: <b>{correct} / {n}</b> ({correct / n * 100:.0f}%)"
     kb = None
     if unsure:
-        text += (f"\n⚠️ Aniqlanmagan savollar: {', '.join(map(str, unsure))} (bo'sh, ikki marta yoki yarim belgilangan) "
-                 "— varaqqa qarab tekshiring.")
-        kb = IM(inline_keyboard=[[IB(text="✏️ Javoblarni tuzatish", callback_data=f"tpe:{paper_id}")]])
+        text += (f"\n⚠️ Aniqlanmagan savollar: {', '.join(map(str, unsure))} — o'quvchining varag'iga qarab "
+                 "qaysi doiracha bo'yalganini tanlaysiz.")
+        kb = IM(inline_keyboard=[[IB(text="✏️ Noaniqlarni tanlash", callback_data=f"tpe:{paper_id}")]])
     await m.reply(text, reply_markup=kb)
 
 
@@ -1063,9 +1072,75 @@ async def manual_list(c: CallbackQuery) -> None:
     await c.message.answer("O'quvchini tanlang:", reply_markup=IM(inline_keyboard=kb))
 
 
+def _ask_kb(pid: int, q: int) -> IM:
+    return IM(inline_keyboard=[
+        [IB(text=x, callback_data=f"tpq:{pid}:{q}:{x}") for x in "ABCD"],
+        [IB(text="⚪ Bo'sh qoldirilgan", callback_data=f"tpq:{pid}:{q}:-"),
+         IB(text="❌ Ikkitasi bo'yalgan", callback_data=f"tpq:{pid}:{q}:*")],
+        [IB(text="⌨️ Hamma javobni qayta yozish", callback_data=f"tpe:{pid}:all")]])
+
+
+async def _ask_unsure(msg: Message, pid: int, edit: bool = False) -> bool:
+    """Varaqdagi navbatdagi noaniq savolni so'raydi. So'raydigan savol qolmasa — False."""
+    async with Session() as s:
+        p = await s.get(TestPaper, pid)
+        if not p or not p.unsure or not p.answers:
+            return False
+        enr = await s.get(Enrollment, p.enrollment_id)
+        name = (await s.get(Student, enr.student_id)).full_name
+    q = p.unsure[0]
+    g = p.answers[q - 1]
+    text = (f"✏️ <b>{name}</b> · <b>{q}-savol</b>" + (f"  (yana {len(p.unsure) - 1} ta)" if len(p.unsure) > 1 else "")
+            + "\n\nO'quvchining javob varag'iga qarang: shu savolda qaysi doiracha bo'yalgan?"
+            + (f"\nSkaner taxmini: <b>{g}</b>" if g in "ABCD" else "")
+            + "\n\n<i>To'g'ri javobni bilish shart emas — o'quvchi nimani belgilaganini tanlang, bot o'zi tekshiradi.</i>")
+    if edit:
+        await msg.edit_text(text, reply_markup=_ask_kb(pid, q))
+    else:
+        await msg.answer(text, reply_markup=_ask_kb(pid, q))
+    return True
+
+
+@router.callback_query(F.data.startswith("tpq:"))
+async def unsure_pick(c: CallbackQuery) -> None:
+    _, pid, q, ch = c.data.split(":")
+    pid, q = int(pid), int(q)
+    async with Session() as s:
+        p = await s.get(TestPaper, pid)
+        if not p or not p.answers or not p.unsure or q not in p.unsure:
+            await c.answer("Bu savol allaqachon tanlangan.")
+            return
+        a = list(p.answers)
+        a[q - 1] = ch
+        p.answers = "".join(a)
+        p.unsure = [x for x in p.unsure if x != q] or None
+        p.correct = P.score(p.answers, p.key)
+        await s.commit()
+        tid, n, correct, left = p.test_id, len(p.key), p.correct, p.unsure
+        nxt = None
+        if not left:
+            nxt = next((x for x in await scope_papers(s, tid) if x.unsure and x.answers and x.id != pid), None)
+            enr = await s.get(Enrollment, p.enrollment_id)
+            name = (await s.get(Student, enr.student_id)).full_name
+    await c.answer(f"{q}-savol: {ch if ch in 'ABCD' else ('bo‘sh' if ch == '-' else 'ikkita')}")
+    if left:
+        await _ask_unsure(c.message, pid, edit=True)
+        return
+    await c.message.edit_text(f"✅ {name}: <b>{correct} / {n}</b> ({correct / n * 100:.0f}%) — noaniq savol qolmadi.")
+    if nxt:
+        await _ask_unsure(c.message, nxt.id)
+    else:
+        text, kb = await entry_menu(tid)
+        await c.message.answer(text, reply_markup=kb)
+
+
 @router.callback_query(F.data.startswith("tpe:"))
 async def manual_one(c: CallbackQuery, state: FSMContext) -> None:
-    pid = int(c.data.split(":")[1])
+    parts = c.data.split(":")
+    pid = int(parts[1])
+    if len(parts) == 2 and await _ask_unsure(c.message, pid):
+        await c.answer()
+        return
     async with Session() as s:
         p = await s.get(TestPaper, pid)
         enr = await s.get(Enrollment, p.enrollment_id)
@@ -1076,7 +1151,9 @@ async def manual_one(c: CallbackQuery, state: FSMContext) -> None:
     await c.answer()
     await c.message.answer(f"<b>{stu.full_name}</b> ({p.code}, " + ("shaxsiy test" if p.variant.startswith("S") else f"{p.variant}-variant") + f"){cur}\n\n"
                            f"Javob varag'idagi {len(p.key)} ta javobni tartib bilan yozing, masalan:\n"
-                           f"<code>{('ABCD' * 20)[:len(p.key)]}</code>\nBo'sh qoldirilgan savol: <b>-</b>",
+                           f"<code>{('ABCD' * 20)[:len(p.key)]}</code>\nBo'sh qoldirilgan savol: <b>-</b>"
+                           + ("\n\nFaqat bitta-ikkita savolni o'zgartirish uchun savol raqami va o'quvchi bo'yagan "
+                              "harfni yozing, masalan: <code>25 B</code> yoki <code>25B 12C</code>" if p.answers else ""),
                            reply_markup=IM(inline_keyboard=[[IB(text="➖ Qatnashmadi", callback_data=f"tab:{pid}")]]))
 
 
@@ -1086,13 +1163,31 @@ async def manual_save(m: Message, state: FSMContext) -> None:
     async with Session() as s:
         p = await s.get(TestPaper, d["pid"])
         n = len(p.key)
+    import re
+    pairs = re.findall(r"(\d{1,3})\s*[-=:.)]?\s*([A-Da-d])(?![A-Da-d])", m.text or "")
+    rest = re.sub(r"(\d{1,3})\s*[-=:.)]?\s*([A-Da-d])(?![A-Da-d])", "", m.text or "").strip(" ,;\n")
+    if pairs and not rest and p.answers:                 # «25 B» — faqat shu savollar o'zgaradi
+        bad = [q for q, _ in pairs if not 1 <= int(q) <= n]
+        if bad:
+            await m.answer(f"Savol raqami 1–{n} oralig'ida bo'lishi kerak.")
+            return
+        a = list(p.answers)
+        for q, ch in pairs:
+            a[int(q) - 1] = ch.upper()
+        fixed = {int(q) for q, _ in pairs}
+        unsure = [q for q in (p.unsure or []) if q not in fixed]
+        await state.clear()
+        await _save_answers(m, d["pid"], "".join(a), scanned=p.scanned, unsure=unsure)
+        text, kb = await entry_menu(d["tid"])
+        await m.answer(text, reply_markup=kb)
+        return
     ans = P.clean_answers(m.text or "", n)
     if not ans:
         got = len("".join(ch for ch in (m.text or "").upper() if ch in "ABCD-0"))
         await m.answer(f"{n} ta javob kerak, siz {got} ta yozdingiz. Qaytadan yozing:")
         return
     await state.clear()
-    await _save_answers(m, d["pid"], ans, scanned=False)
+    await _save_answers(m, d["pid"], ans, scanned=False)          # to'liq qayta yozildi — noaniqlar tozalanadi
     text, kb = await entry_menu(d["tid"])
     await m.answer(text, reply_markup=kb)
 
@@ -1102,7 +1197,7 @@ async def manual_absent(c: CallbackQuery, state: FSMContext) -> None:
     pid = int(c.data.split(":")[1])
     async with Session() as s:
         p = await s.get(TestPaper, pid)
-        p.absent, p.answers, p.correct = True, None, None
+        p.absent, p.answers, p.correct, p.unsure = True, None, None, None
         await s.commit()
         tid = p.test_id
     await state.clear()
@@ -1140,6 +1235,7 @@ async def _ensure_exam(s, t: Test, st: Staff | None) -> Exam:
 async def finish(c: CallbackQuery, bot: Bot) -> None:
     tid = int(c.data.split(":")[1])
     force = c.data.endswith(":ok")
+    skip_unsure = force or c.data.endswith(":u")
     async with Session() as s:
         t = await s.get(Test, tid)
         ts = await scope_tests(s, tid)
@@ -1151,6 +1247,15 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
             await c.message.answer("⚠️ Bu nazoratdagi boshqa test(lar) hali tayyor emas: "
                                    + ", ".join(f"#{x.id} {x.topic[:30]} ({ST.get(x.status, x.status)})" for x in not_ready)
                                    + ".\nNatijalar barcha testlar bilan birga yakunlanadi — avval ularni tayyorlang.")
+            return
+        uns = [p for p in ps if p.unsure and p.answers]
+        if uns and not skip_unsure:
+            await c.answer()
+            await c.message.answer(f"⚠️ {len(uns)} ta o'quvchida noaniq savol bor. Avval varaqqa qarab tanlang — "
+                                   "aks holda ular xato deb hisoblanishi mumkin.",
+                                   reply_markup=IM(inline_keyboard=[
+                                       [IB(text="✏️ Noaniqlarni tanlash", callback_data=f"tpe:{uns[0].id}")],
+                                       [IB(text="Baribir yakunlash", callback_data=f"tfin:{tid}:u")]]))
             return
         left = [p for p in ps if not p.answers and not p.absent]
         if left and not force:

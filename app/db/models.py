@@ -371,6 +371,7 @@ class TestPaper(Base):
     absent: Mapped[bool] = mapped_column(Boolean, default=False)
     entered_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     scanned: Mapped[bool] = mapped_column(Boolean, default=False)
+    unsure: Mapped[list | None] = mapped_column(JSON)          # skaner aniqlay olmagan savollar raqami (1 dan)
 
 
 class Freeze(Base):

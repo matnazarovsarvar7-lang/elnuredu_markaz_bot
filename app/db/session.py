@@ -25,6 +25,7 @@ MIGRATIONS = [
     "ALTER TABLE lessons ADD COLUMN homework_file_kind VARCHAR(10)",
     "ALTER TABLE lessons ADD COLUMN homework_files JSON",
     "ALTER TABLE test_questions ADD COLUMN figure TEXT",
+    "ALTER TABLE test_papers ADD COLUMN unsure JSON",
     "ALTER TABLE enrollments ADD COLUMN leave_debt INTEGER",
     "ALTER TABLE enrollments ADD COLUMN leave_debt_status VARCHAR(20)",
     "ALTER TABLE lessons ADD COLUMN homework_at TIMESTAMP",
