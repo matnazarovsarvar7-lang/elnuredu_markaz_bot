@@ -212,7 +212,7 @@
       allFills.push(fills);
       var ch = decide(fills);
       answers += ch;
-      if ("ABCD-".indexOf(ch) < 0) unsure.push(i + 1);
+      if ("ABCD-*".indexOf(ch) < 0) unsure.push(i + 1);   // "*" — ikkita belgilangan: xato
     }
     return { pid: pid, n: n, answers: answers, unsure: unsure, marks: pts, fills: allFills };
   }

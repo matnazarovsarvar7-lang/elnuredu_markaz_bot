@@ -6,7 +6,7 @@
 <title>ELNUR EDU · Skaner</title>
 <script src="https://telegram.org/js/telegram-web-app.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
-<script src="omr.js?v=3"></script>
+<script src="omr.js?v=4"></script>
 <style>
   :root { --bg:#0b1724; --fg:#f4f1ea; --muted:#9fb0c3; --ok:#2fbf71; --warn:#e9a23b; --bad:#e5484d; --card:rgba(11,23,36,.82); }
   * { box-sizing:border-box; }
@@ -72,7 +72,7 @@
     countEl.textContent = "Tekshirildi: " + ids.length;
     listEl.innerHTML = "";
     ids.sort(function (a, b) { return scans[b].t - scans[a].t; }).forEach(function (id, i) {
-      var s = scans[id], u = (s.a.match(/[a-d?*]/g) || []).length, d = document.createElement("div");
+      var s = scans[id], u = (s.a.match(/[a-d?]/g) || []).length, d = document.createElement("div");
       d.innerHTML = "<span>" + (ids.length - i) + ". Varaq №" + id + "</span><span" + (u ? " class=u" : "") + ">" +
         (u ? "⚠️ " + u + " ta noaniq" : "✓ o'qildi") + "</span>";
       listEl.appendChild(d);
@@ -100,7 +100,7 @@
     beep(); haptic("success");
     var f = document.getElementById("flash"); f.style.opacity = .45; setTimeout(function () { f.style.opacity = 0; }, 180);
     guide.className = "ok"; setTimeout(function () { guide.className = ""; }, 700);
-    var u = (r.answers.match(/[a-d?*]/g) || []).length;
+    var u = (r.answers.match(/[a-d?]/g) || []).length;
     setStatus((old ? "Qayta o'qildi: varaq №" : "✓ O'qildi: varaq №") + r.pid +
               (u ? " · " + u + " ta noaniq (botda tuzatasiz)" : "") + ". Keyingi varaq!", u ? "warn" : "ok");
   }

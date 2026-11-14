@@ -898,10 +898,10 @@ async def entry_menu(tid: int) -> tuple[str, IM]:
             "🖼 <b>Rasm bilan</b>: varaq rasmlarini botga yuborasiz.\n"
             "⌨️ <b>Qo'lda</b>: o'quvchini tanlab, javoblarini harflar bilan yozasiz.")
     kb = []
-    uns = [p for p in ps if p.unsure and p.answers]
+    uns = [p for p in ps if _uns(p)]
     if uns:
         text += (f"\n\n⚠️ <b>{len(uns)} ta o'quvchida noaniq savol bor</b> ("
-                 f"{sum(len(p.unsure) for p in uns)} ta). Yakunlashdan oldin varaqqa qarab tanlang.")
+                 f"{sum(len(_uns(p)) for p in uns)} ta). Yakunlashdan oldin varaqqa qarab tanlang.")
         kb.append([IB(text=f"⚠️ Noaniqlarni tanlash ({len(uns)} ta o'quvchi)", callback_data=f"tpe:{uns[0].id}")])
     kb += [[IB(text="🖼 Rasm yuborib tekshirish", callback_data=f"tsc:{tid}")],
           [IB(text="⌨️ Qo'lda kiritish", callback_data=f"tmn:{tid}")],
@@ -996,12 +996,15 @@ async def live_scan_result(m: Message, bot: Bot) -> None:
                 errors.append(f"{name}: varaqdagi savollar soni ({len(raw)}) testga ({n}) mos emas — qayta skaner qiling "
                               "yoki qo'lda kiriting.")
                 continue
-            unsure = [i + 1 for i, ch in enumerate(raw) if ch in "abcd?*"]
+            unsure = [i + 1 for i, ch in enumerate(raw) if ch in "abcd?"]
+            double = [i + 1 for i, ch in enumerate(raw) if ch == "*"]
             ans = raw.upper()
             p.answers, p.absent, p.scanned, p.entered_by = ans, False, True, st.id
             p.unsure = unsure or None
             p.correct = P.score(ans, p.key)
             line = f"• {name} — <b>{p.correct}/{n}</b> ({p.correct / n * 100:.0f}%)"
+            if double:
+                line += f" · ikkita belgilangan (xato): {', '.join(map(str, double))}"
             if unsure:
                 line += f" ⚠️ noaniq: {', '.join(map(str, unsure))}"
                 fixes.append((p.id, name))
@@ -1038,13 +1041,17 @@ async def _save_answers(m: Message, paper_id: int, answers: str, scanned: bool, 
         p = await s.get(TestPaper, paper_id)
         st = await _staff(s, m.from_user.id)
         p.answers, p.absent, p.scanned, p.entered_by = answers, False, scanned, st.id if st else None
-        p.unsure = list(unsure or []) or None
+        p.unsure = [q for q in (unsure or []) if 0 < q <= len(answers) and answers[q - 1] != "*"] or None
         p.correct = P.score(answers, p.key)
         enr = await s.get(Enrollment, p.enrollment_id)
         stu = await s.get(Student, enr.student_id)
         await s.commit()
         name, n, correct = stu.full_name, len(p.key), p.correct
     text = f"✅ {name}: <b>{correct} / {n}</b> ({correct / n * 100:.0f}%)"
+    dbl = [i + 1 for i, ch in enumerate(answers) if ch == "*"]
+    if dbl:
+        text += f"\n❌ Ikkita belgilangan (xato hisoblandi): {', '.join(map(str, dbl))}"
+    unsure = [q for q in (unsure or []) if q not in dbl]
     kb = None
     if unsure:
         text += (f"\n⚠️ Aniqlanmagan savollar: {', '.join(map(str, unsure))} — o'quvchining varag'iga qarab "
@@ -1082,17 +1089,25 @@ def _ask_kb(pid: int, q: int) -> IM:
         [IB(text="⌨️ Hamma javobni qayta yozish", callback_data=f"tpe:{pid}:all")]])
 
 
+def _uns(p) -> list[int]:
+    """Haqiqiy noaniq savollar: ikkita belgilangan («*») savol noaniq emas — avtomatik xato."""
+    if not p or not p.unsure or not p.answers:
+        return []
+    return [q for q in p.unsure if 0 < q <= len(p.answers) and p.answers[q - 1] != "*"]
+
+
 async def _ask_unsure(msg: Message, pid: int, edit: bool = False) -> bool:
     """Varaqdagi navbatdagi noaniq savolni so'raydi. So'raydigan savol qolmasa — False."""
     async with Session() as s:
         p = await s.get(TestPaper, pid)
-        if not p or not p.unsure or not p.answers:
+        if not p or not _uns(p):
             return False
         enr = await s.get(Enrollment, p.enrollment_id)
         name = (await s.get(Student, enr.student_id)).full_name
-    q = p.unsure[0]
+    pu = _uns(p)
+    q = pu[0]
     g = p.answers[q - 1]
-    text = (f"✏️ <b>{name}</b> · <b>{q}-savol</b>" + (f"  (yana {len(p.unsure) - 1} ta)" if len(p.unsure) > 1 else "")
+    text = (f"✏️ <b>{name}</b> · <b>{q}-savol</b>" + (f"  (yana {len(pu) - 1} ta)" if len(pu) > 1 else "")
             + "\n\nO'quvchining javob varag'iga qarang: shu savolda qaysi doiracha bo'yalgan?"
             + (f"\nSkaner taxmini: <b>{g}</b>" if g in "ABCD" else "")
             + "\n\n<i>To'g'ri javobni bilish shart emas — o'quvchi nimani belgilaganini tanlang, bot o'zi tekshiradi.</i>")
@@ -1109,19 +1124,19 @@ async def unsure_pick(c: CallbackQuery) -> None:
     pid, q = int(pid), int(q)
     async with Session() as s:
         p = await s.get(TestPaper, pid)
-        if not p or not p.answers or not p.unsure or q not in p.unsure:
+        if not p or q not in _uns(p):
             await c.answer("Bu savol allaqachon tanlangan.")
             return
         a = list(p.answers)
         a[q - 1] = ch
         p.answers = "".join(a)
-        p.unsure = [x for x in p.unsure if x != q] or None
+        p.unsure = [x for x in _uns(p) if x != q] or None
         p.correct = P.score(p.answers, p.key)
         await s.commit()
         tid, n, correct, left = p.test_id, len(p.key), p.correct, p.unsure
         nxt = None
         if not left:
-            nxt = next((x for x in await scope_papers(s, tid) if x.unsure and x.answers and x.id != pid), None)
+            nxt = next((x for x in await scope_papers(s, tid) if _uns(x) and x.id != pid), None)
             enr = await s.get(Enrollment, p.enrollment_id)
             name = (await s.get(Student, enr.student_id)).full_name
     await c.answer(f"{q}-savol: {ch if ch in 'ABCD' else ('bo‘sh' if ch == '-' else 'ikkita')}")
@@ -1250,7 +1265,7 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
                                    + ", ".join(f"#{x.id} {x.topic[:30]} ({ST.get(x.status, x.status)})" for x in not_ready)
                                    + ".\nNatijalar barcha testlar bilan birga yakunlanadi — avval ularni tayyorlang.")
             return
-        uns = [p for p in ps if p.unsure and p.answers]
+        uns = [p for p in ps if _uns(p)]
         if uns and not skip_unsure:
             await c.answer()
             await c.message.answer(f"⚠️ {len(uns)} ta o'quvchida noaniq savol bor. Avval varaqqa qarab tanlang — "
@@ -1295,14 +1310,18 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
             await _apply_coins(s, r, stu, rules, st, ex)
             if not p.answers:
                 continue
-            wrong = [f"{i}: siz {a if a in 'ABCD' else '—'}, to'g'ri {k}" for i, (a, k) in enumerate(zip(p.answers, p.key), 1)
-                     if a != k]
+            wrong = [f"{i}: " + (f"siz {a}" if a in "ABCD" else "ikkita javob belgilangan" if a == "*"
+                                  else "javob belgilanmagan") + f", to'g'ri {k}"
+                     for i, (a, k) in enumerate(zip(p.answers, p.key), 1) if a != k]
+            n_double = p.answers.count("*")
             topic = next((x.topic for x in ts if x.id == p.test_id), "")
             text = (f"📝 <b>Nazorat natijasi</b> · {g.name} · {ex.date:%d.%m}" + (" · oylik" if ex.monthly else "") +
                     (f"\nMavzu: {topic}" if len(ts) > 1 and topic else "") +
                     f"\n{stu.full_name}: <b>{p.correct} / {n}</b> ({r.percent:.0f}%)"
                     + (f"\n🎉 +{r.coins_given} coin" if r.coins_given else "")
-                    + ("\n\nXato javoblar:\n" + "\n".join(wrong[:40]) if wrong else "\n\nHammasi to'g'ri! 👏"))
+                    + ("\n\nXato javoblar:\n" + "\n".join(wrong[:40]) if wrong else "\n\nHammasi to'g'ri! 👏")
+                    + (f"\n\n⚠️ {n_double} ta savolda ikkita javob belgilangan — qoidaga ko'ra bunday savol xato "
+                       "hisoblanadi. Har savolda faqat BITTA doirachani bo'yash kerak." if n_double else ""))
             for tgt in await S.parent_tg_ids(s, stu.id):
                 msgs.append((tgt, text, r.id))
         await S.audit(s, st, "nazorat", group=g.name, date=ex.date.isoformat(), kind="test")

@@ -146,6 +146,6 @@ def read_sheet(data: bytes, n_for=None) -> OmrResult:
             fills.append(max(0.0, 1 - cv2.mean(roi, mask=mask)[0] / paper))   # 0 = oq, 1 = qora
         ch = decide(fills)
         answers.append(ch.upper() if ch in "abcd" else ch)
-        if ch not in "ABCD-":
+        if ch not in "ABCD-*":           # ikkita belgilangan — aniq xato, noaniq emas
             unsure.append(i)
     return OmrResult(pid, "".join(answers), unsure)
