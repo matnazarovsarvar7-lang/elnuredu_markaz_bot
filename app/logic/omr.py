@@ -21,6 +21,20 @@ def _pid(data: str) -> int | None:
     return None
 
 
+def decide(fills: list[float]) -> str:
+    """Bir savol: 'A'..'D' — aniq; '-' — bo'sh; '*' — ikkitasi bo'yalgan; 'a'..'d' / '?' — noaniq (taxmin).
+    Eng qora doiracha boshqalardan aniq ajralib tursa — qabul qilinadi (chala bo'yash, o'chirilgan iz ham)."""
+    order = sorted(range(4), key=lambda k: -fills[k])
+    b, s2 = fills[order[0]], fills[order[1]]
+    if b < 0.30:
+        return "-"
+    if s2 >= 0.45:
+        return "*"
+    if (b >= 0.38 and s2 < 0.30 and b - s2 >= 0.20) or (b >= 0.50 and s2 < b * 0.6):
+        return "ABCD"[order[0]]
+    return "abcd"[order[0]] if b >= 0.38 else "?"
+
+
 @dataclass
 class OmrResult:
     paper_id: int | None
@@ -130,16 +144,8 @@ def read_sheet(data: bytes, n_for=None) -> OmrResult:
                 fills.append(0.0)
                 continue
             fills.append(max(0.0, 1 - cv2.mean(roi, mask=mask)[0] / paper))   # 0 = oq, 1 = qora
-        marked = [k for k, f in enumerate(fills) if f >= FILLED]
-        middle = [k for k, f in enumerate(fills) if EMPTY < f < FILLED]
-        if len(marked) == 1 and not middle:
-            answers.append("ABCD"[marked[0]])
-        elif len(marked) > 1:
-            answers.append("*")
-            unsure.append(i)
-        elif not marked and not middle:
-            answers.append("-")
-        else:                                          # yarim bo'yalgan doiracha bor — tekshirish kerak
-            answers.append("ABCD"[marked[0]] if marked else "?")
+        ch = decide(fills)
+        answers.append(ch.upper() if ch in "abcd" else ch)
+        if ch not in "ABCD-":
             unsure.append(i)
     return OmrResult(pid, "".join(answers), unsure)

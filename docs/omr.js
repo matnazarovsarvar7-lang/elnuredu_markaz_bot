@@ -7,8 +7,7 @@
   var ROWS = 20, ROW_H = 24, TOP = 268, COL_W = 165, COL_X0 = 62, BUB_DX = 27, BUB_X0 = 34, BUB_R = 8;
   // QR kodning o'zi (chegara bo'shlig'isiz) varaqdagi burchaklari, pt
   var QR_PTS = [[461.4, 79.4], [530.1, 79.4], [461.4, 148.1], [530.1, 148.1]];   // TL, TR, BL, BR
-  var FILLED = 0.50, EMPTY = 0.30;
-
+  
   function bubbleCenters(n) {
     var cols = Math.max(1, Math.ceil(n / ROWS));
     var xs = cols < 3 ? (W - cols * COL_W) / 2 + 10 : COL_X0, out = [];
@@ -145,6 +144,15 @@
     return best;
   }
 
+  // app/logic/omr.py dagi decide() bilan bir xil
+  function decide(f) {
+    var o = [0, 1, 2, 3].sort(function (a, b) { return f[b] - f[a]; }), b = f[o[0]], s2 = f[o[1]];
+    if (b < 0.30) return "-";
+    if (s2 >= 0.45) return "*";
+    if ((b >= 0.38 && s2 < 0.30 && b - s2 >= 0.20) || (b >= 0.50 && s2 < b * 0.6)) return "ABCD"[o[0]];
+    return b >= 0.38 ? "abcd"[o[0]] : "?";
+  }
+
   function percentile(arr, q) {
     if (!arr.length) return 255;
     arr.sort(function (a, b) { return a - b; });
@@ -191,7 +199,7 @@
       if (seen < all * 0.8) return { pid: pid, error: "marks" };
     }
     if (!n) return { pid: pid, error: "layout", marks: pts };
-    var rows = bubbleCenters(n), r = BUB_R * 0.62, answers = "", unsure = [];
+    var rows = bubbleCenters(n), r = BUB_R * 0.62, answers = "", unsure = [], allFills = [];
     for (i = 0; i < n; i++) {
       var row = rows[i], y0 = row[0][1], band = [];
       for (var yy = y0 - 3 * r; yy <= y0 + 3 * r; yy += 2)
@@ -207,14 +215,12 @@
           }
         fills.push(c && paper > 0 ? Math.max(0, 1 - s / c / paper) : 0);
       }
-      var marked = [], middle = 0;
-      for (k = 0; k < 4; k++) { if (fills[k] >= FILLED) marked.push(k); else if (fills[k] > EMPTY) middle++; }
-      if (marked.length === 1 && !middle) answers += "ABCD"[marked[0]];
-      else if (marked.length > 1) { answers += "*"; unsure.push(i + 1); }
-      else if (!marked.length && !middle) answers += "-";
-      else { answers += marked.length ? "abcd"[marked[0]] : "?"; unsure.push(i + 1); }
+      allFills.push(fills);
+      var ch = decide(fills);
+      answers += ch;
+      if ("ABCD-".indexOf(ch) < 0) unsure.push(i + 1);
     }
-    return { pid: pid, n: n, answers: answers, unsure: unsure, marks: pts };
+    return { pid: pid, n: n, answers: answers, unsure: unsure, marks: pts, fills: allFills };
   }
 
   var api = { readFrame: readFrame, bubbleCenters: bubbleCenters, homography: homography, apply: apply };
