@@ -990,6 +990,8 @@ async def live_scan_result(m: Message, bot: Bot) -> None:
             enr = await s.get(Enrollment, p.enrollment_id)
             name = (await s.get(Student, enr.student_id)).full_name
             n = len(p.key)
+            if len(raw) > n and len(raw) == 20 * -(-n // 20):     # eski varaq: skaner butun ustunni o'qigan
+                raw = raw[:n]
             if len(raw) != n:
                 errors.append(f"{name}: varaqdagi savollar soni ({len(raw)}) testga ({n}) mos emas — qayta skaner qiling "
                               "yoki qo'lda kiriting.")

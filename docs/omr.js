@@ -128,20 +128,16 @@
     if (!rn || !on) return 0;
     return 1 - (ring / rn) / (out / on);          // 0 — bo'sh qog'oz, katta — halqa bor
   }
-  function detectN(at) {
-    var best = 0;
-    for (var cols = 1; cols <= 3; cols++) {
-      var xs = cols < 3 ? (W - cols * COL_W) / 2 + 10 : COL_X0, n = 0, stop = false;
-      for (var c = 0; c < cols && !stop; c++) {
-        for (var r = 0; r < ROWS; r++) {
-          var x = xs + c * COL_W + BUB_X0, y = TOP + r * ROW_H, ok = 0;
-          for (var k = 0; k < 4; k++) if (ringScore(at, x + k * BUB_DX, y) > 0.12) ok++;
-          if (ok >= 3) n++; else { stop = true; break; }
-        }
-      }
-      if (n > (cols - 1) * ROWS && n > best) best = n;
+  // Eski varaqlarda QR da savollar soni yo'q: ustunlar sonini birinchi qatorlardagi halqalardan aniqlaymiz.
+  // Har ustun 20 savol; ortiqchasini bot testdagi haqiqiy savollar soni bo'yicha kesadi.
+  function detectCols(at) {
+    for (var cols = 3; cols >= 1; cols--) {
+      var xs = cols < 3 ? (W - cols * COL_W) / 2 + 10 : COL_X0, hits = 0;
+      for (var r = 0; r < 4; r++)
+        for (var k = 0; k < 4; k++) if (ringScore(at, xs + BUB_X0 + k * BUB_DX, TOP + r * ROW_H) > 0.12) hits++;
+      if (hits >= 12) return cols;
     }
-    return best;
+    return 0;
   }
 
   // app/logic/omr.py dagi decide() bilan bir xil
@@ -190,15 +186,13 @@
       if (Math.hypot(pq[0] - qc[i].x, pq[1] - qc[i].y) > qside * 0.12) return { pid: pid, error: "marks" };
     }
     var at = sampler(g, w, h, Hs);
-    var n = nQr || detectN(at);
+    var n = nQr;
+    if (!n) { var cols = detectCols(at); if (!cols) return { pid: pid, error: "marks" }; n = cols * ROWS; }
     // tekshiruv 2: doirachalar halqalari kutilgan joyda bo'lishi kerak
-    if (n) {
-      var chk = bubbleCenters(n), seen = 0, all = 0;
-      for (i = 0; i < chk.length; i += Math.max(1, Math.floor(chk.length / 12)))
-        for (var kk = 0; kk < 4; kk += 3) { all++; if (ringScore(at, chk[i][kk][0], chk[i][kk][1]) > 0.12) seen++; }
-      if (seen < all * 0.8) return { pid: pid, error: "marks" };
-    }
-    if (!n) return { pid: pid, error: "layout", marks: pts };
+    var chk = bubbleCenters(n), seen = 0, all = 0, lim = nQr ? chk.length : 4;
+    for (i = 0; i < lim; i += Math.max(1, Math.floor(lim / 12)))
+      for (var kk = 0; kk < 4; kk += 3) { all++; if (ringScore(at, chk[i][kk][0], chk[i][kk][1]) > 0.12) seen++; }
+    if (seen < all * 0.8) return { pid: pid, error: "marks" };
     var rows = bubbleCenters(n), r = BUB_R * 0.62, answers = "", unsure = [], allFills = [];
     for (i = 0; i < n; i++) {
       var row = rows[i], y0 = row[0][1], band = [];
