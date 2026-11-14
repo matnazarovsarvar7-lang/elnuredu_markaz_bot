@@ -208,7 +208,8 @@ async def open_group(c: CallbackQuery) -> None:
         return
     await c.message.edit_text(
         f"<b>{g.name}</b> · {les.date:%d.%m.%Y}\nHammasi «keldi» deb belgilangan. Kelmaganni bir marta, "
-        "kechikkanni ikki marta bosing, keyin «Tasdiqlash».", reply_markup=K.attendance_kb(les.id, rows))
+        "kechikkanni ikki marta bosing, keyin «💾 Tasdiqlash va davom etish» ni bosing — shundan keyin "
+        "uy vazifasi va «🔔 Dars tugadi» tugmalari chiqadi.", reply_markup=K.attendance_kb(les.id, rows))
 
 
 @router.callback_query(F.data.startswith("att:"))
@@ -289,7 +290,8 @@ async def confirm_att(c: CallbackQuery, bot: Bot) -> None:
         await notify_absent(bot, lid)
     if rows:
         await c.message.answer("Oldingi uy vazifasi tekshiruvi: hammasi «bajardi». Qisman — bir marta, "
-                               "bajarmagan — ikki marta bosing.", reply_markup=K.homework_kb(lid, rows))
+                               "bajarmagan — ikki marta bosing. Keyin «💾 Tasdiqlash va davom etish» — shundan keyin yangi vazifa "
+                               "berish va «🔔 Dars tugadi» chiqadi.", reply_markup=K.homework_kb(lid, rows))
     else:
         from app.bot.homework import ask_homework
         await ask_homework(c.message, lid)

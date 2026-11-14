@@ -115,17 +115,18 @@ HW_ICON = {"done": "✅", "part": "➗", "none": "❌"}
 
 def attendance_kb(lesson_id: int, rows: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
     """rows: (enrollment_id, ism, belgi). Bosilsa: keldi → kelmadi → kechikdi → keldi."""
+    ok = [InlineKeyboardButton(text="💾 Tasdiqlash va davom etish ➡️", callback_data=f"attok:{lesson_id}")]
     kb = [[InlineKeyboardButton(text=f"{MARK_ICON[m]} {name}", callback_data=f"att:{lesson_id}:{eid}")]
           for eid, name, m in rows]
-    kb.append([InlineKeyboardButton(text="💾 Tasdiqlash", callback_data=f"attok:{lesson_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=kb)
+    # ro'yxat uzun bo'lsa tugma pastda ko'rinmay qoladi — tepada ham turadi
+    return InlineKeyboardMarkup(inline_keyboard=([ok] if len(rows) > 6 else []) + kb + [ok])
 
 
 def homework_kb(lesson_id: int, rows: list[tuple[int, str, str]]) -> InlineKeyboardMarkup:
+    ok = [InlineKeyboardButton(text="💾 Tasdiqlash va davom etish ➡️", callback_data=f"hwok:{lesson_id}")]
     kb = [[InlineKeyboardButton(text=f"{HW_ICON[m]} {name}", callback_data=f"hw:{lesson_id}:{eid}")]
           for eid, name, m in rows]
-    kb.append([InlineKeyboardButton(text="💾 Tasdiqlash", callback_data=f"hwok:{lesson_id}")])
-    return InlineKeyboardMarkup(inline_keyboard=kb)
+    return InlineKeyboardMarkup(inline_keyboard=([ok] if len(rows) > 6 else []) + kb + [ok])
 
 
 def consent_kb() -> InlineKeyboardMarkup:
