@@ -74,7 +74,7 @@
     ids.sort(function (a, b) { return scans[b].t - scans[a].t; }).forEach(function (id, i) {
       var s = scans[id], u = (s.a.match(/[a-d?*]/g) || []).length, d = document.createElement("div");
       d.innerHTML = "<span>" + (ids.length - i) + ". Varaq №" + id + "</span><span" + (u ? " class=u" : "") + ">" +
-        s.a.length + " javob" + (u ? " · ⚠️ " + u + " noaniq" : " ✓") + "</span>";
+        (u ? "⚠️ " + u + " ta noaniq" : "✓ o'qildi") + "</span>";
       listEl.appendChild(d);
     });
     if (tg) {
@@ -101,7 +101,7 @@
     var f = document.getElementById("flash"); f.style.opacity = .45; setTimeout(function () { f.style.opacity = 0; }, 180);
     guide.className = "ok"; setTimeout(function () { guide.className = ""; }, 700);
     var u = (r.answers.match(/[a-d?*]/g) || []).length;
-    setStatus((old ? "Qayta o'qildi: №" : "✓ O'qildi: varaq №") + r.pid + " · " + r.answers.length + " javob" +
+    setStatus((old ? "Qayta o'qildi: varaq №" : "✓ O'qildi: varaq №") + r.pid +
               (u ? " · " + u + " ta noaniq (botda tuzatasiz)" : "") + ". Keyingi varaq!", u ? "warn" : "ok");
   }
 
