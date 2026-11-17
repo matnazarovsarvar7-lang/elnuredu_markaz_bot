@@ -217,7 +217,8 @@ def _para(text: str, style: ParagraphStyle):
 
 def _qtext(prefix: str, text: str, style: ParagraphStyle) -> list:
     """Savol matni. «{{2x + y = 5; x − y = 1}}» — tenglamalar sistemasi figurali qavs bilan chiziladi."""
-    parts = SYS_RE.split(text or "")
+    from app.logic.mathtext import auto_system
+    parts = SYS_RE.split(auto_system(text or ""))
     if len(parts) == 1:
         return [_para(prefix + (text or ""), style)]
     eq = ParagraphStyle("eq", parent=style, fontName=_FONT, spaceBefore=0, leading=style.leading + 1)
@@ -248,8 +249,8 @@ def _qtext(prefix: str, text: str, style: ParagraphStyle) -> list:
 
 def sys_plain(text: str) -> str:
     """Telegram matni uchun: {{a; b}} → «{ a ; b }», [[a|b]] → (a)/(b)."""
-    from app.logic.mathtext import plain
-    text = plain(text)
+    from app.logic.mathtext import auto_system, plain
+    text = plain(auto_system(text or ""))
     return SYS_RE.sub(lambda m: "{ " + " ; ".join(x.strip() for x in m.group(1).split(";")) + " }", text or "")
 
 

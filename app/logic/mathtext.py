@@ -139,3 +139,74 @@ class MathPara(Flowable):
                     c.line(x + 1.5, mid, x + w - 1.5, mid)
                 x += w
             y -= lh
+
+
+_REL = re.compile(r"[=<>≤≥≠]")
+_MW = re.compile(r"^[0-9A-Za-z()²³⁴√π+\-−·×/=<>≤≥≠.,;\[\]|]+$")
+
+
+def _math_word(w: str) -> bool:
+    if not _MW.match(w):
+        return False
+    letters = re.sub(r"[^A-Za-z]", "", w)
+    return len(letters) <= 3 and w.lower().strip(".,;") != "va"
+
+
+def auto_system(text: str) -> str:
+    """Eski testlar: «… sistema …» matnida «tenglama va tenglama» (yoki vergul bilan) → {{tenglama; tenglama}}."""
+    if not text or "{{" in text or "sistema" not in text.lower():
+        return text
+    bits = re.split(r"(\s+va\s+|,\s+)", text)       # [matn, ajratuvchi, matn, ...]
+    parts, seps = bits[0::2], bits[1::2]
+    if len(parts) < 2:
+        return text
+    words = [p.split(" ") for p in parts]
+
+    def tail(ws):
+        k = len(ws)
+        while k > 0 and _math_word(ws[k - 1]):
+            k -= 1
+        return k
+
+    def head(ws):
+        k = 0
+        while k < len(ws) and _math_word(ws[k]):
+            k += 1
+        return k
+
+    i = 0
+    while i < len(parts) - 1:
+        t0 = tail(words[i])
+        first = " ".join(words[i][t0:])
+        if not _REL.search(first):
+            i += 1
+            continue
+        chain, j = [first], i + 1
+        while j < len(parts):
+            h = head(words[j])
+            eq = " ".join(words[j][:h])
+            if not _REL.search(eq):
+                break
+            chain.append(eq)
+            if h < len(words[j]):
+                break
+            j += 1
+        if len(chain) < 2:
+            i += 1
+            continue
+        last = i + len(chain) - 1
+        h = head(words[last])
+        end_eq = chain[-1]
+        punct = end_eq[-1] if end_eq[-1:] in ".;" else ""
+        chain = [c.rstrip(".,;") for c in chain]
+        pre = " ".join(words[i][:t0])
+        rest = " ".join(words[last][h:])
+        merged = (pre + " " if pre else "") + "{{" + "; ".join(chain) + "}}" + punct + (" " + rest if rest else "")
+        parts[i:last + 1] = [merged]
+        words[i:last + 1] = [merged.split(" ")]
+        del seps[i:last]
+        i += 1
+    out = parts[0]
+    for sep, p in zip(seps, parts[1:]):
+        out += sep + p
+    return out
