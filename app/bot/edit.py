@@ -21,7 +21,7 @@ router = Router()
 DAYS = {"toq": "Toq (Du-Chor-Ju)", "juft": "Juft (Se-Pay-Sha)", "har": "Har kuni (Du-Sha)"}
 EDIT_ROLES = ("admin", "moliya", "rahbar")
 DISC = {"none": "Chegirmasiz", "markaz": "Markaz hisobidan", "umumiy": "Umumiy", "ijtimoiy": "Ijtimoiy (100%)",
-        "qarindosh": "Yaqin qarindosh (100%, o'qituvchiga ham to'lanmaydi)"}
+        "qarindosh": "Yaqin qarindosh (to'lovsiz, coinsiz)"}
 
 
 class Ed(StatesGroup):
@@ -553,11 +553,9 @@ async def disc_kind_set(c: CallbackQuery, state: FSMContext) -> None:
     if kind in ("none", "ijtimoiy", "qarindosh"):
         await _save_disc(c.message, c.from_user.id, int(eid), kind, 0 if kind == "none" else 100)
         if kind == "qarindosh":
-            from app.bot.cash import social_job
-            await social_job()           # shu oy uchun darhol «to'landi» va coin
-            await c.message.answer("👨‍👩‍👧 Yaqin qarindosh: o'quvchi to'lamaydi, o'qituvchi ulushi hisoblanmaydi. "
-                                   "Har oy bot o'zi «o'z vaqtida to'landi» deb belgilaydi va boshqalar kabi coin beradi — "
-                                   "ota-ona va o'quvchiga hech qanday alohida belgi ko'rinmaydi.")
+            await c.message.answer("👨‍👩‍👧 Yaqin qarindosh: o'quvchi to'lamaydi, qarzdorlarga tushmaydi, o'qituvchi "
+                                   "ulushi hisoblanmaydi va coin berilmaydi (davomat, vazifa, nazorat, yutuq — hech "
+                                   "biridan). Ota-onaga to'lov eslatmasi bormaydi.")
         return
     async with Session() as s:
         e = await s.get(Enrollment, int(eid), options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])

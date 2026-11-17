@@ -157,6 +157,8 @@ async def add_coins(s: AsyncSession, student: Student, amount: int, kind: str, r
                     by: Staff | None = None) -> None:
     if not amount:
         return
+    if amount > 0 and await is_relative(s, student.id):
+        return                      # yaqin qarindoshlarga coin berilmaydi
     student.coins += amount
     s.add(CoinTx(student_id=student.id, amount=amount, kind=kind, reason=reason,
                  by_staff_id=by.id if by else None))
@@ -295,7 +297,7 @@ def discount_label(enr: Enrollment) -> str:
     if enr.discount_kind == "ijtimoiy":
         return "ijtimoiy (100%)"
     if enr.discount_kind == "qarindosh":
-        return "yaqin qarindosh (100%, o'qituvchiga to'lanmaydi)"
+        return "yaqin qarindosh (to'lovsiz, o'qituvchiga to'lanmaydi, coinsiz)"
     name = {"markaz": "markaz hisobidan", "umumiy": "umumiy"}.get(enr.discount_kind, enr.discount_kind)
     return f"{name} −{fmt_som(enr.discount_amount)}" if enr.discount_amount else f"{name} {enr.discount_percent}%"
 
@@ -328,7 +330,15 @@ async def has_closed_month_debt(s: AsyncSession, student: Student, today: date) 
     return False
 
 
+async def is_relative(s: AsyncSession, student_id: int) -> bool:
+    """Yaqin qarindosh: faol guruhlaridan birida «qarindosh» chegirmasi bor."""
+    return bool((await s.execute(select(Enrollment.id).where(
+        Enrollment.student_id == student_id, Enrollment.active, Enrollment.discount_kind == "qarindosh"))).first())
+
+
 async def coins_allowed(s: AsyncSession, student: Student, on: date) -> bool:
+    if await is_relative(s, student.id):
+        return False
     await s.refresh(student, ["enrollments"])
     for e in student.enrollments:
         await s.refresh(e, ["group", "student"])
