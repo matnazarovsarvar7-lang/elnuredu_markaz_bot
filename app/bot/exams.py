@@ -241,6 +241,9 @@ async def exam_card(eid: int) -> tuple[str, IM]:
         lines += [f"Turi: {KIND_SHORT.get(ex.kind, '—')} · eng ko'p ball {ex.max_score:g}",
                   f"Qatnashdi: {len(took)} · o'rtacha {avg:.0f}%"]
         rows.append([IB(text="📊 Natijalar", callback_data=f"exv:{eid}")])
+        if tests:
+            rows.append([IB(text="📝 O'quvchilar javoblari", callback_data=f"exa:{eid}"),
+                         IB(text="🔍 Savollar tahlili", callback_data=f"exq:{eid}")])
         rows.append([IB(text="✏️ Natijani tuzatish", callback_data=f"exf:{eid}")])
     elif ex.status != "bekor":
         rows.append([IB(text="✅ Natijalarni kiritish", callback_data=f"exr:{eid}")])
@@ -267,6 +270,142 @@ async def exam_view(c: CallbackQuery) -> None:
     lines = [f"{n}: " + (f"{r.score:g}/{ex.max_score:g} · {r.percent:.0f}%" if r.percent is not None else "qatnashmadi")
              for r, n in rows]
     await c.message.answer("📊 <b>Natijalar</b>\n" + "\n".join(lines))
+
+
+async def _exam_papers(s, eid: int):
+    """(qog'oz, o'quvchi ismi) — nazoratdagi barcha test varaqlari."""
+    from app.db.models import TestPaper
+    from app.bot.tests_flow import exam_tests
+    ids = [t.id for t in await exam_tests(s, eid)]
+    return (await s.execute(select(TestPaper, Student.full_name).join(Enrollment, Enrollment.id == TestPaper.enrollment_id)
+                            .join(Student, Student.id == Enrollment.student_id)
+                            .where(TestPaper.test_id.in_(ids or [0])).order_by(Student.full_name))).all()
+
+
+async def _may_see(s, tg: int, eid: int) -> bool:
+    who = await S.who_by_tg(s, tg)
+    st = who.staff
+    if not st or st.current_role not in ("rahbar", "oqituvchi", "yordamchi", "moliya", "admin"):
+        return False
+    if st.current_role == "rahbar":
+        return True
+    ex = await s.get(Exam, eid)
+    g = await s.get(Group, ex.group_id)
+    return st.id in (g.teacher_id, g.assistant_id, ex.conductor_id)
+
+
+@router.callback_query(F.data.startswith("exa:"))
+async def exam_answers(c: CallbackQuery) -> None:
+    """O'quvchilar javoblari: ro'yxat → bitta o'quvchining har savoldagi javobi va to'g'ri javob."""
+    parts = c.data.split(":")
+    eid = int(parts[1])
+    async with Session() as s:
+        if not await _may_see(s, c.from_user.id, eid):
+            await c.answer("Ruxsat yo'q.", show_alert=True)
+            return
+        rows = await _exam_papers(s, eid)
+        g = await s.get(Group, (await s.get(Exam, eid)).group_id)
+    await c.answer()
+    if len(parts) == 2:
+        kb = []
+        for p, name in sorted(rows, key=lambda r: -(r[0].correct or -1)):
+            n = len(p.key)
+            lab = "qatnashmadi" if p.absent else "kiritilmagan" if not p.answers else f"{p.correct}/{n}"
+            kb.append([IB(text=f"{name} — {lab}", callback_data=f"exa:{eid}:{p.id}")])
+        await c.message.answer(f"📝 <b>{g.name}</b> · o'quvchilar javoblari\nKimnikini ko'ramiz?",
+                               reply_markup=IM(inline_keyboard=kb or [[IB(text="—", callback_data="noop")]]))
+        return
+    pid = int(parts[2])
+    p, name = next(((p, n) for p, n in rows if p.id == pid), (None, None))
+    if not p:
+        await c.message.answer("Varaq topilmadi.")
+        return
+    if p.absent or not p.answers:
+        await c.message.answer(f"{name}: {'qatnashmadi' if p.absent else 'javoblari kiritilmagan'}.")
+        return
+    n = len(p.key)
+    lines = ["№   Javob  To'g'ri"]
+    wrong = 0
+    for i, (a, k) in enumerate(zip(p.answers, p.key), 1):
+        mine = a if a in "ABCD" else ("ikkita" if a == "*" else "bo'sh")
+        ok = a == k
+        wrong += not ok
+        lines.append(f"{i:<3} {mine:<6} {k:<3} {'✅' if ok else '❌'}")
+    head = (f"📝 <b>{name}</b> · {g.name}\nNatija: <b>{p.correct}/{n}</b> ({p.correct / n * 100:.0f}%) · "
+            f"xato: {wrong}" + (f" · varaq {p.variant}" if p.variant else ""))
+    await c.message.answer(head + "\n<pre>" + "\n".join(lines) + "</pre>",
+                           reply_markup=IM(inline_keyboard=[[IB(text="⬅️ Boshqa o'quvchi", callback_data=f"exa:{eid}")]]))
+
+
+@router.callback_query(F.data.startswith("exq:"))
+async def exam_analysis(c: CallbackQuery) -> None:
+    """Savollar tahlili: har savolni necha foiz to'g'ri yechgani, eng ko'p tanlangan xato javob, daraja bo'yicha."""
+    from app.db.models import TestQuestion
+    eid = int(c.data.split(":")[1])
+    async with Session() as s:
+        if not await _may_see(s, c.from_user.id, eid):
+            await c.answer("Ruxsat yo'q.", show_alert=True)
+            return
+        rows = await _exam_papers(s, eid)
+        g = await s.get(Group, (await s.get(Exam, eid)).group_id)
+        tids = {p.test_id for p, _ in rows}
+        qs = {(q.test_id, q.qid): q for q in (await s.execute(
+            select(TestQuestion).where(TestQuestion.test_id.in_(tids or [0])))).scalars()}
+    await c.answer()
+    stat: dict = {}                     # (test, qid) -> {"n", "ok", "wrong": {asl variant indeksi | "bo'sh"/"ikkita": son}}
+    for p, _ in rows:
+        if p.absent or not p.answers:
+            continue
+        for i, (a, k) in enumerate(zip(p.answers, p.key)):
+            key = (p.test_id, p.qids[i])
+            d = stat.setdefault(key, {"n": 0, "ok": 0, "wrong": {}})
+            d["n"] += 1
+            if a == k:
+                d["ok"] += 1
+            else:
+                w = p.perms[i]["ABCD".index(a)] if a in "ABCD" else ("ikkita" if a == "*" else "bo'sh")
+                d["wrong"][w] = d["wrong"].get(w, 0) + 1
+    if not stat:
+        await c.message.answer("Hali javoblar kiritilmagan.")
+        return
+    lv: dict = {}
+    for key, d in stat.items():
+        q = qs.get(key)
+        L = lv.setdefault(q.level if q else "—", [0, 0])
+        L[0] += d["ok"]
+        L[1] += d["n"]
+    lname = {"oson": "Oson", "orta": "O'rta", "qiyin": "Qiyin"}
+    out = [f"🔍 <b>Savollar tahlili</b> · {g.name}", f"Ishlaganlar: {sum(1 for p, _ in rows if p.answers and not p.absent)} ta", "",
+           "<b>Daraja bo'yicha to'g'ri javoblar:</b>"]
+    for k in ("oson", "orta", "qiyin", "—"):
+        if k in lv and lv[k][1]:
+            out.append(f"• {lname.get(k, k)}: {lv[k][0] / lv[k][1] * 100:.0f}%")
+    hard = sorted(stat.items(), key=lambda kv: (kv[1]["ok"] / kv[1]["n"], -kv[1]["n"]))
+    out += ["", "<b>Eng qiyin bo'lgan savollar</b> (kam to'g'ri yechilgan):"]
+    for key, d in hard[:12]:
+        q = qs.get(key)
+        pc = d["ok"] / d["n"] * 100
+        if pc >= 80:
+            break
+        txt = (q.text if q else f"#{key[1]}").replace("\n", " ")
+        line = f"\n• <b>{d['ok']}/{d['n']} ({pc:.0f}%)</b> — {txt[:110]}{'…' if len(txt) > 110 else ''}"
+        if q:
+            line += f"\n   To'g'ri: {q.options['ABCD'.index(q.answer)] if q.answer in 'ABCD' else q.answer}"[:150]
+        if d["wrong"]:
+            w, cnt = max(d["wrong"].items(), key=lambda x: x[1])
+            wt = (q.options[w] if q and isinstance(w, int) and w < len(q.options) else str(w))
+            line += f"\n   Ko'p tanlangan xato: {wt[:80]} ({cnt} ta)"
+        out.append(line)
+    if len(out) and out[-1].startswith("<b>Eng qiyin"):
+        out.append("Barcha savollar 80% dan yuqori yechilgan 👏")
+    good = sum(1 for d in stat.values() if d["ok"] / d["n"] >= 0.8)
+    out += ["", f"80% va undan yuqori yechilgan savollar: {good} / {len(stat)}"]
+    text = "\n".join(out)
+    while len(text) > 3900:
+        cut = text.rfind("\n\n•", 0, 3900)
+        await c.message.answer(text[:cut])
+        text = text[cut:].lstrip("\n")
+    await c.message.answer(text)
 
 
 @router.callback_query(F.data.startswith("exd:"))
