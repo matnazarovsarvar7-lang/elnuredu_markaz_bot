@@ -294,6 +294,8 @@ def discount_label(enr: Enrollment) -> str:
         return ""
     if enr.discount_kind == "ijtimoiy":
         return "ijtimoiy (100%)"
+    if enr.discount_kind == "qarindosh":
+        return "yaqin qarindosh (100%, o'qituvchiga to'lanmaydi)"
     name = {"markaz": "markaz hisobidan", "umumiy": "umumiy"}.get(enr.discount_kind, enr.discount_kind)
     return f"{name} −{fmt_som(enr.discount_amount)}" if enr.discount_amount else f"{name} {enr.discount_percent}%"
 

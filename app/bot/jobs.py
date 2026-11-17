@@ -36,7 +36,7 @@ async def debt_reminders(bot: Bot) -> None:
     async with Session() as s:
         jobs = []
         for sd in await S.student_debtors(s, t.year, t.month):
-            parts = [p for p in sd.parts if p.enrollment.discount_kind != "ijtimoiy"]
+            parts = [p for p in sd.parts if p.enrollment.discount_kind not in ("ijtimoiy", "qarindosh")]
             if not parts:
                 continue
             lines = "\n".join(f"• {p.enrollment.group.name}: {S.fmt_som(p.debt)}" for p in parts)

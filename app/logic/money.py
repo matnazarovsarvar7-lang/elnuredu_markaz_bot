@@ -48,11 +48,11 @@ def month_due(fee: int, join: date, year: int, month: int, pattern: str, step: i
 
 @dataclass(frozen=True)
 class Discount:
-    kind: str = "none"   # none | markaz | umumiy | ijtimoiy
+    kind: str = "none"   # none | markaz | umumiy | ijtimoiy | qarindosh
     percent: float = 0   # 0–100 (summa chegirmasi oylik narxga nisbatan foizga aylantiriladi)
 
     def payable(self, gross: int, step: int = 1000) -> int:
-        if self.kind == "ijtimoiy":
+        if self.kind in ("ijtimoiy", "qarindosh"):
             return 0
         if self.kind == "none" or not self.percent:
             return gross
@@ -66,6 +66,8 @@ def teacher_share_base(gross: int, paid: int, discount: Discount) -> int:
     - markaz chegirmasi: to'liq narxdan, to'langan ulush nisbatida;
     - ijtimoiy: to'liq narx (to'lagan o'quvchidek).
     """
+    if discount.kind == "qarindosh":
+        return 0                # yaqin qarindosh: o'qituvchiga ham to'lanmaydi
     if discount.kind == "ijtimoiy":
         return gross
     if discount.kind == "markaz" and discount.percent:

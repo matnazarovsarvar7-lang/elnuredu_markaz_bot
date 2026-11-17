@@ -20,7 +20,8 @@ from app import services as S
 router = Router()
 DAYS = {"toq": "Toq (Du-Chor-Ju)", "juft": "Juft (Se-Pay-Sha)", "har": "Har kuni (Du-Sha)"}
 EDIT_ROLES = ("admin", "moliya", "rahbar")
-DISC = {"none": "Chegirmasiz", "markaz": "Markaz hisobidan", "umumiy": "Umumiy", "ijtimoiy": "Ijtimoiy (100%)"}
+DISC = {"none": "Chegirmasiz", "markaz": "Markaz hisobidan", "umumiy": "Umumiy", "ijtimoiy": "Ijtimoiy (100%)",
+        "qarindosh": "Yaqin qarindosh (100%, o'qituvchiga ham to'lanmaydi)"}
 
 
 class Ed(StatesGroup):
@@ -543,8 +544,20 @@ async def disc_kind(c: CallbackQuery) -> None:
 @router.callback_query(F.data.startswith("sdk:"))
 async def disc_kind_set(c: CallbackQuery, state: FSMContext) -> None:
     _, eid, kind = c.data.split(":")
-    if kind in ("none", "ijtimoiy"):
-        await _save_disc(c.message, c.from_user.id, int(eid), kind, 100 if kind == "ijtimoiy" else 0)
+    if kind == "qarindosh":
+        async with Session() as s:
+            who = await S.who_by_tg(s, c.from_user.id)
+        if not (who.staff and who.staff.current_role == "rahbar"):
+            await c.answer("«Yaqin qarindosh» ni faqat rahbar belgilaydi.", show_alert=True)
+            return
+    if kind in ("none", "ijtimoiy", "qarindosh"):
+        await _save_disc(c.message, c.from_user.id, int(eid), kind, 0 if kind == "none" else 100)
+        if kind == "qarindosh":
+            from app.bot.cash import social_job
+            await social_job()           # shu oy uchun darhol «to'landi» va coin
+            await c.message.answer("👨‍👩‍👧 Yaqin qarindosh: o'quvchi to'lamaydi, o'qituvchi ulushi hisoblanmaydi. "
+                                   "Har oy bot o'zi «o'z vaqtida to'landi» deb belgilaydi va boshqalar kabi coin beradi — "
+                                   "ota-ona va o'quvchiga hech qanday alohida belgi ko'rinmaydi.")
         return
     async with Session() as s:
         e = await s.get(Enrollment, int(eid), options=[selectinload(Enrollment.group), selectinload(Enrollment.student)])
@@ -595,7 +608,7 @@ async def _save_disc(msg: Message, tg_id: int, eid: int, kind: str, pct: int, am
         await s.commit()
         fee = await S.enrollment_fee(s, e)
         label = S.discount_label(e)
-    pay = fee - amount if amount else round(fee * (100 - pct) / 100) if kind in ("markaz", "umumiy") else (0 if kind == "ijtimoiy" else fee)
+    pay = fee - amount if amount else round(fee * (100 - pct) / 100) if kind in ("markaz", "umumiy") else (0 if kind in ("ijtimoiy", "qarindosh") else fee)
     await msg.answer(f"Saqlandi ✅ {e.student.full_name} · {e.group.name}: {label or DISC[kind]}\n"
                      f"To'liq oy uchun to'lov: <b>{S.fmt_som(pay)}</b> (narx {S.fmt_som(fee)}).")
 

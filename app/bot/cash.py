@@ -776,12 +776,14 @@ async def cash_list(c: CallbackQuery) -> None:
 
 # ================= ijtimoiy o'quvchilar: har oy avtomatik "to'landi" =================
 async def social_job(bot: Bot | None = None) -> int:
-    """Har kuni 07:00: ijtimoiy chegirmali o'rinlarga shu oy uchun shartli to'lov (kassaga kirmaydi) va coin."""
+    """Har kuni 07:00: ijtimoiy va yaqin qarindosh o'rinlariga shu oy uchun shartli to'lov (kassaga kirmaydi) va coin.
+    Ota-ona va o'quvchi uchun oddiy «o'z vaqtida to'landi» bo'lib ko'rinadi — hech qanday alohida belgi yo'q."""
     t = now().date()
     month = f"{t:%Y-%m}"
     made = 0
     async with Session() as s:
-        enrs = (await s.execute(select(Enrollment).where(Enrollment.active, Enrollment.discount_kind == "ijtimoiy")
+        enrs = (await s.execute(select(Enrollment).where(Enrollment.active,
+                                                         Enrollment.discount_kind.in_(("ijtimoiy", "qarindosh")))
                                 .options(selectinload(Enrollment.group), selectinload(Enrollment.student)))).scalars().all()
         for e in enrs:
             has = (await s.execute(select(Payment.id).where(Payment.enrollment_id == e.id, Payment.month == month,

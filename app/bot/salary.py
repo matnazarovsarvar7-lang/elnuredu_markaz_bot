@@ -608,7 +608,7 @@ async def profit_report(s, month: str, final: bool = False) -> str:
 async def _active_seats(s) -> int:
     from app.db.models import Enrollment
     return int((await s.execute(select(func.count(Enrollment.id)).where(Enrollment.active,
-                                                                        Enrollment.discount_kind != "ijtimoiy"))).scalar())
+                                                                        Enrollment.discount_kind.not_in(("ijtimoiy", "qarindosh"))))).scalar())
 
 
 @router.message(F.text == K.B_REPORT)

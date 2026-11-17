@@ -84,6 +84,8 @@ async def teacher_share(s, st: Staff, start: datetime, end: datetime) -> tuple[i
                                        cond).options(selectinload(Enrollment.student)))).all()
         base = 0
         for p, e in rows:
+            if e.discount_kind == "qarindosh":
+                continue                # yaqin qarindosh — o'qituvchi ulushi yo'q
             from app import services as _S
             pct = _S.discount_pct(e, await _S.enrollment_fee(s, e)) if e.discount_amount else e.discount_percent
             if e.discount_kind == "markaz" and pct:
@@ -273,7 +275,7 @@ async def kpi_points(s, st: Staff, role: str, month: str) -> tuple[int, list[str
         add(pen == 0, 3, "jarimasiz oy")
     elif role == "moliya":
         from app import services as S
-        enrs = (await s.execute(select(Enrollment).where(Enrollment.active, Enrollment.discount_kind != "ijtimoiy")
+        enrs = (await s.execute(select(Enrollment).where(Enrollment.active, Enrollment.discount_kind.not_in(("ijtimoiy", "qarindosh")))
                                 .options(selectinload(Enrollment.group), selectinload(Enrollment.student)))).scalars().all()
         y, m = d1.year, d1.month
         early, payable, debt = 0, 0, 0
