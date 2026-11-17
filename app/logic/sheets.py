@@ -153,7 +153,7 @@ def booklets_pdf(items: list[BookletItem], center: str) -> bytes:
             fig = _figure(item[2] if len(item) > 2 else None)
             if fig:
                 block += [Spacer(1, 3), fig, Spacer(1, 3)]
-            block += [Paragraph(f"{x}) {_e(o)}", op) for x, o in zip("ABCD", opts)]
+            block += [_para(f"{x}) {o}", op) for x, o in zip("ABCD", opts)]
             story.append(KeepTogether(block))
     doc.build(story)
     return buf.getvalue()
@@ -176,7 +176,7 @@ def review_pdf(title: str, rows: list[tuple[int, str, str, str, str, list[str], 
         fig = _figure(row[7] if len(row) > 7 else None)
         if fig:
             block += [Spacer(1, 3), fig, Spacer(1, 3)]
-        block += [Paragraph(f"{x}) {_e(o)}" + ("  — to'g'ri javob" if x == ans else ""), ok if x == ans else op)
+        block += [_para(f"{x}) {o}" + ("  — to'g'ri javob" if x == ans else ""), ok if x == ans else op)
                   for x, o in zip("ABCD", opts)]
         if src:
             block.append(Paragraph(f"Manba: {_e(src)}", small))
@@ -206,26 +206,36 @@ def _brace(h: float) -> Drawing:
     return d
 
 
+def _para(text: str, style: ParagraphStyle):
+    """Oddiy matn — Paragraph; kasr bo'lsa — kasrlarni ikki qavatli chizadigan MathPara."""
+    from app.logic.mathtext import MathPara, has_fraction
+    if has_fraction(text):
+        return MathPara(text, style.fontName, style.fontSize, style.leading, indent=style.leftIndent,
+                        space_before=style.spaceBefore, color=style.textColor)
+    return Paragraph(_e(text), style)
+
+
 def _qtext(prefix: str, text: str, style: ParagraphStyle) -> list:
     """Savol matni. «{{2x + y = 5; x − y = 1}}» — tenglamalar sistemasi figurali qavs bilan chiziladi."""
     parts = SYS_RE.split(text or "")
     if len(parts) == 1:
-        return [Paragraph(prefix + _e(text), style)]
+        return [_para(prefix + (text or ""), style)]
     eq = ParagraphStyle("eq", parent=style, fontName=_FONT, spaceBefore=0, leading=style.leading + 1)
     out, first = [], True
     for k, chunk in enumerate(parts):
         if k % 2 == 0:
             chunk = chunk.strip()
             if chunk or first:
-                out.append(Paragraph((prefix if first else "") + _e(chunk), style if first else
-                                     ParagraphStyle("qc", parent=style, spaceBefore=1)))
+                out.append(_para((prefix if first else "") + chunk, style if first else
+                                 ParagraphStyle("qc", parent=style, spaceBefore=1)))
                 first = False
             continue
         lines = [x.strip() for x in chunk.replace("\n", ";").split(";") if x.strip()]
         if not lines:
             continue
-        h = len(lines) * eq.leading + 2
-        inner = Table([[Paragraph(_e(x), eq)] for x in lines],
+        cells = [_para(x, eq) for x in lines]
+        h = sum(c.wrap(400, 1000)[1] for c in cells) + 2
+        inner = Table([[c] for c in cells],
                       style=TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
                                         ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
         t = Table([[_brace(h), inner]], colWidths=[11, None], hAlign="LEFT",
@@ -237,7 +247,9 @@ def _qtext(prefix: str, text: str, style: ParagraphStyle) -> list:
 
 
 def sys_plain(text: str) -> str:
-    """Telegram matni uchun: {{a; b}} → «{ a ; b }»."""
+    """Telegram matni uchun: {{a; b}} → «{ a ; b }», [[a|b]] → (a)/(b)."""
+    from app.logic.mathtext import plain
+    text = plain(text)
     return SYS_RE.sub(lambda m: "{ " + " ; ".join(x.strip() for x in m.group(1).split(";")) + " }", text or "")
 
 
