@@ -30,7 +30,7 @@ router = Router()
 scan_router = Router()          # jonli skaner natijasi — boshqa holatlardan oldin ushlanadi
 TZ = ZoneInfo(settings.timezone)
 ST = {"sorov": "📨 so'rov yuborilgan", "korib": "👀 o'qituvchi ko'rib chiqmoqda", "qaytarildi": "↩️ tuzatishga qaytarilgan",
-      "tasdiq": "✅ tasdiqlangan"}
+      "tasdiq": "✅ tasdiqlangan", "bekor": "❌ bekor qilingan"}
 WD = ["Du", "Se", "Chor", "Pay", "Ju", "Sha", "Yak"]
 
 
@@ -415,8 +415,7 @@ async def rq_send(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                     await bot.send_document(b, f[4:])
                 except Exception:
                     pass
-        await send(bot, b, text, reply_markup=IM(inline_keyboard=[[IB(text="📎 Test faylini yuklash",
-                                                                       callback_data=f"tup:{tid}")]]))
+        await send(bot, b, text, reply_markup=_req_kb(tid))
     rest = ""
     if d.get("students") is not None and d.get("eid"):
         left = len(d["order"]) - len(set(d["taken"]) | set(d["students"]))
@@ -1386,6 +1385,8 @@ async def tests_list(c: CallbackQuery) -> None:
           for t, _ in rows if _is_boss(st) and t.status in ("sorov", "qaytarildi")]
     kb += [[IB(text=f"👀 #{t.id} ni ko'rib chiqish", callback_data=f"trv:{t.id}")]
            for t, _ in rows if t.status == "korib"]
+    kb += [[IB(text=f"❌ #{t.id} so'rovini bekor qilish", callback_data=f"tsx:{t.id}")]
+           for t, _ in rows if t.status in ("sorov", "qaytarildi") and (_is_boss(st) or t.requested_by == st.id)]
     for t, _ in rows:
         if t.id not in prog:
             continue
@@ -1435,8 +1436,56 @@ async def send_request_cards(bot: Bot, chat: int) -> int:
                               f"Mavzu: {t.topic}\n" + _bank_line(n_st, t.n_questions) + f"Savollar: {t.n_questions} ta"
                               + (f" · {len(t.students)} o'quvchi uchun" if t.students is not None else " · butun guruh")
                               + (f"\nIzoh: {t.review_note}" if t.status == "qaytarildi" and t.review_note else ""),
-                   reply_markup=IM(inline_keyboard=[[IB(text="📎 Test faylini yuklash", callback_data=f"tup:{t.id}")]]))
+                   reply_markup=_req_kb(t.id))
     return len(reqs)
+
+
+def _req_kb(tid: int) -> IM:
+    return IM(inline_keyboard=[[IB(text="📎 Test faylini yuklash", callback_data=f"tup:{tid}")],
+                               [IB(text="❌ So'rovni bekor qilish", callback_data=f"tsx:{tid}")]])
+
+
+@router.callback_query(F.data == "tsxn")
+async def request_cancel_no(c: CallbackQuery) -> None:
+    await c.answer()
+    await c.message.edit_text("So'rov o'z holicha qoldi.")
+
+
+@router.callback_query(F.data.startswith("tsx:"))
+async def request_cancel(c: CallbackQuery, bot: Bot) -> None:
+    """Test so'rovini bekor qilish: rahbar yoki so'rov yuborgan xodim; varaqlar chop etilmagan bo'lsa."""
+    parts = c.data.split(":")
+    tid, sure = int(parts[1]), len(parts) > 2
+    async with Session() as s:
+        st = await _staff(s, c.from_user.id)
+        t = await s.get(Test, tid)
+        if not t or not st or not (_is_boss(st) or t.requested_by == st.id):
+            await c.answer("Faqat rahbar yoki so'rovni yuborgan xodim bekor qila oladi.", show_alert=True)
+            return
+        if t.status == "bekor":
+            await c.answer("Allaqachon bekor qilingan.", show_alert=True)
+            return
+        if t.printed_at or t.status == "tasdiq":
+            await c.answer("Test tasdiqlangan/chop etilgan — endi bekor qilib bo'lmaydi.", show_alert=True)
+            return
+        g = await s.get(Group, t.group_id)
+        if not sure:
+            await c.answer()
+            await c.message.answer(f"❌ Test so'rovi #{tid} ({g.name} · {t.topic}) bekor qilinsinmi?",
+                                   reply_markup=IM(inline_keyboard=[[IB(text="✅ Ha, bekor qilish", callback_data=f"tsx:{tid}:y"),
+                                                                     IB(text="⬅️ Yo'q", callback_data="tsxn")]]))
+            return
+        t.status, t.exam_id = "bekor", None
+        await S.audit(s, st, "test_sorov_bekor", test=tid, group=g.name)
+        await s.commit()
+        req = await s.get(Staff, t.requested_by) if t.requested_by else None
+        bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+        actor, topic, gname = st.full_name, t.topic, g.name
+    await c.answer("Bekor qilindi")
+    await c.message.edit_text(f"❌ Test so'rovi #{tid} ({gname} · {topic}) bekor qilindi.")
+    notify = set(bosses) | ({req.tg_id} if req and req.tg_id else set())
+    for x in notify - {c.from_user.id}:
+        await send(bot, x, f"❌ Test so'rovi #{tid} ({gname} · {topic}) bekor qilindi — {actor}.")
 
 
 @router.callback_query(F.data == "tsr:list")
