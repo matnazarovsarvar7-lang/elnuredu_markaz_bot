@@ -74,7 +74,7 @@ class MathPara(Flowable):
         super().__init__()
         self.font, self.size, self.leading, self.indent = font, size, leading, indent
         self.spaceBefore, self.color = space_before, color
-        self.fs = size * 0.86                       # kasr ichidagi shrift
+        self.fs = size * 0.95                       # kasr ichidagi shrift
         self.items = []                             # ("w", so'z) | ("f", surat, maxraj)
         for t in tokens(text):
             if t[0] == "f":
@@ -88,7 +88,7 @@ class MathPara(Flowable):
     def _w(self, it) -> float:
         if it[0] == "w":
             return stringWidth(it[1], self.font, self.size)
-        return max(stringWidth(it[1], self.font, self.fs), stringWidth(it[2], self.font, self.fs)) + 6
+        return max(stringWidth(it[1], self.font, self.fs), stringWidth(it[2], self.font, self.fs)) + 8
 
     def wrap(self, aw, ah):
         width = aw - self.indent
@@ -114,7 +114,7 @@ class MathPara(Flowable):
         return aw, self.height
 
     def _lh(self, ln) -> float:
-        return self.fs * 2 + 9 if any(it[0] == "f" for it, _ in ln) else self.leading
+        return self.fs * 2 + 11 if any(it[0] == "f" for it, _ in ln) else self.leading
 
     def draw(self):
         c = self.canv
