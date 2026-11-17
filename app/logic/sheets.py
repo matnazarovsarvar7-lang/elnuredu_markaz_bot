@@ -149,7 +149,7 @@ def booklets_pdf(items: list[BookletItem], center: str) -> bytes:
         story += [t, Spacer(1, 4)]
         for i, item in enumerate(it.questions, 1):
             q, opts = item[0], item[1]
-            block = [Paragraph(f"{i}. {_e(q)}", qs)]
+            block = _qtext(f"{i}. ", q, qs)
             fig = _figure(item[2] if len(item) > 2 else None)
             if fig:
                 block += [Spacer(1, 3), fig, Spacer(1, 3)]
@@ -172,7 +172,7 @@ def review_pdf(title: str, rows: list[tuple[int, str, str, str, str, list[str], 
     story = [Paragraph(_e(title), h), Spacer(1, 4)]
     for row in rows:
         qid, var, lvl, src, q, opts, ans = row[:7]
-        block = [Paragraph(f"#{qid} · {var} · {lvl}", small), Paragraph(_e(q), qs)]
+        block = [Paragraph(f"#{qid} · {var} · {lvl}", small)] + _qtext("", q, qs)
         fig = _figure(row[7] if len(row) > 7 else None)
         if fig:
             block += [Spacer(1, 3), fig, Spacer(1, 3)]
@@ -183,6 +183,62 @@ def review_pdf(title: str, rows: list[tuple[int, str, str, str, str, list[str], 
         story.append(KeepTogether(block))
     doc.build(story)
     return buf.getvalue()
+
+
+SYS_RE = __import__("re").compile(r"\{\{(.+?)\}\}", __import__("re").S)
+
+
+def _brace(h: float) -> Drawing:
+    """Sistema uchun chap figurali qavs «{»."""
+    from reportlab.graphics.shapes import Path
+    w = 9
+    d = Drawing(w, h)
+    m, t = h / 2, 1.2
+    p = Path(strokeColor="#16202c", strokeWidth=1.1, fillColor=None)
+    p.moveTo(w - 1, h - t)
+    p.curveTo(w - 5, h - t, w - 5, h - 3, w - 5, h - 6)
+    p.lineTo(w - 5, m + 4)
+    p.curveTo(w - 5, m + 1, w - 6, m, 1, m)
+    p.curveTo(w - 6, m, w - 5, m - 1, w - 5, m - 4)
+    p.lineTo(w - 5, 6)
+    p.curveTo(w - 5, 3, w - 5, t, w - 1, t)
+    d.add(p)
+    return d
+
+
+def _qtext(prefix: str, text: str, style: ParagraphStyle) -> list:
+    """Savol matni. «{{2x + y = 5; x − y = 1}}» — tenglamalar sistemasi figurali qavs bilan chiziladi."""
+    parts = SYS_RE.split(text or "")
+    if len(parts) == 1:
+        return [Paragraph(prefix + _e(text), style)]
+    eq = ParagraphStyle("eq", parent=style, fontName=_FONT, spaceBefore=0, leading=style.leading + 1)
+    out, first = [], True
+    for k, chunk in enumerate(parts):
+        if k % 2 == 0:
+            chunk = chunk.strip()
+            if chunk or first:
+                out.append(Paragraph((prefix if first else "") + _e(chunk), style if first else
+                                     ParagraphStyle("qc", parent=style, spaceBefore=1)))
+                first = False
+            continue
+        lines = [x.strip() for x in chunk.replace("\n", ";").split(";") if x.strip()]
+        if not lines:
+            continue
+        h = len(lines) * eq.leading + 2
+        inner = Table([[Paragraph(_e(x), eq)] for x in lines],
+                      style=TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 2), ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+                                        ("TOPPADDING", (0, 0), (-1, -1), 0), ("BOTTOMPADDING", (0, 0), (-1, -1), 0)]))
+        t = Table([[_brace(h), inner]], colWidths=[11, None], hAlign="LEFT",
+                  style=TableStyle([("VALIGN", (0, 0), (-1, -1), "MIDDLE"), ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                                    ("RIGHTPADDING", (0, 0), (-1, -1), 0), ("TOPPADDING", (0, 0), (-1, -1), 2),
+                                    ("BOTTOMPADDING", (0, 0), (-1, -1), 2)]))
+        out.append(t)
+    return out
+
+
+def sys_plain(text: str) -> str:
+    """Telegram matni uchun: {{a; b}} → «{ a ; b }»."""
+    return SYS_RE.sub(lambda m: "{ " + " ; ".join(x.strip() for x in m.group(1).split(";")) + " }", text or "")
 
 
 def _figure(svg: str | None):

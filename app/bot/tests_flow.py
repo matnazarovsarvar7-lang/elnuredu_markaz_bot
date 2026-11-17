@@ -623,7 +623,7 @@ async def fix_show(m: Message, state: FSMContext) -> None:
     opts = "\n".join(f"{x}) {o}" for x, o in zip("ABCD", q.options))
     kb = [[IB(text=f"To'g'ri javob → {x}", callback_data=f"tfa:{q.id}:{x}") for x in "ABCD" if x != q.answer],
           [IB(text="✍️ Savolni qayta yozish", callback_data=f"tfw:{q.id}")]]
-    await m.answer(f"#{q.qid} ({q.variant}, {q.level})\n{q.text}\n{opts}\nHozirgi javob: <b>{q.answer}</b>",
+    await m.answer(f"#{q.qid} ({q.variant}, {q.level})\n{SH.sys_plain(q.text)}\n{opts}\nHozirgi javob: <b>{q.answer}</b>",
                    reply_markup=IM(inline_keyboard=kb))
 
 
@@ -1349,7 +1349,8 @@ async def paper_question_info(result_id: int, qno: int) -> str | None:
                                                         TestQuestion.qid == p.qids[qno - 1]))).scalar_one()
     perm = p.perms[qno - 1]
     opts = "\n".join(f"{x}) {q.options[j]}" for x, j in zip("ABCD", perm))
-    return (f"Varaqdagi {qno}-savol (bazada #{q.qid}):\n{q.text}\n{opts}\n"
+    from app.logic.sheets import sys_plain
+    return (f"Varaqdagi {qno}-savol (bazada #{q.qid}):\n{sys_plain(q.text)}\n{opts}\n"
             f"O'quvchi javobi: <b>{p.answers[qno - 1]}</b> · to'g'ri: <b>{p.key[qno - 1]}</b>")
 
 

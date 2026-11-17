@@ -387,7 +387,8 @@ async def exam_analysis(c: CallbackQuery) -> None:
         pc = d["ok"] / d["n"] * 100
         if pc >= 80:
             break
-        txt = (q.text if q else f"#{key[1]}").replace("\n", " ")
+        from app.logic.sheets import sys_plain
+        txt = sys_plain(q.text if q else f"#{key[1]}").replace("\n", " ")
         line = f"\n• <b>{d['ok']}/{d['n']} ({pc:.0f}%)</b> — {txt[:110]}{'…' if len(txt) > 110 else ''}"
         if q:
             line += f"\n   To'g'ri: {q.options['ABCD'.index(q.answer)] if q.answer in 'ABCD' else q.answer}"[:150]
