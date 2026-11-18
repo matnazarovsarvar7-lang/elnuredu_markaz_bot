@@ -28,6 +28,7 @@ from app.bot.reports import router as reports_router
 from app.bot.vault import router as vault_router
 from app.bot.funds import router as funds_router
 from app.bot.golive import router as golive_router
+from app.bot.stock import router as stock_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -108,6 +109,7 @@ async def main() -> None:
     dp.include_router(vault_router)
     dp.include_router(funds_router)
     dp.include_router(golive_router)
+    dp.include_router(stock_router)
     dp.include_router(tests_router)
     dp.include_router(exams_router)
     dp.include_router(delegate_router)

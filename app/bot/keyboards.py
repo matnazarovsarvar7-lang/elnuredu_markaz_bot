@@ -29,6 +29,7 @@ B_NEW_STUDENT = "➕ Yangi o'quvchi"
 B_EXAMS = "📝 Nazoratlar"
 B_TESTS = "📚 Testlar"
 B_SCAN = "📷 Skaner"
+B_STOCK = "📦 Ombor"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
@@ -68,12 +69,14 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_NEW_STUDENT, B_MARKET])
     if role == "moliya":
         rows.append([B_CASH_CLOSE, B_HANDOVER])
+        rows.append([B_STOCK])
     if role in ("moliya", "rahbar"):
         rows.append([B_EXPENSE, B_SERVICES])
     if role == "admin":
         rows.append([B_STUDENT, B_DEBTS])
         rows.append([B_NEW_STUDENT, B_LEADS])
-        rows.append([B_SERVICES, B_ACHIEVE])
+        rows.append([B_SERVICES, B_STOCK])
+        rows.append([B_ACHIEVE])
     if role == "rahbar":
         rows.append([B_PENDING, B_STAFF])
         rows.append([B_TASK_NEW, B_TASKS_ALL])
@@ -81,7 +84,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_DELEGATE, B_LEAVE])
         rows.append([B_CASH, B_REPORT])
         rows.append([B_ACHIEVE, B_HISTORY])
-        rows.append([B_SETTINGS])
+        rows.append([B_SETTINGS, B_STOCK])
     else:
         rows.append([B_MY_TASKS, B_MY_SALARY])
     rows.append([B_HELP] + ([B_SWITCH] if multi else []))

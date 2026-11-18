@@ -354,8 +354,15 @@ async def svc_menu(m: Message) -> None:
         if not (who.staff and who.staff.current_role in ("admin", "moliya", "rahbar")):
             return
         svcs = (await s.execute(select(Service).where(Service.active).order_by(Service.kind, Service.name))).scalars().all()
+        from app.bot.stock import balance as sk_bal
+        from app.db.models import StockItem
+        linked = {i.service_id: i for i in (await s.execute(select(StockItem).where(StockItem.service_id.is_not(None),
+                                                                                     StockItem.active))).scalars()}
+        holder = None if who.staff.current_role == "rahbar" else who.staff.id
+        have = {sid: await sk_bal(s, it.id, holder) for sid, it in linked.items()}
     rows = [[IB(text=f"{'📕' if v.kind == 'kitob' else '🖨' if v.kind == 'printer' else '🧩'} {v.name} — "
-                     f"{S.fmt_som(v.price)}" + (f" · {v.stock} ta" if v.kind == "kitob" else ""),
+                     f"{S.fmt_som(v.price)}" + (f" · sizda {have[v.id]} ta" if v.id in have else
+                                                f" · {v.stock} ta" if v.kind == "kitob" and v.stock is not None else ""),
                 callback_data=f"sv:{v.id}")] for v in svcs]
     rows.append([IB(text="🖨 Ichki chop etish (bepul)", callback_data="pu")])
     rows.append([IB(text="🖨 Printer hisoblagichi", callback_data="svp")])
@@ -389,8 +396,13 @@ async def svc_quick(c: CallbackQuery, state: FSMContext) -> None:
     d = await state.get_data()
     async with Session() as s:
         v = await s.get(Service, d["vid"])
-    if v.kind == "kitob" and (v.stock or 0) < int(q):
+    if v.kind == "kitob" and v.stock is not None and v.stock < int(q):
         await c.answer(f"Omborda faqat {v.stock or 0} ta bor.", show_alert=True)
+        return
+    from app.bot.stock import sell_block
+    why = await sell_block(c.from_user.id, v.id, int(q))
+    if why:
+        await c.answer(why, show_alert=True)
         return
     await _svc_do(c, state, method)
 
@@ -404,8 +416,13 @@ async def svc_qty(m: Message, state: FSMContext) -> None:
     async with Session() as s:
         v = await s.get(Service, d["vid"])
     q = int(m.text)
-    if v.kind == "kitob" and (v.stock or 0) < q:
+    if v.kind == "kitob" and v.stock is not None and v.stock < q:
         await m.answer(f"Omborda faqat {v.stock or 0} ta bor.")
+        return
+    from app.bot.stock import sell_block
+    why = await sell_block(m.from_user.id, v.id, q)
+    if why:
+        await m.answer(why + " Boshqa son yozing.")
         return
     await state.update_data(qty=q)
     await m.answer(f"{v.name} × {q} = <b>{S.fmt_som(v.price * q)}</b>. To'lov usuli?",
@@ -420,22 +437,33 @@ async def svc_save(c: CallbackQuery, state: FSMContext) -> None:
 
 async def _svc_do(c: CallbackQuery, state: FSMContext, method: str) -> None:
     d = await state.get_data()
+    if "qty" not in d or "vid" not in d:
+        await c.answer("Avval sonini yozing.", show_alert=True)
+        return
     await state.clear()
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
         v = await s.get(Service, d["vid"])
         q = d["qty"]
-        if v.kind == "kitob":
-            v.stock = (v.stock or 0) - q
+        if v.kind == "kitob" and v.stock is not None:
+            v.stock = v.stock - q
         sale = ServiceSale(service_id=v.id, qty=q, amount=v.price * q, profit=(v.price - (v.cost or 0)) * q,
                            method=method, by_id=who.staff.id)
         s.add(sale)
+        await s.flush()
+        from app.bot.stock import on_sale
+        ok, stock_note = await on_sale(s, who.staff, v, q, sale.id)
+        if not ok:
+            await s.rollback()
+            await c.answer(stock_note, show_alert=True)
+            return
         await S.audit(s, who.staff, "xizmat_sotuv", service=v.name, qty=q, amount=v.price * q, method=method)
         await s.commit()
         left = v.stock
         name = v.name
     await c.message.edit_text(f"✅ Sotuv: {name} × {q} = {S.fmt_som(d['qty'] * v.price)} ({method})."
-                              + (f"\nOmborda qoldi: {left}" if v.kind == "kitob" else ""),
+                              + (f"\nOmborda qoldi: {left}" if v.kind == "kitob" and left is not None else "")
+                              + stock_note,
                               reply_markup=IM(inline_keyboard=[[IB(text=f"➕ Yana: {name[:30]}", callback_data=f"sv:{v.id}")]]))
 
 
@@ -582,9 +610,11 @@ async def pu_save(m: Message, state: FSMContext) -> None:
         who = await S.who_by_tg(s, m.from_user.id)
         s.add(PrinterUse(category=d["cat"], pages=d["pages"], note=(m.text or "").strip()[:200], staff_id=d.get("staff"),
                          by_id=who.staff.id))
+        from app.bot.stock import on_print
+        paper = await on_print(s, who.staff, d["pages"], d["cat"])
         await S.audit(s, who.staff, "printer_ichki", category=d["cat"], pages=d["pages"])
         await s.commit()
-    await m.answer(f"✅ Qayd etildi: {PU_CATS[d['cat']]} — {d['pages']} sahifa (pul olinmaydi).")
+    await m.answer(f"✅ Qayd etildi: {PU_CATS[d['cat']]} — {d['pages']} sahifa (pul olinmaydi)." + paper)
 
 
 async def printer_reminder(bot: Bot) -> None:

@@ -516,6 +516,35 @@ class ServiceSale(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class StockItem(Base):
+    """Hisobdagi tovar: qog'oz, kitob, kartrij va h.k. Xodimlarga «hisobdor» qilib beriladi."""
+    __tablename__ = "stock_items"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(80))
+    unit: Mapped[str] = mapped_column(String(20), default="dona")          # varaq | dona | pachka ...
+    service_id: Mapped[int | None] = mapped_column(ForeignKey("services.id"))   # sotuvdagi xizmat (kitob)
+    paper: Mapped[bool] = mapped_column(Boolean, default=False)            # chop etishda sarflanadi (1 sahifa = 1 varaq)
+    min_left: Mapped[int] = mapped_column(Integer, default=0)              # shundan kam qolsa — ogohlantirish
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class StockMove(Base):
+    """Tovar harakati. holder_id = None — markaz ombori (rahbar), aks holda xodim hisobi.
+    kind: kirim | berildi | qaytdi | sotuv | ichki | isrof | sanoq | tuzatish"""
+    __tablename__ = "stock_moves"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    item_id: Mapped[int] = mapped_column(ForeignKey("stock_items.id"))
+    holder_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    qty: Mapped[int] = mapped_column(Integer)                               # + kirdi, − chiqdi
+    kind: Mapped[str] = mapped_column(String(20))
+    note: Mapped[str | None] = mapped_column(String(200))
+    sale_id: Mapped[int | None] = mapped_column(Integer)
+    pair_id: Mapped[int | None] = mapped_column(Integer)                    # berish/qaytarishning ikkinchi yozuvi
+    confirmed: Mapped[bool] = mapped_column(Boolean, default=True)          # xodim qabul qilganmi
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class PrinterCount(Base):
     __tablename__ = "printer_counts"
     id: Mapped[int] = mapped_column(primary_key=True)

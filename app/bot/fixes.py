@@ -440,6 +440,8 @@ async def apply_void(s, k: str, obj, st, reason: str) -> tuple[str, list[tuple[i
         sv = await s.get(Service, obj.service_id)
         if sv and sv.stock is not None:
             sv.stock += obj.qty
+        from app.bot.stock import on_sale_void
+        await on_sale_void(s, obj.id)
     return desc, family
 
 
