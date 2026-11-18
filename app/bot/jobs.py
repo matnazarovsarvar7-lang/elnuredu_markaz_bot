@@ -180,6 +180,7 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     sch.add_job(distribution_job, "cron", minute=12, args=[bot])
     sch.add_job(month_end_reminders, "cron", day="last", hour=18, minute=0, args=[bot, "moliya"])
     from app.bot.stock import month_end_count, month_report
+    sch.add_job(month_end_count, "cron", day_of_week="sat", hour=16, minute=0, args=[bot])
     sch.add_job(month_end_count, "cron", day="last", hour=17, minute=0, args=[bot])
     sch.add_job(month_report, "cron", day=1, hour=9, minute=25, args=[bot])
     sch.add_job(month_end_reminders, "cron", day="last", hour=21, minute=30, args=[bot, "rahbar"])
