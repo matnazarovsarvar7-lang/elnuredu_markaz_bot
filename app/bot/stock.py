@@ -6,7 +6,7 @@ Markaz ombori — holder_id = None.
 """
 from __future__ import annotations
 
-from datetime import date, datetime, timedelta
+from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 from aiogram import Bot, F, Router
@@ -90,9 +90,9 @@ async def on_sale(s, staff: Staff, service: Service, qty: int, sale_id: int) -> 
         item = (await s.execute(select(StockItem).where(StockItem.paper, StockItem.active).order_by(StockItem.id))).scalars().first()
         if not item:
             return True, ""
+        left = await balance(s, item.id, holder) - qty
         s.add(StockMove(item_id=item.id, holder_id=holder, qty=-qty, kind="sotuv", sale_id=sale_id, by_id=staff.id,
                         note=service.name))
-        left = await balance(s, item.id, holder) - qty
         return True, (f"\n📦 {item.name}: hisobingizda {_n(item, left)}" + (" ⚠️" if left < 0 else ""))
     item = (await s.execute(select(StockItem).where(StockItem.service_id == service.id, StockItem.active))).scalars().first()
     if not item:
@@ -131,9 +131,9 @@ async def on_print(s, staff: Staff, pages: int, category: str) -> str:
     if not item:
         return ""
     holder = None if staff.current_role == "rahbar" else staff.id
+    left = await balance(s, item.id, holder) - pages
     s.add(StockMove(item_id=item.id, holder_id=holder, qty=-pages, kind="isrof" if category == "isrof" else "ichki",
                     by_id=staff.id, note=f"chop etish: {category}"))
-    left = await balance(s, item.id, holder) - pages
     return f"\n📦 {item.name}: hisobingizda {_n(item, left)}" + (" ⚠️" if left < 0 else "")
 
 
@@ -235,47 +235,67 @@ async def items_view(c: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "sk:new")
 async def item_new(c: CallbackQuery, state: FSMContext) -> None:
-    async with Session() as s:
-        books = [v for v in (await s.execute(select(Service).where(Service.active, Service.kind == "kitob"))).scalars()]
     await state.set_state(Sk.new)
+    await state.update_data(step="name")
     await c.answer()
-    await c.message.answer(
-        "Yangi tovar — bir qatorda yozing:\n<code>nomi; o'lchov; turi; ogohlantirish</code>\n\n"
-        "turi: <b>qogoz</b> (chop etishda sarflanadi) · <b>ichki</b> (faqat ichki ishga) · "
-        "yoki 🛒 Xizmatlardagi kitob nomi (sotuv bilan bog'lanadi)\n\nMisollar:\n"
-        "<code>A4 qog'oz; varaq; qogoz; 200</code>\n<code>Marker; dona; ichki; 5</code>\n"
-        + ("".join(f"<code>{v.name}; dona; {v.name}; 5</code>\n" for v in books[:3])
-           if books else "Kitob sotish uchun avval 🛒 Xizmatlar → ➕ da kitobni qo'shing."))
+    await c.message.answer("➕ <b>Yangi tovar</b> (1/3)\nTovar nomini yozing, masalan: <code>A4 qog'oz</code> yoki "
+                           "<code>Biologiya kitobi</code>")
 
 
 @router.message(Sk.new)
-async def item_new_save(m: Message, state: FSMContext) -> None:
-    parts = [x.strip() for x in (m.text or "").split(";")]
-    if len(parts) < 3 or not parts[0] or not parts[1]:
-        await m.answer("Format: nomi; o'lchov; turi; ogohlantirish")
+async def item_new_name(m: Message, state: FSMContext) -> None:
+    name = (m.text or "").strip()[:80]
+    if not name:
+        await m.answer("Nomini yozing.")
         return
-    name, unit, kind = parts[0][:80], parts[1][:20], parts[2]
-    low = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    await state.update_data(name=name)
+    await m.answer(f"«{name}» (2/3) — qanday o'lchanadi?", reply_markup=IM(inline_keyboard=[
+        [IB(text=u, callback_data=f"sknu:{u}") for u in ("varaq", "dona", "pachka")],
+        [IB(text=u, callback_data=f"sknu:{u}") for u in ("quti", "litr", "kg")]]))
+
+
+@router.callback_query(Sk.new, F.data.startswith("sknu:"))
+async def item_new_unit(c: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(unit=c.data.split(":", 1)[1])
     async with Session() as s:
-        st = await _staff(s, m.from_user.id)
-        svc = None
-        if kind.lower() not in ("qogoz", "qog'oz", "ichki"):
-            svc = (await s.execute(select(Service).where(func.lower(Service.name) == kind.lower()))).scalars().first()
-            if not svc:
-                await m.answer(f"«{kind}» degan xizmat topilmadi. turi: qogoz · ichki · yoki kitob nomi.")
-                return
-        it = StockItem(name=name, unit=unit, paper=kind.lower() in ("qogoz", "qog'oz"), min_left=low,
-                       service_id=svc.id if svc else None)
+        books = list((await s.execute(select(Service).where(Service.active, Service.kind == "kitob")
+                                      .order_by(Service.name))).scalars())
+    rows = [[IB(text="🖨 Qog'oz — chop etishda sarflanadi", callback_data="sknk:qogoz")],
+            [IB(text="🏢 Faqat ichki ish uchun (marker, kartrij...)", callback_data="sknk:ichki")]]
+    rows += [[IB(text=f"🛒 Sotiladi: {v.name}", callback_data=f"sknk:{v.id}")] for v in books]
+    await c.answer()
+    await c.message.edit_text("(3/3) Bu tovar nima uchun?"
+                              + ("" if books else "\n\n<i>Kitob sotish uchun avval 🛒 Xizmatlar → ➕ da kitobni narxi "
+                                                   "bilan qo'shing, keyin bu yerda tanlaysiz.</i>"),
+                              reply_markup=IM(inline_keyboard=rows))
+
+
+@router.callback_query(Sk.new, F.data.startswith("sknk:"))
+async def item_new_kind(c: CallbackQuery, state: FSMContext) -> None:
+    kind = c.data.split(":")[1]
+    d = await state.get_data()
+    await state.clear()
+    async with Session() as s:
+        st = await _staff(s, c.from_user.id)
+        svc = await s.get(Service, int(kind)) if kind.isdigit() else None
+        it = StockItem(name=d["name"], unit=d["unit"], paper=kind == "qogoz", service_id=svc.id if svc else None,
+                       min_left=200 if kind == "qogoz" else 5)
         s.add(it)
+        moved = 0
         if svc and svc.stock:                     # eski «omborda N ta» — markaz omboriga o'tkaziladi
             await s.flush()
+            moved = svc.stock
             s.add(StockMove(item_id=it.id, holder_id=None, qty=svc.stock, kind="kirim", by_id=st.id,
                             note="Xizmatlardagi eski qoldiq"))
             svc.stock = None
-        await S.audit(s, st, "ombor_tovar", name=name)
+        await S.audit(s, st, "ombor_tovar", name=d["name"])
         await s.commit()
-    await state.clear()
-    await m.answer(f"✅ Tovar qo'shildi: {name} ({unit}). Endi «📥 Omborga kirim» bilan sonini kiriting.")
+        iid = it.id
+    await c.answer("Qo'shildi")
+    await c.message.edit_text(f"✅ Tovar qo'shildi: <b>{d['name']}</b> ({d['unit']})"
+                              + (f"\nXizmatlardagi {moved} ta qoldiq markaz omboriga o'tkazildi." if moved else "")
+                              + f"\nOmborda {it.min_left} tadan kam qolsa — ogohlantiraman.\n\nKeyingi qadam: sonini kiriting.",
+                              reply_markup=IM(inline_keyboard=[[IB(text="📥 Omborga kirim", callback_data=f"skin:{iid}")]]))
 
 
 # ---------------- tanlash yordamchilari ----------------
@@ -290,7 +310,15 @@ async def _pick_item(c: CallbackQuery, nxt: str, holder: int | None = None, only
             rows.append([IB(text=f"{it.name} — {_n(it, q)}", callback_data=f"{nxt}:{it.id}")])
     await c.answer()
     if not rows:
-        await c.message.answer("Tovar yo'q.")
+        if only_have and holder is not None:
+            await c.message.answer("Hisobingizda tovar yo'q.")
+        elif only_have and items:
+            await c.message.answer("Markaz omborida tovar qolmagan. Avval «📥 Omborga kirim» qiling.",
+                                   reply_markup=IM(inline_keyboard=[[IB(text="📥 Omborga kirim", callback_data="sk:in")]]))
+        else:
+            await c.message.answer("Hali tovar qo'shilmagan. Avval tovarni ro'yxatga qo'shing (masalan: A4 qog'oz, "
+                                   "kitob) — keyin kirim va berish ishlaydi.",
+                                   reply_markup=IM(inline_keyboard=[[IB(text="➕ Yangi tovar qo'shish", callback_data="sk:new")]]))
         return
     await c.message.answer("Qaysi tovar?", reply_markup=IM(inline_keyboard=rows))
 
@@ -433,8 +461,9 @@ async def _apply(m: Message, bot: Bot, d: dict, q: int, note: str) -> None:
         st = await _staff(s, m.from_user.id)
         it = await s.get(StockItem, iid)
         if op == "kirim":
+            have = await balance(s, iid, None)
             s.add(StockMove(item_id=iid, holder_id=None, qty=q, kind="kirim", by_id=st.id, note=note or None))
-            msg = f"✅ Omborga kirim: {it.name} +{_n(it, q)}. Omborda: {_n(it, await balance(s, iid, None) + q)}"
+            msg = f"✅ Omborga kirim: {it.name} +{_n(it, q)}. Omborda: {_n(it, have + q)}"
         elif op == "berish":
             have = await balance(s, iid, None)
             if q > have:
