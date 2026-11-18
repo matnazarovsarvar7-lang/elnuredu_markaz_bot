@@ -157,9 +157,13 @@ async def close_start(m: Message, state: FSMContext) -> None:
     from app.bot.vault import petty_balance
     async with Session() as s:
         pb = await petty_balance(s)
+        pend = sum(h.amount for h in await _pending(s) if h.to_kind == "rahbar")
     await m.answer("🔐 <b>Kassani yopish</b>\n📥 Faqat <b>o'quvchilar to'lagan naqd pulni</b> sanang va summani yozing "
                    "(masalan: 3 450 000).\n"
-                   f"💳 Xarajat pulini (sizda {S.fmt_som(pb or 0)}) <b>qo'shmang</b> — u alohida konvertda turadi.\n"
+                   + (f"💼 Rahbarga topshirish uchun tayyorlagan konvertingizni ({S.fmt_som(pend)}, rahbar hali «qabul "
+                      "qildim» bosmagan) ham <b>qo'shib sanang</b> — u rahbar qabul qilmaguncha sizda hisoblanadi.\n"
+                      if pend else "")
+                   + f"💳 Xarajat pulini (sizda {S.fmt_som(pb or 0)}) <b>qo'shmang</b> — u alohida konvertda turadi.\n"
                    "Bot faqat «mos» yoki «farq bor» deb javob beradi.")
 
 
@@ -174,6 +178,10 @@ async def close_save(m: Message, state: FSMContext, bot: Bot) -> None:
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
         exp = await expected_cash(s)
+        # rahbar hali qabul qilmagan konvert — jismonan moliyada: sanoqqa kiradi
+        pend = sum(h.amount for h in await _pending(s) if h.to_kind == "rahbar")
+        if exp is not None:
+            exp += pend
         if exp is None:
             await _set_opening(s, counted)
             s.add(CashClose(date=t, expected=counted, counted=counted, diff=0, status="boshlang", by_id=who.staff.id))
@@ -190,14 +198,16 @@ async def close_save(m: Message, state: FSMContext, bot: Bot) -> None:
     if status == "boshlang":
         await m.answer("✅ Kassa boshlang'ich qoldig'i qayd etildi. Ertadan bot har kuni solishtiradi.")
     else:
-        give = min(counted, exp)        # ortiqcha (sababi noma'lum) pul avtomatik topshirilmaydi; kam bo'lsa — borini
+        give = min(counted, exp) - pend  # ortiqcha pul avtomatik topshirilmaydi; tayyor konvert allaqachon yuborilgan
         hand = IM(inline_keyboard=[[IB(text=f"💼 Rahbarga topshirish — {S.fmt_som(give)}",
                                        callback_data=f"hoq:{give}")]]) if give > 0 else None
         await m.answer(("✅ Kassa mos. Rahmat!" if status == "mos" else "⚠️ Farq bor. Rahbarga xabar berildi.")
                        + ("\n\nPulni konvertga solib rahbarga bering va pastdagi tugmani bosing:" if hand else ""),
                        reply_markup=hand)
     sign = "+" if diff > 0 else ""
-    text = (f"🔐 <b>Kassa yopildi · {t:%d.%m}</b> ({name})\nBo'lishi kerak: {S.fmt_som(exp)}\nSanadi: {S.fmt_som(counted)}\n"
+    text = (f"🔐 <b>Kassa yopildi · {t:%d.%m}</b> ({name})\nBo'lishi kerak: {S.fmt_som(exp)}"
+            + (f" (shundan {S.fmt_som(pend)} — sizga topshirishga tayyor konvert, hali qabul qilmagansiz)" if pend else "")
+            + f"\nSanadi: {S.fmt_som(counted)}\n"
             + ("Boshlang'ich qoldiq sifatida qayd etildi." if status == "boshlang" else
                "✅ Mos" if status == "mos" else f"⚠️ Farq: <b>{sign}{S.fmt_som(diff)}</b>")
             )
