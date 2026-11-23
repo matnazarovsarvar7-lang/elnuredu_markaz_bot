@@ -39,6 +39,7 @@ class Ed(StatesGroup):
     st_source = State()
     par_name = State()
     par_work = State()
+    par_rel = State()
 
 
 async def _role(tg_id: int) -> tuple[Staff | None, str | None]:
@@ -387,8 +388,17 @@ async def st_more_set(m: Message, state: FSMContext) -> None:
     await _back_to_card(m, d["sid"], m.from_user.id, "✅ Saqlandi.")
 
 
+REL_BTNS = {"ota": "👨 Otasi", "ona": "👩 Onasi", "vasiy": "🧑 Vasiy / qarindosh", "ozi": "🎓 O'quvchining o'zi"}
+
+
+def _rel_kb(sid: int, pid: int) -> IM:
+    ks = list(REL_BTNS)
+    return IM(inline_keyboard=[[IB(text=REL_BTNS[k], callback_data=f"sxqr:{sid}:{pid}:{k}") for k in ks[:2]],
+                               [IB(text=REL_BTNS[k], callback_data=f"sxqr:{sid}:{pid}:{k}") for k in ks[2:]]])
+
+
 @router.callback_query(F.data.startswith("sxq:"))
-async def par_info_pick(c: CallbackQuery) -> None:
+async def par_info_pick(c: CallbackQuery, state: FSMContext) -> None:
     if not await _editor(c.from_user.id):
         await c.answer("Ruxsat yo'q", show_alert=True)
         return
@@ -396,31 +406,67 @@ async def par_info_pick(c: CallbackQuery) -> None:
     async with Session() as s:
         stu = await s.get(Student, sid, options=[selectinload(Student.parents)])
     await c.answer()
-    await c.message.answer("Qaysi ota-ona?", reply_markup=IM(inline_keyboard=[
-        [IB(text=f"{p.phone} {p.full_name or ''}", callback_data=f"sxqp:{sid}:{p.id}")] for p in stu.parents]))
+    if not stu.parents:
+        await c.message.answer("Avval ota-ona raqamini qo'shing: kartadagi «📞 Ota-ona raqami qo'shish».")
+        return
+    if len(stu.parents) == 1:                 # bitta raqam — darhol kimligini so'raymiz
+        await _ask_rel(c.message, state, sid, stu.parents[0])
+        return
+    await c.message.answer("Qaysi raqam haqida?", reply_markup=IM(inline_keyboard=[
+        [IB(text=f"{p.phone}" + (f" · {p.full_name}" if p.full_name else ""), callback_data=f"sxqp:{sid}:{p.id}")]
+        for p in stu.parents]))
+
+
+async def _ask_rel(msg: Message, state: FSMContext, sid: int, p: Parent) -> None:
+    await state.set_state(Ed.par_rel)               # yozib yuborsa ham tushunamiz: «ota», «ona»...
+    await state.update_data(sid=sid, pid=p.id)
+    await msg.answer(f"📞 {p.phone} — bu raqam kimniki?\n<i>Tugmani bosing yoki yozing: ota / ona</i>",
+                     reply_markup=_rel_kb(sid, p.id))
 
 
 @router.callback_query(F.data.startswith("sxqp:"))
-async def par_info_rel(c: CallbackQuery) -> None:
+async def par_info_rel(c: CallbackQuery, state: FSMContext) -> None:
     _, sid, pid = c.data.split(":")
+    async with Session() as s:
+        p = await s.get(Parent, int(pid))
     await c.answer()
-    await c.message.edit_text("Bu raqam kimniki?", reply_markup=IM(inline_keyboard=[
-        [IB(text="Otasi", callback_data=f"sxqr:{sid}:{pid}:ota"), IB(text="Onasi", callback_data=f"sxqr:{sid}:{pid}:ona")],
-        [IB(text="Vasiy / qarindosh", callback_data=f"sxqr:{sid}:{pid}:vasiy"),
-         IB(text="O'quvchining o'zi", callback_data=f"sxqr:{sid}:{pid}:ozi")]]))
+    await _ask_rel(c.message, state, int(sid), p)
+
+
+@router.message(Ed.par_rel)
+async def par_rel_text(m: Message, state: FSMContext) -> None:
+    t = (m.text or "").lower()
+    k = ("ota" if t.startswith("ota") else "ona" if t.startswith("ona") else "vasiy" if t.startswith(("vas", "qar"))
+         else "ozi" if "o'zi" in t or "ozi" in t else None)
+    if not k:
+        await m.answer("Tugmani bosing yoki «ota» / «ona» deb yozing.")
+        return
+    d = await state.get_data()
+    await _set_rel(m, state, d["sid"], d["pid"], k)
 
 
 @router.callback_query(F.data.startswith("sxqr:"))
 async def par_info_name(c: CallbackQuery, state: FSMContext) -> None:
     _, sid, pid, rel = c.data.split(":")
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=None)
+    await _set_rel(c.message, state, int(sid), int(pid), rel)
+
+
+async def _set_rel(msg: Message, state: FSMContext, sid: int, pid: int, rel: str) -> None:
     async with Session() as s:
-        p = await s.get(Parent, int(pid))
+        p = await s.get(Parent, pid)
         p.relation = rel
         await s.commit()
+        had = p.full_name
+    await state.update_data(sid=sid, pid=pid)
+    if rel == "ozi":
+        await state.clear()
+        await _back_to_card(msg, sid, msg.chat.id, "✅ Raqam o'quvchining o'zi deb belgilandi.")
+        return
     await state.set_state(Ed.par_name)
-    await state.update_data(sid=int(sid), pid=int(pid))
-    await c.answer()
-    await c.message.edit_text("Familiya va ismini yozing (o'zgartirmaslik uchun <code>-</code>):")
+    await msg.answer(f"{REL_BTNS[rel]} ✅\nFamiliya va ismini yozing" + (f" (hozir: {had}; o'zgartirmaslik — <code>-</code>)"
+                                                                       if had else "") + ":")
 
 
 @router.message(Ed.par_name)
