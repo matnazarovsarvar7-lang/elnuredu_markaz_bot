@@ -515,6 +515,9 @@ class ServiceSale(Base):
     void_reason: Mapped[str | None] = mapped_column(String(300))       # bekor qilish sababi (so'rov / qaror)
     void_req_by: Mapped[int | None] = mapped_column(Integer)           # so'ragan xodim
     voided_at: Mapped[datetime | None] = mapped_column(DateTime)       # asl yozuv bekor qilingan vaqt
+    job_id: Mapped[int | None] = mapped_column(Integer)                # kitobcha: qaysi chop etish buyurtmasi
+    student_id: Mapped[int | None] = mapped_column(Integer)            # kitobcha: qaysi o'quvchi to'ladi
+    owner_id: Mapped[int | None] = mapped_column(Integer)              # kitobcha muallifi (o'qituvchi ulushi)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -638,6 +641,44 @@ class Achievement(Base):
     status: Mapped[str] = mapped_column(String(20), default="kutilmoqda")   # kutilmoqda | tasdiq | rad
     by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
     approved_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PrintBook(Base):
+    """Kitobcha (kutubxona): fan bo'yicha saqlanadi. saved=False — bir martalik (kutubxonada ko'rinmaydi)."""
+    __tablename__ = "print_books"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    subject: Mapped[str] = mapped_column(String(60))
+    title: Mapped[str] = mapped_column(String(150))
+    pages: Mapped[int] = mapped_column(Integer)                    # bet soni
+    layout: Mapped[str] = mapped_column(String(10), default="buklet")   # buklet | ikki | bir
+    file_id: Mapped[str] = mapped_column(String(250))
+    file_kind: Mapped[str] = mapped_column(String(20), default="document")
+    owner_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))   # yuklagan o'qituvchi — ulush unga
+    saved: Mapped[bool] = mapped_column(Boolean, default=True)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class PrintJob(Base):
+    """Chop etish so'rovi: ichki (bepul hujjat) yoki kitob (pullik kitobcha). Admin chiqarib beradi."""
+    __tablename__ = "print_jobs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10))                  # ichki | kitob
+    staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))   # so'ragan xodim
+    book_id: Mapped[int | None] = mapped_column(ForeignKey("print_books.id"))
+    group_id: Mapped[int | None] = mapped_column(ForeignKey("groups.id"))
+    copies: Mapped[int] = mapped_column(Integer, default=1)
+    pages: Mapped[int] = mapped_column(Integer)                    # 1 nusxadagi bet
+    layout: Mapped[str] = mapped_column(String(10), default="bir")  # bir | ikki | buklet
+    sheets: Mapped[int] = mapped_column(Integer)                   # 1 nusxadagi varaq
+    price: Mapped[int] = mapped_column(Integer, default=0)         # kitob: 1 nusxa narxi
+    file_id: Mapped[str | None] = mapped_column(String(250))
+    file_kind: Mapped[str | None] = mapped_column(String(20))
+    note: Mapped[str | None] = mapped_column(String(300))
+    status: Mapped[str] = mapped_column(String(15), default="yangi")   # yangi | chiqarildi | bekor
+    done_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    done_at: Mapped[datetime | None] = mapped_column(DateTime)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

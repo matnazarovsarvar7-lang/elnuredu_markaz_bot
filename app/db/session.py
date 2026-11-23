@@ -60,6 +60,9 @@ MIGRATIONS = [
     "ALTER TABLE lessons ADD COLUMN extra BOOLEAN DEFAULT FALSE",
     "ALTER TABLE lessons ADD COLUMN makeup_penalized BOOLEAN DEFAULT FALSE",
     "ALTER TABLE lessons ADD COLUMN cancelled BOOLEAN DEFAULT FALSE",
+    "ALTER TABLE service_sales ADD COLUMN job_id INTEGER",
+    "ALTER TABLE service_sales ADD COLUMN student_id INTEGER",
+    "ALTER TABLE service_sales ADD COLUMN owner_id INTEGER",
 ]
 
 

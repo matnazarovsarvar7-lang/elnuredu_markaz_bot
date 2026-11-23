@@ -630,6 +630,7 @@ async def printer_reminder(bot: Bot) -> None:
 async def service_rewards(s, staff_id: int, start: datetime, end: datetime) -> int:
     """Sotuvchiga xizmat foydasining 15% i, oyiga ko'pi bilan 150 000."""
     profit = int((await s.execute(select(func.coalesce(func.sum(ServiceSale.profit), 0)).where(
-        ServiceSale.by_id == staff_id, ServiceSale.status == "tasdiq", ServiceSale.created_at > start,
+        ServiceSale.by_id == staff_id, ServiceSale.status == "tasdiq", ServiceSale.job_id.is_(None),
+        ServiceSale.created_at > start,
         ServiceSale.created_at <= end))).scalar())
     return min(REWARD_CAP, int(profit * REWARD_SHARE))

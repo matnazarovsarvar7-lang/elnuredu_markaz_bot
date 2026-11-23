@@ -79,3 +79,14 @@ def test_split_payment():
     assert split_payment(325_000, [300_000, 350_000]) == [150_000, 175_000]
     assert split_payment(700_000, [300_000, 350_000]) == [300_000, 400_000]   # ortiqchasi oxirgisiga
     assert split_payment(100_000, [0, 350_000]) == [0, 100_000]
+
+
+def test_booklet_price_rounding():
+    from app.logic.printing import price, sheets
+    assert sheets(16, "buklet") == 4 and price(4) == 2000
+    assert sheets(18, "buklet") == 5
+    assert sheets(16, "ikki") == 8 and sheets(16, "bir") == 16
+    assert price(7) == 4000 and price(9) == 5000 and price(13) == 7000
+    assert price(15) == 8000                      # 15 varaq ham yuqoriga
+    assert price(16) == 8000 and price(17) == 8000
+    assert price(19) == 9000 and price(25) == 12000

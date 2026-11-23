@@ -435,7 +435,8 @@ async def apply_void(s, k: str, obj, st, reason: str) -> tuple[str, list[tuple[i
         obj.voided_at, obj.void_reason = at, reason
     else:
         s.add(ServiceSale(service_id=obj.service_id, qty=-obj.qty, amount=-obj.amount, profit=-(obj.profit or 0),
-                          method=obj.method, status="tasdiq", by_id=obj.by_id, void_of=obj.id, void_reason=reason))
+                          method=obj.method, status="tasdiq", by_id=obj.by_id, void_of=obj.id, void_reason=reason,
+                          job_id=obj.job_id, student_id=obj.student_id, owner_id=obj.owner_id))
         obj.voided_at, obj.void_reason = at, reason
         sv = await s.get(Service, obj.service_id)
         if sv and sv.stock is not None:

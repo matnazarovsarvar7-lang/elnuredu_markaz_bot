@@ -140,6 +140,8 @@ async def earned(s, st: Staff, start: datetime, end: datetime, prorate: float = 
     rew = await service_rewards(s, st.id, start, end)
     if rew:
         lines.append(("Xizmatlar sotuvidan 15% rag'bat", rew))
+    from app.bot.prints import book_shares
+    lines += await book_shares(s, st, start, end)
     return sum(v for _, v in lines), lines
 
 

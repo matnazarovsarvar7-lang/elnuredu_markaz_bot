@@ -110,7 +110,8 @@ async def recorded(s, item: StockItem, holder_id: int, since: datetime | None) -
             Service, Service.id == ServiceSale.service_id).where(Service.kind == "printer", *cond))).scalar()
         pc = [PrinterUse.by_id == holder_id] + ([PrinterUse.created_at >= since] if since else [])
         inner = (await s.execute(select(func.coalesce(func.sum(PrinterUse.pages), 0)).where(*pc))).scalar()
-        return int(sold), int(inner)
+        from app.bot.prints import paper_sheets
+        return int(sold) + await paper_sheets(s, holder_id, since), int(inner)
     if item.service_id:
         sold = (await s.execute(select(func.coalesce(func.sum(ServiceSale.qty), 0)).where(
             ServiceSale.service_id == item.service_id, *cond))).scalar()
