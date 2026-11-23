@@ -189,6 +189,8 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     from app.bot.rating import weekly as rating_weekly, month_stars
     sch.add_job(rating_weekly, "cron", day_of_week="sun", hour=18, minute=7, args=[bot])
     sch.add_job(month_stars, "cron", day=1, hour=10, minute=3, args=[bot])
+    from app.bot.murojaat import reminder as mj_reminder
+    sch.add_job(mj_reminder, "cron", hour=10, minute=4, args=[bot])
     sch.add_job(month_end_reminders, "cron", day="last", hour=21, minute=30, args=[bot, "rahbar"])
     sch.add_job(printer_reminder, "cron", day_of_week="mon", hour=10, minute=5, args=[bot])
     sch.add_job(late_penalties, "cron", hour=20, minute=5, args=[bot])

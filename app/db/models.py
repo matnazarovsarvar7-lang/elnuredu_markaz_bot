@@ -518,6 +518,25 @@ class ServiceSale(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Murojaat(Base):
+    """Ota-ona / o'quvchi murojaati: savol, taklif, shikoyat, to'lov masalasi. Rahbar (va kerakli xodim) javob beradi."""
+    __tablename__ = "murojaatlar"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    parent_id: Mapped[int | None] = mapped_column(ForeignKey("parents.id"))
+    student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id"))
+    from_tg: Mapped[int | None] = mapped_column(BigInteger)
+    category: Mapped[str] = mapped_column(String(20))           # savol | taklif | shikoyat | tolov | boshqa
+    text: Mapped[str | None] = mapped_column(Text)
+    file_id: Mapped[str | None] = mapped_column(String(200))
+    file_kind: Mapped[str | None] = mapped_column(String(20))   # photo | voice | document
+    status: Mapped[str] = mapped_column(String(20), default="yangi")   # yangi | javob | yopildi
+    answer: Mapped[str | None] = mapped_column(Text)
+    answered_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    answered_at: Mapped[datetime | None] = mapped_column(DateTime)
+    rating: Mapped[int | None] = mapped_column(Integer)          # ota-ona javobdan qoniqdimi: 1 | 0
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class StockItem(Base):
     """Hisobdagi tovar: qog'oz, kitob, kartrij va h.k. Xodimlarga «hisobdor» qilib beriladi."""
     __tablename__ = "stock_items"

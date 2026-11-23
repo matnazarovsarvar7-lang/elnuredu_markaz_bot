@@ -806,4 +806,6 @@ async def pending_other(bot: Bot, chat: int) -> int:
                                                      IB(text="❌ Rad", callback_data=f"xn:{e.id}")]]))
     from app.bot.tests_flow import send_request_cards
     n += await send_request_cards(bot, chat)
+    from app.bot.murojaat import pending_cards
+    n += await pending_cards(bot, chat, "rahbar")
     return n

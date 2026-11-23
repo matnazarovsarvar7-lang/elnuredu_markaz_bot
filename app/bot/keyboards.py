@@ -31,6 +31,8 @@ B_TESTS = "📚 Testlar"
 B_SCAN = "📷 Skaner"
 B_STOCK = "📦 Ombor"
 B_RATING = "🏆 Reyting"
+B_APPEAL = "✉️ Murojaat"
+B_APPEALS = "📨 Murojaatlar"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
@@ -81,6 +83,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_ACHIEVE])
     if role == "rahbar":
         rows.append([B_PENDING, B_STAFF])
+        rows.append([B_APPEALS])
         rows.append([B_TASK_NEW, B_TASKS_ALL])
         rows.append([B_NOW, B_LEADS])
         rows.append([B_DELEGATE, B_LEAVE])
@@ -101,14 +104,14 @@ def parent_menu(switch: bool = False) -> ReplyKeyboardMarkup:
     last = [KeyboardButton(text=B_HELP)] + ([KeyboardButton(text=B_SWITCH)] if switch else [])
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD), KeyboardButton(text=B_RATING)],
                                          [KeyboardButton(text=B_HOMEWORK), KeyboardButton(text=B_MARKET)],
-                                         [KeyboardButton(text=B_PARENT_PAY)],
+                                         [KeyboardButton(text=B_PARENT_PAY), KeyboardButton(text=B_APPEAL)],
                                          last], resize_keyboard=True, is_persistent=True)
 
 
 def student_menu() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_ME), KeyboardButton(text=B_RATING)],
                                          [KeyboardButton(text=B_HOMEWORK), KeyboardButton(text=B_MARKET)],
-                                         [KeyboardButton(text=B_HELP)]],
+                                         [KeyboardButton(text=B_APPEAL), KeyboardButton(text=B_HELP)]],
                                resize_keyboard=True, is_persistent=True)
 
 
