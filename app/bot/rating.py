@@ -51,6 +51,7 @@ class Row:
     last_ex: tuple | None = None     # (mavzu, foiz | None)
     score: float | None = None
     rank: int | None = None
+    partial: bool = False            # faqat bitta ko'rsatkich bor (dastlabki baho)
 
 
 async def group_ratings(s, gid: int, until: date | None = None) -> list[Row]:
@@ -94,8 +95,13 @@ async def group_ratings(s, gid: int, until: date | None = None) -> list[Row]:
         if wsum:
             r.ex = tot / wsum
     for r in rows.values():
-        if r.n_hw >= 3 and r.n_ex >= 1:
+        if r.n_hw and r.n_ex:
             r.score = round(0.6 * r.ex + 0.4 * r.hw, 1)
+            r.partial = r.n_hw < 3
+        elif r.n_ex:                              # vazifa hali belgilanmagan — dastlabki baho nazoratdan
+            r.score, r.partial = round(r.ex, 1), True
+        elif r.n_hw:                              # nazorat hali bo'lmagan — dastlabki baho vazifadan
+            r.score, r.partial = round(r.hw, 1), True
     ranked = sorted(rows.values(), key=lambda r: (r.score is None, -(r.score or 0), r.name))
     k = 0
     prev = None
@@ -163,22 +169,56 @@ async def child_line(s, sid: int) -> str:
     return "\n".join(lines)
 
 
-# ---------------- ota-ona ----------------
+async def card(s, gid: int, mark_sid: int | None) -> tuple[bytes, str]:
+    """Chiroyli reyting rasmi va qisqa izoh."""
+    from app.logic.rating_card import CardRow, render
+    g = await s.get(Group, gid)
+    rows = await group_ratings(s, gid)
+    before = {r.eid: r.score for r in await group_ratings(s, gid, today() - timedelta(days=30))}
+    scored = [r for r in rows if r.score is not None]
+    avg = round(sum(r.score for r in scored) / len(scored)) if scored else None
+    me = next((r for r in rows if r.sid == mark_sid), None) if mark_sid else None
+
+    def tr(r: Row) -> int | None:
+        b = before.get(r.eid)
+        return round(r.score - b) if r.score is not None and b is not None and round(r.score - b) else None
+
+    crow = [CardRow(r.rank, r.name, r.score, tr(r), bool(me and r.eid == me.eid), r.partial) for r in scored]
+    medata = None
+    if me:
+        medata = {"name": me.name, "rank": me.rank, "total": len(scored), "score": me.score, "ex": me.ex, "hw": me.hw,
+                  "trend": tr(me), "partial": me.partial}
+    png = render(g.name, f"{today():%d.%m.%Y}", crow, medata, avg, [r.name for r in rows if r.score is None])
+    if me and me.score is not None:
+        cap = (f"🏆 <b>{me.name}</b> — «{g.name}» guruhida <b>{me.rank}-o'rin</b> ({len(scored)} o'quvchidan), "
+               f"{me.score:.0f} ball · {level(me.score)}")
+        if me.partial:
+            cap += "\n<i>Dastlabki baho: nazorat va vazifalar ko'paygan sari aniqlashadi.</i>"
+    elif me:
+        cap = (f"🏆 «{g.name}»: {me.name} reytingi birinchi nazorat yoki tekshirilgan uy vazifasidan keyin chiqadi.")
+    else:
+        cap = f"🏆 «{g.name}» reytingi"
+    return png, cap
+
+
+# ---------------- ota-ona / o'quvchi ----------------
 @router.message(F.text == K.B_RATING)
 async def parent_rating(m: Message) -> None:
+    from aiogram.types import BufferedInputFile
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
         if who.staff and who.staff.current_role in ("rahbar", "oqituvchi", "yordamchi"):
             await _staff_pick(m, s, who.staff)
             return
         kids = list(who.parent.children) if who.parent else ([who.student] if who.student else [])
-        sent = False
+        cards = []
         for k in kids:
             for e in await S.student_enrollments(s, k.id):
-                await m.answer(await group_text(s, e.group_id, mark_sid=k.id))
-                sent = True
-    if not sent:
+                cards.append(await card(s, e.group_id, k.id))
+    if not cards:
         await m.answer("Hozircha reyting yo'q.")
+    for png, cap in cards:
+        await m.answer_photo(BufferedInputFile(png, "reyting.png"), caption=cap)
 
 
 # ---------------- o'qituvchi / rahbar ----------------
@@ -197,8 +237,11 @@ async def staff_group(c: CallbackQuery) -> None:
     await c.answer()
     if not gid:
         return
+    from aiogram.types import BufferedInputFile
     async with Session() as s:
+        png, _ = await card(s, gid, None)
         text = await group_text(s, gid, staff_view=True)
+    await c.message.answer_photo(BufferedInputFile(png, "reyting.png"))
     await c.message.answer(text)
 
 
