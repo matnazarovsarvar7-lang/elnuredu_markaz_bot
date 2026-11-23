@@ -35,6 +35,10 @@ class Ed(StatesGroup):
     st_name = State()
     st_region = State()
     par_replace = State()
+    st_school = State()
+    st_source = State()
+    par_name = State()
+    par_work = State()
 
 
 async def _role(tg_id: int) -> tuple[Staff | None, str | None]:
@@ -183,13 +187,17 @@ async def _student_card(sid: int, role: str) -> tuple[str, IM]:
         enrs = await S.student_enrollments(s, sid)
         fees = {e.id: await S.enrollment_fee(s, e) for e in enrs}
         stu = await s.get(Student, sid, options=[selectinload(Student.parents)], populate_existing=True)
-        par = ", ".join(p.phone + (" (botda)" if p.tg_id else "") for p in stu.parents) or "—"
+        rel = {"ota": "otasi", "ona": "onasi", "vasiy": "vasiy", "ozi": "o'zi"}
+        par = "\n".join("• " + (f"{p.full_name} " if p.full_name else "") + (f"({rel.get(p.relation, p.relation)}) " if p.relation else "")
+                        + p.phone + (" · botda" if p.tg_id else "") + (f"\n   ish joyi: {p.workplace}" if p.workplace else "")
+                        for p in stu.parents) or "—"
     grp = "\n".join(f"• {e.group.name} — {S.fmt_som(fees[e.id])}" + (" (istisno narx)" if e.price_override else "")
                     + (f", chegirma: {S.discount_label(e)}" if e.discount_kind != "none" else "")
                     for e in enrs) or "—"
     grade = "—" if not stu.grade else ("bitirgan / katta" if stu.grade > 11 else f"{stu.grade}-sinf")
-    text = (f"<b>{stu.full_name}</b>\nSinf: {grade} · Hudud: {stu.region or '—'}\n"
-            f"Holat: {stu.status}\nCoin: {stu.coins}\nOta-ona telefoni: {par}\n"
+    text = (f"<b>{stu.full_name}</b>\nSinf: {grade} · Maktab: {stu.school or '—'}\nYashash joyi: {stu.region or '—'}\n"
+            f"Qayerdan bildi: {stu.source or '—'}\n"
+            f"Holat: {stu.status}\nCoin: {stu.coins}\nOta-ona:\n{par}\n"
             f"O'quvchi telefoni: {stu.phone or '—'}\n\nGuruhlar:\n{grp}")
     rows = [[IB(text="✏️ Tahrirlash", callback_data=f"sx:{sid}")]] if role in EDIT_ROLES else []
     rows += [[IB(text="📞 Ota-ona raqami qo'shish", callback_data=f"spa:{sid}")],
@@ -269,7 +277,9 @@ async def _editor(tg_id: int):
 def _edit_kb(sid: int) -> IM:
     return IM(inline_keyboard=[
         [IB(text="👤 Ism-familiya", callback_data=f"sxn:{sid}"), IB(text="🎓 Sinf", callback_data=f"sxg:{sid}")],
-        [IB(text="📍 Hudud", callback_data=f"sxr:{sid}"), IB(text="📞 Ota-ona raqamlari", callback_data=f"sxp:{sid}")],
+        [IB(text="🏫 Maktab", callback_data=f"sxs:{sid}"), IB(text="📍 Yashash joyi", callback_data=f"sxr:{sid}")],
+        [IB(text="🧭 Qayerdan bildi", callback_data=f"sxo:{sid}"), IB(text="📞 Ota-ona raqamlari", callback_data=f"sxp:{sid}")],
+        [IB(text="👪 Ota-ona ismi va ish joyi", callback_data=f"sxq:{sid}")],
         [IB(text="⬅️ Kartaga qaytish", callback_data=f"st:{sid}")]])
 
 
@@ -341,6 +351,106 @@ async def st_region_set(m: Message, state: FSMContext) -> None:
         await s.commit()
     await state.clear()
     await _back_to_card(m, d["sid"], m.from_user.id, "✅ Hudud saqlandi.")
+
+
+@router.callback_query(F.data.startswith(("sxs:", "sxo:")))
+async def st_edit_more(c: CallbackQuery, state: FSMContext) -> None:
+    if not await _editor(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    kind, sid = c.data.split(":")
+    await state.set_state(Ed.st_school if kind == "sxs" else Ed.st_source)
+    await state.update_data(sid=int(sid))
+    await c.answer()
+    await c.message.answer("Maktabini yozing (masalan: <code>21-maktab</code>):" if kind == "sxs" else
+                           "Markaz haqida qayerdan bilgan? (Instagram, Telegram, Tanish: ..., Banner, ...)")
+
+
+@router.message(Ed.st_school)
+@router.message(Ed.st_source)
+async def st_more_set(m: Message, state: FSMContext) -> None:
+    t = " ".join((m.text or "").split())
+    if not t:
+        return
+    cur = await state.get_state()
+    d = await state.get_data()
+    async with Session() as s:
+        stu = await s.get(Student, d["sid"])
+        if cur == Ed.st_school.state:
+            stu.school = (f"{t}-maktab" if t.isdigit() else t)[:120]
+        else:
+            stu.source = t[:60]
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "oquvchi_malumot", student=stu.full_name, field=cur, value=t)
+        await s.commit()
+    await state.clear()
+    await _back_to_card(m, d["sid"], m.from_user.id, "✅ Saqlandi.")
+
+
+@router.callback_query(F.data.startswith("sxq:"))
+async def par_info_pick(c: CallbackQuery) -> None:
+    if not await _editor(c.from_user.id):
+        await c.answer("Ruxsat yo'q", show_alert=True)
+        return
+    sid = int(c.data.split(":")[1])
+    async with Session() as s:
+        stu = await s.get(Student, sid, options=[selectinload(Student.parents)])
+    await c.answer()
+    await c.message.answer("Qaysi ota-ona?", reply_markup=IM(inline_keyboard=[
+        [IB(text=f"{p.phone} {p.full_name or ''}", callback_data=f"sxqp:{sid}:{p.id}")] for p in stu.parents]))
+
+
+@router.callback_query(F.data.startswith("sxqp:"))
+async def par_info_rel(c: CallbackQuery) -> None:
+    _, sid, pid = c.data.split(":")
+    await c.answer()
+    await c.message.edit_text("Bu raqam kimniki?", reply_markup=IM(inline_keyboard=[
+        [IB(text="Otasi", callback_data=f"sxqr:{sid}:{pid}:ota"), IB(text="Onasi", callback_data=f"sxqr:{sid}:{pid}:ona")],
+        [IB(text="Vasiy / qarindosh", callback_data=f"sxqr:{sid}:{pid}:vasiy"),
+         IB(text="O'quvchining o'zi", callback_data=f"sxqr:{sid}:{pid}:ozi")]]))
+
+
+@router.callback_query(F.data.startswith("sxqr:"))
+async def par_info_name(c: CallbackQuery, state: FSMContext) -> None:
+    _, sid, pid, rel = c.data.split(":")
+    async with Session() as s:
+        p = await s.get(Parent, int(pid))
+        p.relation = rel
+        await s.commit()
+    await state.set_state(Ed.par_name)
+    await state.update_data(sid=int(sid), pid=int(pid))
+    await c.answer()
+    await c.message.edit_text("Familiya va ismini yozing (o'zgartirmaslik uchun <code>-</code>):")
+
+
+@router.message(Ed.par_name)
+async def par_name_set(m: Message, state: FSMContext) -> None:
+    t = " ".join((m.text or "").split())
+    if t != "-":
+        if len(t) < 3 or any(ch.isdigit() for ch in t):
+            await m.answer("Harflar bilan yozing yoki <code>-</code>")
+            return
+        d = await state.get_data()
+        async with Session() as s:
+            (await s.get(Parent, d["pid"])).full_name = t[:120]
+            await s.commit()
+    await state.set_state(Ed.par_work)
+    await m.answer("Ish joyi yoki kasbi (o'zgartirmaslik uchun <code>-</code>):")
+
+
+@router.message(Ed.par_work)
+async def par_work_set(m: Message, state: FSMContext) -> None:
+    t = " ".join((m.text or "").split())
+    d = await state.get_data()
+    async with Session() as s:
+        p = await s.get(Parent, d["pid"])
+        if t and t != "-":
+            p.workplace = t[:120]
+        who = await S.who_by_tg(s, m.from_user.id)
+        await S.audit(s, who.staff, "ota_ona_malumot", parent=p.phone)
+        await s.commit()
+    await state.clear()
+    await _back_to_card(m, d["sid"], m.from_user.id, "✅ Ota-ona ma'lumoti saqlandi.")
 
 
 @router.callback_query(F.data.startswith("sxg:"))
@@ -1217,9 +1327,13 @@ async def students_excel(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     async with Session() as s:
         studs = (await s.execute(select(Student).where(Student.status != "ketgan").order_by(Student.full_name))).scalars().all()
         phones: dict[int, list[str]] = {}
-        for sid, ph in (await s.execute(select(StudentParent.student_id, Parent.phone).join(
+        pinfo: dict[int, list[str]] = {}
+        for sid, ph, pn, pw in (await s.execute(select(StudentParent.student_id, Parent.phone, Parent.full_name,
+                                                       Parent.workplace).join(
                 Parent, Parent.id == StudentParent.parent_id))).all():
             phones.setdefault(sid, []).append(ph)
+            if pn or pw:
+                pinfo.setdefault(sid, []).append(", ".join(x for x in (pn, pw) if x))
         enrs = (await s.execute(select(Enrollment).where(Enrollment.active).options(
             selectinload(Enrollment.group), selectinload(Enrollment.student)))).scalars().all()
         by: dict[int, list] = {}
@@ -1230,7 +1344,8 @@ async def students_excel(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     ws = wb.active
     ws.title = "O'quvchilar"
     head = ["№", "O'quvchi", "Sinf", "Hudud", "Guruh(lar)", "Ota-ona telefoni", "O'quvchi telefoni", "Holat", "Coin",
-            "Qo'shilgan", f"{t:%m.%Y} hisob", "To'langan", "Qarz", "Chegirma"]
+            "Qo'shilgan", f"{t:%m.%Y} hisob", "To'langan", "Qarz", "Chegirma",
+            "Maktab", "Qayerdan bildi", "Ota-ona (ism, ish joyi)"]
     ws.append(head)
     for cell in ws[1]:
         cell.font, cell.fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="0D2440")
@@ -1240,10 +1355,11 @@ async def students_excel(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
                    ", ".join(e.group.name for e, _ in parts), ", ".join(phones.get(x.id, [])), x.phone, x.status, x.coins,
                    min((e.join_date for e, _ in parts), default=None), sum(st.payable for _, st in parts),
                    sum(st.paid for _, st in parts), sum(st.debt for _, st in parts),
-                   "; ".join(f"{e.group.name}: {S.discount_label(e)}" for e, _ in parts if e.discount_kind != "none")])
+                   "; ".join(f"{e.group.name}: {S.discount_label(e)}" for e, _ in parts if e.discount_kind != "none"),
+                   x.school, x.source, "; ".join(pinfo.get(x.id, []))])
     if role not in MONEY_ROLES:   # admin: pul ustunlarisiz (hisob, to'langan, qarz, chegirma)
         ws.delete_cols(11, 4)
-        head = head[:10]
+        head = head[:10] + head[14:]
     for col in ((11, 12, 13) if role in MONEY_ROLES else ()):
         for row in ws.iter_rows(min_row=2, min_col=col, max_col=col):
             for cell in row:
@@ -1251,7 +1367,8 @@ async def students_excel(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
     for row in ws.iter_rows(min_row=2, min_col=10, max_col=10):
         for cell in row:
             cell.number_format = "DD.MM.YYYY"
-    for i, w in enumerate([5, 30, 8, 22, 30, 28, 16, 12, 7, 12, 14, 14, 14, 30], 1):
+    widths = [5, 30, 8, 22, 30, 28, 16, 12, 7, 12] + ([14, 14, 14, 30] if role in MONEY_ROLES else []) + [18, 22, 40]
+    for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "C2"
     ws.auto_filter.ref = f"A1:{get_column_letter(len(head))}{len(studs) + 1}"

@@ -35,9 +35,22 @@ def today() -> date:
 class Rg(StatesGroup):
     name = State()
     grade = State()
+    school = State()
+    region = State()
+    source = State()
+    src_text = State()
     phone = State()
+    pname = State()
+    pwork = State()
     group = State()
     date = State()
+
+
+N = 10            # yangi o'quvchi uchun qadamlar soni
+SOURCES = {"insta": "Instagram", "tg": "Telegram", "tanish": "Tanish-bilish tavsiyasi", "banner": "Banner / reklama",
+           "maktab": "Maktabdan eshitgan", "otdi": "Yonidan o'tib ko'rgan", "boshqa": "Boshqa"}
+REL = {"ota": "Otasi", "ona": "Onasi", "vasiy": "Vasiy / qarindosh", "ozi": "O'quvchining o'zi"}
+SKIP = IB(text="⏭ O'tkazib yuborish", callback_data="rgskip")
 
 
 async def _staff(tg_id: int):
@@ -59,7 +72,7 @@ async def reg_start(m: Message, state: FSMContext, tg_id: int | None = None) -> 
         return
     await state.clear()
     await state.set_state(Rg.name)
-    await m.answer("➕ <b>Yangi o'quvchi</b>\n\n1/5. O'quvchining familiyasi va ismini yozing:\n"
+    await m.answer(f"➕ <b>Yangi o'quvchi</b>\n\n1/{N}. O'quvchining familiyasi va ismini yozing:\n"
                    "<i>Masalan: Karimov Jasur</i>\n\nBekor qilish: /start")
 
 
@@ -79,7 +92,7 @@ async def _back_to_confirm(msg: Message, state: FSMContext) -> bool:
     """Tekshiruv sahifasidan bitta maydon tuzatilayotgan bo'lsa — qayta tekshiruvga qaytadi."""
     d = await state.get_data()
     if d.get("fixing") and d.get("join") and d.get("gid"):
-        await state.update_data(fixing=False)
+        await state.update_data(fixing=False, pfix=False)
         await _confirm(msg, state, date.fromisoformat(d["join"]))
         return True
     return False
@@ -109,23 +122,94 @@ async def _ask_grade(msg: Message, state: FSMContext, prefix: str = "") -> None:
     await state.set_state(Rg.grade)
     nums = [IB(text=str(i), callback_data=f"rgc:{i}") for i in range(1, 12)]
     kb = IM(inline_keyboard=[nums[0:4], nums[4:8], nums[8:11], [IB(text="Bitirgan / kattalar", callback_data="rgc:12")]])
-    await msg.answer(prefix + "2/5. Nechanchi sinfda o'qiydi?", reply_markup=kb)
+    await msg.answer(prefix + f"2/{N}. Nechanchi sinfda o'qiydi?", reply_markup=kb)
 
 
 @router.callback_query(Rg.grade, F.data.startswith("rgc:"))
 async def reg_grade(c: CallbackQuery, state: FSMContext) -> None:
     grade = int(c.data.split(":")[1])
     await state.update_data(grade=grade)
-    d = await state.get_data()
     await c.message.edit_text(f"Sinf: {grade if grade <= 11 else 'bitirgan'} ✅")
     if await _back_to_confirm(c.message, state):
         return
+    await _ask_school(c.message, state)
+
+
+# ---------- 3–5: maktab, hudud, qayerdan keldi ----------
+async def _ask_school(msg: Message, state: FSMContext) -> None:
+    await state.set_state(Rg.school)
+    await msg.answer(f"3/{N}. Qaysi maktabda o'qiydi?\n<i>Masalan: 21-maktab, «Prezident maktabi», kollej. "
+                     "Faqat raqam yozsangiz ham bo'ladi: 21</i>", reply_markup=IM(inline_keyboard=[[SKIP]]))
+
+
+@router.message(Rg.school)
+async def reg_school(m: Message, state: FSMContext) -> None:
+    t = " ".join((m.text or "").split())[:120]
+    if not t:
+        return
+    await state.update_data(school=f"{t}-maktab" if t.isdigit() else t)
+    if await _back_to_confirm(m, state):
+        return
+    await _ask_region(m, state)
+
+
+async def _ask_region(msg: Message, state: FSMContext) -> None:
+    await state.set_state(Rg.region)
+    await msg.answer(f"4/{N}. Qayerda yashaydi (mahalla, tuman)?\n<i>Masalan: Urganch sh., Al-Xorazmiy mahallasi</i>",
+                     reply_markup=IM(inline_keyboard=[[SKIP]]))
+
+
+@router.message(Rg.region)
+async def reg_region(m: Message, state: FSMContext) -> None:
+    t = " ".join((m.text or "").split())[:80]
+    if not t:
+        return
+    await state.update_data(region=t)
+    if await _back_to_confirm(m, state):
+        return
+    await _ask_source(m, state)
+
+
+async def _ask_source(msg: Message, state: FSMContext) -> None:
+    await state.set_state(Rg.source)
+    keys = list(SOURCES)
+    rows = [[IB(text=SOURCES[k], callback_data=f"rgo:{k}") for k in keys[i:i + 2]] for i in range(0, len(keys), 2)]
+    await msg.answer(f"5/{N}. Markaz haqida qayerdan bilib keldi?", reply_markup=IM(inline_keyboard=rows + [[SKIP]]))
+
+
+@router.callback_query(Rg.source, F.data.startswith("rgo:"))
+async def reg_source(c: CallbackQuery, state: FSMContext) -> None:
+    k = c.data.split(":")[1]
+    await c.answer()
+    if k in ("tanish", "boshqa"):
+        await state.update_data(src_key=k)
+        await state.set_state(Rg.src_text)
+        await c.message.edit_text("Kim tavsiya qildi? (ismi yoki qaysi o'quvchining ota-onasi)" if k == "tanish"
+                                  else "Qayerdan? Qisqa yozing:", reply_markup=IM(inline_keyboard=[[SKIP]]))
+        return
+    await state.update_data(source=SOURCES[k])
+    await c.message.edit_text(f"Qayerdan: {SOURCES[k]} ✅")
+    await _after_source(c.message, state)
+
+
+@router.message(Rg.src_text)
+async def reg_source_text(m: Message, state: FSMContext) -> None:
+    d = await state.get_data()
+    t = " ".join((m.text or "").split())[:45]
+    await state.update_data(source=(f"Tanish: {t}" if d.get("src_key") == "tanish" else t) or SOURCES[d.get("src_key", "boshqa")])
+    await _after_source(m, state)
+
+
+async def _after_source(msg: Message, state: FSMContext) -> None:
+    if await _back_to_confirm(msg, state):
+        return
+    d = await state.get_data()
     if d.get("phone"):
-        await _ask_group(c.message, state)
+        await _ask_parent(msg, state)
         return
     await state.set_state(Rg.phone)
-    await c.message.answer("3/5. Ota-ona (yoki vasiy) telefon raqamini yozing: +998901234567\n"
-                           "Shu raqam bilan ota-ona botga kiradi.")
+    await msg.answer(f"6/{N}. Ota-ona (yoki vasiy) telefon raqamini yozing: +998901234567\n"
+                     "Shu raqam bilan ota-ona botga kiradi.")
 
 
 @router.message(Rg.phone)
@@ -137,7 +221,102 @@ async def reg_phone(m: Message, state: FSMContext) -> None:
     await state.update_data(phone=phone)
     if await _back_to_confirm(m, state):
         return
+    await _ask_parent(m, state)
+
+
+# ---------- 7–8: ota-ona kimligi, ismi, ish joyi ----------
+async def _ask_parent(msg: Message, state: FSMContext) -> None:
+    d = await state.get_data()
+    async with Session() as s:
+        par = (await s.execute(select(Parent).where(Parent.phone == d["phone"]))).scalar_one_or_none()
+        kids = [x.full_name for x in (await s.execute(select(Student).join(Student.parents).where(
+            Parent.id == par.id))).scalars()] if par else []
+    if par and par.full_name:                 # bu ota-ona bazada bor — qayta so'ramaymiz
+        await msg.answer(f"👪 Bu raqam bazada bor: <b>{par.full_name}</b>"
+                         + (f" ({REL.get(par.relation, '').lower()})" if par.relation else "")
+                         + (f", farzandlari: {', '.join(kids)}" if kids else "") + " ✅")
+        await _ask_group(msg, state)
+        return
+    await state.set_state(Rg.pname)
+    await msg.answer(f"7/{N}. Bu raqam kimniki va uning familiya-ismi?\nAvval tanlang:",
+                     reply_markup=IM(inline_keyboard=[[IB(text=v, callback_data=f"rgr:{k}") for k, v in list(REL.items())[:2]],
+                                                      [IB(text=v, callback_data=f"rgr:{k}") for k, v in list(REL.items())[2:]],
+                                                      [SKIP]]))
+
+
+@router.callback_query(Rg.pname, F.data.startswith("rgr:"))
+async def reg_relation(c: CallbackQuery, state: FSMContext) -> None:
+    k = c.data.split(":")[1]
+    await state.update_data(rel=k)
+    await c.answer()
+    if k == "ozi":
+        await c.message.edit_text("Raqam o'quvchining o'zi ✅")
+        await state.update_data(pname=None)
+        await _ask_work(c.message, state, skip_work=True)
+        return
+    await c.message.edit_text(f"{REL[k]} ✅\nEndi uning familiya va ismini yozing (masalan: <code>Karimova Dilnoza</code>):",
+                              reply_markup=IM(inline_keyboard=[[SKIP]]))
+
+
+@router.message(Rg.pname)
+async def reg_pname(m: Message, state: FSMContext) -> None:
+    t = " ".join((m.text or "").split())[:120]
+    if len(t) < 3 or any(ch.isdigit() for ch in t):
+        await m.answer("Familiya va ismni harflar bilan yozing (yoki «⏭ O'tkazib yuborish»).")
+        return
+    await state.update_data(pname=t)
+    if not (await state.get_data()).get("pfix") and await _back_to_confirm(m, state):
+        return
+    await _ask_work(m, state)
+
+
+async def _ask_work(msg: Message, state: FSMContext, skip_work: bool = False) -> None:
+    if skip_work:
+        if await _back_to_confirm(msg, state):
+            return
+        await _ask_group(msg, state)
+        return
+    await state.set_state(Rg.pwork)
+    await msg.answer(f"8/{N}. Ota-onaning ish joyi yoki kasbi?\n<i>Masalan: shifokor, 5-maktab o'qituvchisi, "
+                     "tadbirkor, uy bekasi</i>", reply_markup=IM(inline_keyboard=[[SKIP]]))
+
+
+@router.message(Rg.pwork)
+async def reg_pwork(m: Message, state: FSMContext) -> None:
+    t = " ".join((m.text or "").split())[:120]
+    if not t:
+        return
+    await state.update_data(pwork=t, pfix=False)
+    if await _back_to_confirm(m, state):
+        return
     await _ask_group(m, state)
+
+
+@router.callback_query(F.data == "rgskip")
+async def reg_skip(c: CallbackQuery, state: FSMContext) -> None:
+    """Ixtiyoriy savolni o'tkazib yuborish — keyingi qadamga."""
+    cur = await state.get_state()
+    await c.answer()
+    try:
+        await c.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    if await _back_to_confirm(c.message, state):
+        return
+    if cur == Rg.school.state:
+        await _ask_region(c.message, state)
+    elif cur == Rg.region.state:
+        await _ask_source(c.message, state)
+    elif cur in (Rg.source.state, Rg.src_text.state):
+        d = await state.get_data()
+        if cur == Rg.src_text.state and d.get("src_key"):
+            await state.update_data(source=SOURCES[d["src_key"]])
+        await _after_source(c.message, state)
+    elif cur == Rg.pname.state:
+        await _ask_work(c.message, state, skip_work=not (await state.get_data()).get("pname"))
+        return
+    elif cur == Rg.pwork.state:
+        await _ask_group(c.message, state)
 
 
 # ---------- guruh va sana (yangi o'quvchi ham, mavjud o'quvchi ham) ----------
@@ -170,7 +349,7 @@ async def _ask_group(msg: Message, state: FSMContext) -> None:
             rows.append([IB(text=f"{'🔴 ' if full else ''}{g.name} · {DAYS[g.days]}{when} · {n} ta",
                             callback_data=f"rgg:{g.id}")])
     await state.set_state(Rg.group)
-    step = "" if d.get("sid") else "4/5. "
+    step = "" if d.get("sid") else f"9/{N}. "
     await msg.answer(f"{step}Qaysi guruhga qo'shiladi?", reply_markup=IM(inline_keyboard=rows or
                      [[IB(text="Bo'sh guruh yo'q", callback_data="rgx")]]))
 
@@ -189,7 +368,7 @@ async def reg_group(c: CallbackQuery, state: FSMContext) -> None:
                                  callback_data=f"rgd:{x.isoformat()}") for x in days],
                              [IB(text="⬅️ Guruhni o'zgartirish", callback_data="rgbg")]])
     d = await state.get_data()
-    step = "" if d.get("sid") else "5/5. "
+    step = "" if d.get("sid") else f"10/{N}. "
     await c.message.edit_text(f"Guruh: <b>{g.name}</b> ✅\n\n{step}Birinchi darsga qaysi kuni keladi (keldi)?\nPastda shu guruhning eng yaqin dars kunlari.\n"
                               f"Boshqa sana bo'lsa yozing: <i>12.11</i>\n"
                               f"(ko'pi bilan {BACK_DAYS} kun oldingi sana)", reply_markup=kb)
@@ -224,6 +403,15 @@ async def reg_fix(c: CallbackQuery, state: FSMContext) -> None:
     elif what == "p":
         await state.set_state(Rg.phone)
         await c.message.answer("Ota-ona telefon raqamini qaytadan yozing: +998901234567")
+    elif what == "s":
+        await _ask_school(c.message, state)
+    elif what == "r":
+        await _ask_region(c.message, state)
+    elif what == "o":
+        await _ask_source(c.message, state)
+    elif what == "pp":
+        await state.update_data(pfix=True)
+        await _ask_parent_force(c.message, state)
     elif what == "g":
         await state.update_data(fixing=False)     # guruhdan keyin sana ham qayta so'raladi
         await _ask_group(c.message, state)
@@ -231,6 +419,14 @@ async def reg_fix(c: CallbackQuery, state: FSMContext) -> None:
         await state.update_data(fixing=False)
         await state.set_state(Rg.date)
         await c.message.answer("Birinchi dars sanasini yozing: <i>12.11</i>")
+
+
+async def _ask_parent_force(msg: Message, state: FSMContext) -> None:
+    """Tekshiruvdan: ota-ona ma'lumotini qayta kiritish (bazadagi ism bo'lsa ham)."""
+    await state.set_state(Rg.pname)
+    await msg.answer("Bu raqam kimniki?", reply_markup=IM(inline_keyboard=[
+        [IB(text=v, callback_data=f"rgr:{k}") for k, v in list(REL.items())[:2]],
+        [IB(text=v, callback_data=f"rgr:{k}") for k, v in list(REL.items())[2:]]]))
 
 
 @router.callback_query(Rg.date, F.data.startswith("rgd:"))
@@ -278,15 +474,22 @@ async def _confirm(msg: Message, state: FSMContext, join: date) -> None:
     lines = ["<b>Tekshiring:</b>", f"O'quvchi: {name}"]
     if not d.get("sid"):
         grade = d["grade"]
-        lines += [f"Sinf: {grade if grade <= 11 else 'bitirgan'}", f"Ota-ona tel: {d['phone']}"]
+        lines += [f"Sinf: {grade if grade <= 11 else 'bitirgan'} · Maktab: {d.get('school') or '—'}",
+                  f"Yashash joyi: {d.get('region') or '—'}", f"Qayerdan bildi: {d.get('source') or '—'}",
+                  f"Ota-ona tel: {d['phone']}"
+                  + (f" — {REL.get(d.get('rel'), '').lower()}" if d.get("rel") else "")
+                  + (f" {d['pname']}" if d.get("pname") else "")
+                  + (f", ish joyi: {d['pwork']}" if d.get("pwork") else "")]
     lines += [f"Guruh: {g.name} ({DAYS[g.days]})", f"Birinchi dars: {join:%d.%m.%Y}",
               f"Oylik narx: {S.fmt_som(fee)}",
               f"{join:%m}-oy uchun to'lov: {S.fmt_som(first)}" + (" (qolgan darslar bo'yicha)" if first != fee else ""),
               f"To'lov muddati: {deadline:%d.%m.%Y} gacha"]
     fix = [IB(text="✏️ Guruh", callback_data="rgf:g"), IB(text="✏️ Sana", callback_data="rgf:d")]
     if not d.get("sid"):
-        fix = [IB(text="✏️ Ism", callback_data="rgf:n"), IB(text="✏️ Sinf", callback_data="rgf:c"),
-               IB(text="✏️ Telefon", callback_data="rgf:p")], fix
+        fix = ([IB(text="✏️ Ism", callback_data="rgf:n"), IB(text="✏️ Sinf", callback_data="rgf:c"),
+                IB(text="✏️ Maktab", callback_data="rgf:s")],
+               [IB(text="✏️ Yashash joyi", callback_data="rgf:r"), IB(text="✏️ Qayerdan", callback_data="rgf:o")],
+               [IB(text="✏️ Telefon", callback_data="rgf:p"), IB(text="✏️ Ota-ona", callback_data="rgf:pp")], fix)
     else:
         fix = (fix,)
     await state.set_state(Rg.date)     # sanani yozib ham o'zgartirsa bo'ladi
@@ -316,8 +519,16 @@ async def reg_save(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             new = False
         else:
             par = (await s.execute(select(Parent).where(Parent.phone == d["phone"]))).scalar_one_or_none()
+            par = par or Parent(phone=d["phone"])
+            if d.get("pname"):
+                par.full_name = d["pname"]
+            if d.get("rel"):
+                par.relation = d["rel"]
+            if d.get("pwork"):
+                par.workplace = d["pwork"]
             stu = Student(full_name=d["name"], grade=d["grade"] if d["grade"] <= 11 else None,
-                          tier=tier_of_grade(d["grade"]), source="bot", parents=[par or Parent(phone=d["phone"])])
+                          tier=tier_of_grade(d["grade"]), school=d.get("school"), region=d.get("region"),
+                          source=d.get("source") or ("Ariza (bot)" if d.get("lead") else None), parents=[par])
             s.add(stu)
             new = True
             if d.get("lead"):

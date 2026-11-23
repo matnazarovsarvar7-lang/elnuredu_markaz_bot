@@ -59,7 +59,7 @@ class Student(Base):
     grade: Mapped[int | None] = mapped_column(Integer)
     birth: Mapped[date | None] = mapped_column(Date)
     gender: Mapped[str | None] = mapped_column(String(20))
-    school: Mapped[str | None] = mapped_column(String(60))
+    school: Mapped[str | None] = mapped_column(String(120))
     region: Mapped[str | None] = mapped_column(String(80))             # viloyat, tuman
     phone: Mapped[str | None] = mapped_column(String(20))
     tg_id: Mapped[int | None] = mapped_column(BigInteger)
@@ -82,6 +82,8 @@ class Parent(Base):
     phone: Mapped[str] = mapped_column(String(20), unique=True)
     tg_id: Mapped[int | None] = mapped_column(BigInteger)
     lang: Mapped[str] = mapped_column(String(20), default="uz")
+    relation: Mapped[str | None] = mapped_column(String(20))        # ota | ona | vasiy | o'zi
+    workplace: Mapped[str | None] = mapped_column(String(120))      # ish joyi / kasbi
     bot_blocked_at: Mapped[datetime | None] = mapped_column(DateTime)
     children: Mapped[list[Student]] = relationship(secondary="student_parents", back_populates="parents")
 
