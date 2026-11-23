@@ -525,7 +525,8 @@ class Murojaat(Base):
     parent_id: Mapped[int | None] = mapped_column(ForeignKey("parents.id"))
     student_id: Mapped[int | None] = mapped_column(ForeignKey("students.id"))
     from_tg: Mapped[int | None] = mapped_column(BigInteger)
-    category: Mapped[str] = mapped_column(String(20))           # savol | taklif | shikoyat | tolov | boshqa
+    category: Mapped[str] = mapped_column(String(20))           # ustoz | savol | taklif | shikoyat | tolov | boshqa
+    to_staff_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))   # «ustoz»: qaysi o'qituvchiga
     text: Mapped[str | None] = mapped_column(Text)
     file_id: Mapped[str | None] = mapped_column(String(200))
     file_kind: Mapped[str | None] = mapped_column(String(20))   # photo | voice | document

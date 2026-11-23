@@ -67,6 +67,8 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_RATING])
     if role == "oqituvchi":
         rows.append([B_DELEGATE, B_ACHIEVE])
+    if role in ("oqituvchi", "yordamchi"):
+        rows.append([B_APPEALS])
     if role in ("moliya", "rahbar"):
         rows.append([B_PAY_IN, B_DEBTS])
         rows.append([B_STUDENT, B_GROUPS])

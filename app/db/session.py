@@ -11,6 +11,7 @@ Session = async_sessionmaker(engine, expire_on_commit=False)
 
 # Mavjud bazaga yangi ustunlar (create_all ularni qo'shmaydi)
 MIGRATIONS = [
+    "ALTER TABLE murojaatlar ADD COLUMN to_staff_id INTEGER REFERENCES staff(id)",
     "ALTER TABLE payments ADD COLUMN batch VARCHAR(36)",
     "ALTER TABLE enrollments ADD COLUMN tier INTEGER",
     # import paytida guruh narxi price_override ga yozilgan edi -> toifaga o'tkazamiz
