@@ -16,7 +16,7 @@ from app.logic.calendar import is_lesson_day
 from app.logic.money import round_to, DEFAULT_TIER_PRICES, Discount, month_due
 
 ROLE_TITLES = {"rahbar": "Rahbar", "moliya": "Moliya", "admin": "Admin",
-               "oqituvchi": "O'qituvchi", "yordamchi": "Yordamchi o'qituvchi"}
+               "oqituvchi": "O'qituvchi", "yordamchi": "Yordamchi o'qituvchi", "otaona": "👪 Ota-ona (farzandim)"}
 
 
 def norm_phone(raw: str | None) -> str | None:
@@ -80,12 +80,31 @@ class Who:
     staff: Staff | None = None
     parent: Parent | None = None
     student: Student | None = None
+    via_staff: Staff | None = None       # xodim hozir «ota-ona» rolida
+    can_parent: bool = False             # xodimning o'z farzandi markazda o'qiydi
+
+
+async def staff_parent(s: AsyncSession, st: Staff) -> Parent | None:
+    """Xodimning ota-ona yozuvi (telefoni yoki Telegram akkaunti bir xil bo'lsa)."""
+    conds = []
+    if st.phone:
+        conds.append(Parent.phone == st.phone)
+    if st.tg_id:
+        conds.append(Parent.tg_id == st.tg_id)
+    if not conds:
+        return None
+    from sqlalchemy import or_
+    return (await s.execute(select(Parent).where(or_(*conds)).options(selectinload(Parent.children))
+                            .order_by(Parent.id))).scalars().first()
 
 
 async def who_by_tg(s: AsyncSession, tg_id: int) -> Who:
     st = (await s.execute(select(Staff).where(Staff.tg_id == tg_id, Staff.active))).scalar_one_or_none()
     if st:
-        return Who(staff=st)
+        par = await staff_parent(s, st)
+        if st.current_role == "otaona" and par:
+            return Who(parent=par, via_staff=st)
+        return Who(staff=st, can_parent=bool(par and par.children))
     p = (await s.execute(select(Parent).where(Parent.tg_id == tg_id)
                          .options(selectinload(Parent.children)))).scalar_one_or_none()
     if p:

@@ -95,10 +95,11 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=[[btn(t) for t in r] for r in rows], resize_keyboard=True, is_persistent=True)
 
 
-def parent_menu() -> ReplyKeyboardMarkup:
+def parent_menu(switch: bool = False) -> ReplyKeyboardMarkup:
+    last = [KeyboardButton(text=B_HELP)] + ([KeyboardButton(text=B_SWITCH)] if switch else [])
     return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD), KeyboardButton(text=B_HOMEWORK)],
                                          [KeyboardButton(text=B_PARENT_PAY), KeyboardButton(text=B_MARKET)],
-                                         [KeyboardButton(text=B_HELP)]], resize_keyboard=True, is_persistent=True)
+                                         last], resize_keyboard=True, is_persistent=True)
 
 
 def student_menu() -> ReplyKeyboardMarkup:

@@ -35,11 +35,13 @@ async def show_menu(m: Message, who: S.Who) -> None:
         roles = who.staff.role_list()
         role = who.staff.current_role or roles[0]
         await m.answer(f"Assalomu alaykum, {who.staff.full_name}!\nRol: {S.ROLE_TITLES[role]}",
-                       reply_markup=K.staff_menu(role, len(roles) > 1))
+                       reply_markup=K.staff_menu(role, len(roles) > 1 or who.can_parent))
     elif who.parent:
         if not who.parent.children:
             await m.answer("Farzandingiz hali biriktirilmagan. Admin bilan bog'laning.")
-        await m.answer(f"{settings.center_name} botiga xush kelibsiz!", reply_markup=K.parent_menu())
+        await m.answer(f"{settings.center_name} botiga xush kelibsiz!"
+                       + ("\nRol: 👪 Ota-ona. Ishga qaytish: «🔄 Rolni almashtirish»." if who.via_staff else ""),
+                       reply_markup=K.parent_menu(switch=bool(who.via_staff)))
     elif who.student:
         await m.answer(f"Salom, {who.student.full_name}!", reply_markup=K.student_menu())
 
@@ -97,8 +99,10 @@ async def consent(c: CallbackQuery) -> None:
 async def switch(m: Message) -> None:
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
-    if who.staff:
-        await m.answer("Qaysi rolda ishlaysiz?", reply_markup=K.roles_kb(who.staff.role_list()))
+    st = who.staff or who.via_staff
+    if st:
+        roles = st.role_list() + (["otaona"] if (who.can_parent or who.via_staff) else [])
+        await m.answer("Qaysi rolda ishlaysiz?", reply_markup=K.roles_kb(roles))
 
 
 @router.callback_query(F.data.startswith("role:"))
@@ -106,11 +110,16 @@ async def set_role(c: CallbackQuery) -> None:
     role = c.data.split(":")[1]
     async with Session() as s:
         who = await S.who_by_tg(s, c.from_user.id)
-        if not who.staff or role not in who.staff.role_list():
+        st = who.staff or who.via_staff
+        par = await S.staff_parent(s, st) if st else None
+        if not st or not (role in st.role_list() or (role == "otaona" and par)):
             await c.answer("Bu rol sizga berilmagan", show_alert=True)
             return
-        who.staff.current_role = role
+        st.current_role = role
+        if role == "otaona":
+            par.tg_id, par.bot_blocked_at = c.from_user.id, None     # farzand xabarlari shu akkauntga keladi
         await s.commit()
+        who = await S.who_by_tg(s, c.from_user.id)
     await c.message.delete()
     await show_menu(c.message, who)
     if role == "rahbar":
