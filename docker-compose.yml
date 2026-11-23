@@ -14,7 +14,24 @@ services:
     env_file: .env
     environment:
       DATABASE_URL: postgresql+asyncpg://elnur:${DB_PASSWORD}@db:5432/elnur
+    expose:
+      - "8088"            # printer dasturi API — faqat ichki tarmoq, tashqariga Caddy orqali (HTTPS)
     depends_on:
       - db
+  # Printer dasturi uchun HTTPS (Let's Encrypt sertifikatini o'zi oladi va yangilaydi).
+  # Yoqish: .env ga PRINT_HOST=... va COMPOSE_PROFILES=printer yoziladi.
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    profiles: ["printer"]
+    command: caddy reverse-proxy --from ${PRINT_HOST:-localhost} --to bot:8088
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy_data:/data
+    depends_on:
+      - bot
 volumes:
   pgdata:
+  caddy_data:

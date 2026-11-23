@@ -123,6 +123,8 @@ async def main() -> None:
     dp.include_router(router)
     setup_jobs(bot)
     await announce_scanner(bot)
+    from app import agent_api
+    await agent_api.start(bot)          # printer dasturi uchun API (faqat ichki port, tashqariga Caddy orqali)
     await dp.start_polling(bot)
 
 

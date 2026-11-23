@@ -682,6 +682,39 @@ class PrintJob(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class PrintTask(Base):
+    """Printer dasturiga (admin kompyuteri) yuboriladigan topshiriq: butun fayl yoki ikki tomonlamaning old/orqa qismi."""
+    __tablename__ = "print_tasks"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    job_id: Mapped[int | None] = mapped_column(ForeignKey("print_jobs.id"))   # None — sinov varag'i
+    side: Mapped[str] = mapped_column(String(10), default="all")    # all | front | back
+    printer: Mapped[str] = mapped_column(String(120))
+    status: Mapped[str] = mapped_column(String(10), default="navbat")   # navbat | yuborildi | tayyor | xato | bekor
+    error: Mapped[str | None] = mapped_column(String(300))
+    pages: Mapped[int | None] = mapped_column(Integer)              # chiqariladigan sahifalar
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    done_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class PrintLog(Base):
+    """Windows chop etish jurnali (kompyuterdan nima chiqqan bo'lsa — bot orqali yoki botsiz)."""
+    __tablename__ = "print_logs"
+    __table_args__ = (UniqueConstraint("rid"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    rid: Mapped[int] = mapped_column(BigInteger)                     # Windows hodisa raqami
+    at: Mapped[datetime] = mapped_column(DateTime)                   # UTC
+    printer: Mapped[str] = mapped_column(String(120))
+    doc: Mapped[str] = mapped_column(String(250))
+    user: Mapped[str | None] = mapped_column(String(80))
+    pages: Mapped[int] = mapped_column(Integer, default=0)
+    task_id: Mapped[int | None] = mapped_column(Integer)             # bot topshirig'i bo'lsa
+    status: Mapped[str] = mapped_column(String(10), default="yangi")    # bot | yangi | ichki | sotuv | isrof
+    by_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))   # kim belgiladi
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class PrinterUse(Base):
     """Bepul (ichki) chop etish: test varaqlari, markaz hujjatlari, o'qituvchi hujjatlari, texnik xato/isrof."""
     __tablename__ = "printer_uses"

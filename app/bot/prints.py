@@ -98,7 +98,8 @@ async def menu(m: Message, state: FSMContext) -> None:
             [IB(text="📚 Kitobcha chiqarish (sotuv)", callback_data="pr:bk")],
             [IB(text="📂 Mening so'rovlarim", callback_data="pr:my")]]
     if r in ("admin", "rahbar"):
-        rows.append([IB(text=f"🗂 Chop navbati · {q}", callback_data="pr:q")])
+        rows.append([IB(text=f"🗂 Chop navbati · {q}", callback_data="pr:q"),
+                     IB(text="🖥 Printer dasturi", callback_data="pr:ag")])
     if r in CASHIERS:
         rows.append([IB(text="💵 Kitobcha to'lovlari", callback_data="pr:pay")])
     if r == "rahbar":
@@ -146,6 +147,7 @@ async def got_file(m: Message, state: FSMContext, bot: Bot) -> None:
         fid, kind = m.document.file_id, "document"
         name = (m.document.file_name or "").lower()
         if name.endswith(".pdf") or m.document.mime_type == "application/pdf":
+            kind = "pdf"
             if (m.document.file_size or 0) <= 19 * 1024 * 1024:
                 try:
                     buf = await bot.download(m.document.file_id)
@@ -554,8 +556,14 @@ async def _job_card(s, job: PrintJob) -> tuple[str, IM | None]:
                f"👤 {st.full_name if st else ''}" + (f"\n📝 {job.note}" if job.note else ""))
     kb = None
     if job.status == "yangi":
-        kb = IM(inline_keyboard=[[IB(text="✅ Chiqarildi", callback_data=f"prd:{job.id}"),
-                                  IB(text="❌ Bekor", callback_data=f"prn:{job.id}")]])
+        rows = []
+        if job.file_kind in ("pdf", "photo"):
+            rows.append([IB(text="🖨 Printerga yuborish", callback_data=f"prp:{job.id}")])
+        else:
+            cap += "\n<i>Word fayl — printerga avtomatik yuborilmaydi, qo'lda chiqaring.</i>"
+        rows.append([IB(text="✅ Qo'lda chiqarildi", callback_data=f"prd:{job.id}"),
+                     IB(text="❌ Bekor", callback_data=f"prn:{job.id}")])
+        kb = IM(inline_keyboard=rows)
     else:
         cap += f"\n\n{ST[job.status]}"
     return cap, kb
@@ -567,30 +575,43 @@ async def done(c: CallbackQuery, bot: Bot) -> None:
     jid = int(c.data.split(":")[1])
     async with Session() as s:
         st = await _me(s, c.from_user.id)
-        job = await s.get(PrintJob, jid)
         if not st or _role(st) not in ("admin", "rahbar"):
             return await c.answer("Faqat admin.", show_alert=True)
+    ok = await finalize(bot, jid, st.id, c.message.chat.id)
+    if not ok:
+        return await c.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
+    await c.answer("Qayd etildi ✅")
+    await _stamp(c.message, f"✅ Chiqarildi — {st.full_name}")
+
+
+async def _stamp(msg: Message, line: str) -> None:
+    try:
+        await msg.edit_caption(caption=(msg.html_text or "") + f"\n\n{line}")
+    except Exception:
+        try:
+            await msg.edit_text((msg.html_text or "") + f"\n\n{line}")
+        except Exception:
+            pass
+
+
+async def finalize(bot: Bot, jid: int, staff_id: int, chat: int | None) -> bool:
+    """So'rov chiqarildi: ichki — qog'oz hisobga; kitob — to'lov ro'yxati ochiladi; so'raganga xabar."""
+    async with Session() as s:
+        job = await s.get(PrintJob, jid)
+        st = await s.get(Staff, staff_id)
         if not job or job.status != "yangi":
-            return await c.answer("Bu so'rov allaqachon ko'rib chiqilgan.", show_alert=True)
-        job.status, job.done_by, job.done_at = "chiqarildi", st.id, datetime.utcnow()
+            return False
+        job.status, job.done_by, job.done_at = "chiqarildi", staff_id, datetime.utcnow()
         req = await s.get(Staff, job.staff_id) if job.staff_id else None
         if job.kind == "ichki":
             teach = req and any(r in (req.roles or "") for r in ("oqituvchi", "yordamchi"))
             s.add(PrinterUse(category="oqituvchi" if teach else "markaz", pages=job.sheets * job.copies,
-                             note=f"So'rov №{job.id}" + (f": {job.note}" if job.note else "")[:180],
-                             staff_id=job.staff_id, by_id=st.id))
+                             note=(f"So'rov №{job.id}" + (f": {job.note}" if job.note else ""))[:200],
+                             staff_id=job.staff_id, by_id=staff_id))
         await S.audit(s, st, "chop_chiqarildi", id=job.id, kind=job.kind, sheets=job.sheets * job.copies)
         await s.commit()
         b = await s.get(PrintBook, job.book_id) if job.book_id else None
         pay = await pay_card(s, job) if job.kind == "kitob" else None
-    await c.answer("Qayd etildi ✅")
-    try:
-        await c.message.edit_caption(caption=(c.message.html_text or "") + f"\n\n✅ Chiqarildi — {st.full_name}")
-    except Exception:
-        try:
-            await c.message.edit_text((c.message.html_text or "") + f"\n\n✅ Chiqarildi — {st.full_name}")
-        except Exception:
-            pass
     if req and req.tg_id:
         if job.kind == "kitob":
             await send(bot, req.tg_id, f"✅ <b>{b.title}</b> — {job.copies} nusxa tayyor (so'rov №{job.id}).\n"
@@ -598,8 +619,9 @@ async def done(c: CallbackQuery, bot: Bot) -> None:
                                        "«🖨 Chop etish» → «📂 Mening so'rovlarim».")
         else:
             await send(bot, req.tg_id, f"✅ Hujjatingiz tayyor (so'rov №{job.id}, {job.copies} nusxa). Admindan oling.")
-    if pay:
-        await c.message.answer(pay[0], reply_markup=pay[1])
+    if pay and chat:
+        await send(bot, chat, pay[0], reply_markup=pay[1])
+    return True
 
 
 @router.callback_query(F.data.startswith("prn:"))
@@ -911,3 +933,395 @@ async def settings_save(m: Message, state: FSMContext) -> None:
         await s.commit()
     await m.answer(f"✅ {SET_KEYS[d['key']][0]}: <b>{v:g}</b>. Yangi buyurtmalarga qo'llanadi "
                    "(chiqarilganlarning narxi o'zgarmaydi).")
+
+
+# ======================= PRINTER DASTURI (admin kompyuteri) =======================
+from app.agent_api import agent_state, new_install, online, save_state  # noqa: E402
+from app.config import settings  # noqa: E402
+from app.db.models import PrintLog, PrintTask  # noqa: E402
+
+LOG_ST = {"ichki": "📄 ichki hujjat", "sotuv": "💰 sotuv", "isrof": "🗑 isrof / xato", "kiritilgan": "✔️ avval kiritilgan"}
+
+
+def _two_sided(job: PrintJob) -> bool:
+    return (job.layout == "buklet" and job.pages > 2) or (job.layout == "ikki" and job.pages > 1)
+
+
+async def _printer_pick(s) -> tuple[dict, list[str]]:
+    st = await agent_state(s)
+    names = list(st.get("printers") or [])
+    names.sort(key=lambda n: 0 if any(k in n.lower() for k in ("2900", "lbp", "canon")) else 1)
+    return st, names
+
+
+@router.callback_query(F.data.startswith("prp:"))
+async def to_printer(c: CallbackQuery) -> None:
+    jid = int(c.data.split(":")[1])
+    async with Session() as s:
+        me = await _me(s, c.from_user.id)
+        if not me or _role(me) not in ("admin", "rahbar"):
+            return await c.answer("Faqat admin.", show_alert=True)
+        st, names = await _printer_pick(s)
+    if not names:
+        return await c.answer("Printer dasturi hali o'rnatilmagan yoki printerlar topilmadi. «🖨 Chop etish» → "
+                              "«🖥 Printer dasturi».", show_alert=True)
+    await c.answer()
+    if len(names) == 1:
+        return await _queue(c, jid, names[0])
+    await c.message.answer("Qaysi printerdan chiqarilsin?", reply_markup=IM(inline_keyboard=[
+        [IB(text=("⚫ " if i == 0 else "🌈 ") + n[:40], callback_data=f"prpp:{jid}:{i}")] for i, n in enumerate(names)]))
+
+
+@router.callback_query(F.data.startswith("prpp:"))
+async def to_printer_pick(c: CallbackQuery) -> None:
+    _, jid, i = c.data.split(":")
+    async with Session() as s:
+        _, names = await _printer_pick(s)
+    if int(i) >= len(names):
+        return await c.answer("Ro'yxat o'zgardi — qaytadan bosing.", show_alert=True)
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=None)
+    await _queue(c, int(jid), names[int(i)])
+
+
+async def _queue(c: CallbackQuery, jid: int, printer: str) -> None:
+    async with Session() as s:
+        me = await _me(s, c.from_user.id)
+        job = await s.get(PrintJob, jid)
+        if not job or job.status != "yangi":
+            return await c.message.answer("Bu so'rov allaqachon ko'rib chiqilgan.")
+        busy = (await s.execute(select(PrintTask.id).where(PrintTask.job_id == jid,
+                                                           PrintTask.status.in_(("navbat", "yuborildi"))))).first()
+        if busy:
+            return await c.message.answer("Bu so'rov allaqachon printer navbatida.")
+        st = await agent_state(s)
+        two = _two_sided(job)
+        if two and printer not in (st.get("cal") or {}):
+            return await c.message.answer(
+                f"«{printer}» uchun hali <b>ikki tomon sinovi</b> o'tkazilmagan. Bu bir martalik: bot 2 varaq "
+                "chiqaradi va varaqlarni qanday qayta solish kerakligini aniqlaydi.",
+                reply_markup=IM(inline_keyboard=[[IB(text="🧪 Sinovni boshlash", callback_data="prt:" + _pidx(st, printer))]]))
+        s.add(PrintTask(job_id=jid, side="front" if two else "all", printer=printer, by_id=me.id))
+        await s.commit()
+        on = online(st)
+    await c.message.answer(
+        f"🖨 So'rov №{jid} printerga yuborildi ({printer})."
+        + (" Avval 1-tomon chiqadi, keyin bot varaqlarni qayta solishni aytadi." if two else "")
+        + ("" if on else "\n⚠️ Kompyuter yoki printer dasturi hozir o'chiq — yoqilishi bilan o'zi chiqadi."))
+
+
+def _pidx(st: dict, printer: str) -> str:
+    names = list(st.get("printers") or [])
+    return str(names.index(printer)) if printer in names else "0"
+
+
+async def on_task_result(bot: Bot, tid: int) -> None:
+    """Agent topshiriqni bajardi (yoki xato) — adminga keyingi qadam."""
+    async with Session() as s:
+        t = await s.get(PrintTask, tid)
+        if not t:
+            return
+        me = await s.get(Staff, t.by_id) if t.by_id else None
+        chat = me.tg_id if me else None
+        job = await s.get(PrintJob, t.job_id) if t.job_id else None
+        st = await agent_state(s)
+        pi = _pidx(st, t.printer)
+    if not chat:
+        return
+    if t.status == "xato":
+        return await send(bot, chat, f"⚠️ <b>Printer xatosi</b> ({t.printer})\n{t.error}\n\nPrinter yoqilganini, qog'oz "
+                                     "borligini tekshiring.", reply_markup=IM(inline_keyboard=[
+                                         [IB(text="🔁 Qayta yuborish", callback_data=f"prre:{t.id}")]]
+                                         + ([[IB(text="✅ Qo'lda chiqarildi", callback_data=f"prd:{job.id}")]] if job else [])))
+    if t.status != "tayyor":
+        return
+    if job is None:                                          # sinov varag'i
+        if t.side == "front":
+            return await send(bot, chat, "🧪 <b>Sinov: 1-qadam tayyor</b> — 2 varaq chiqdi.\n\n"
+                                         "Endi chiqqan 2 varaqni <b>tartibini o'zgartirmay</b>, toza tomoni chop "
+                                         "etiladigan qilib lotokka qayta soling. Qanday solganingizni eslab qoling — "
+                                         "keyin har doim shunday qilasiz.",
+                              reply_markup=IM(inline_keyboard=[[IB(text="▶️ Orqa tomonni chiqarish",
+                                                                   callback_data=f"prt2:{pi}")]]))
+        return await send(bot, chat, "🧪 <b>Sinov: tekshiramiz</b>\n<b>1-VARAQ OLD</b> yozilgan varaqni oling. "
+                                     "Uning orqasida nima yozilgan?", reply_markup=IM(inline_keyboard=[
+                                         [IB(text="«1-VARAQ ORQA»", callback_data=f"prtq:{pi}:0")],
+                                         [IB(text="«2-VARAQ ORQA»", callback_data=f"prtq:{pi}:1")],
+                                         [IB(text="Hech narsa / boshqa", callback_data=f"prtq:{pi}:x")]]))
+    if t.side == "front":
+        return await send(bot, chat, f"🖨 So'rov №{job.id}: <b>1-tomon chiqdi</b> ({t.pages or ''} varaq).\n\n"
+                                     "Varaqlarni <b>sinovdagidek</b> qayta soling (tartibini o'zgartirmay), so'ng "
+                                     "bosing:", reply_markup=IM(inline_keyboard=[
+                                         [IB(text="▶️ 2-tomonni chiqarish", callback_data=f"prb2:{t.id}")],
+                                         [IB(text="⛔ To'xtatish", callback_data=f"prbx:{t.id}")]]))
+    ok = await finalize(bot, job.id, t.by_id, chat)
+    if ok:
+        await send(bot, chat, f"✅ So'rov №{job.id} chop etildi va hisobga yozildi.")
+
+
+@router.callback_query(F.data.startswith("prb2:"))
+async def back_side(c: CallbackQuery) -> None:
+    async with Session() as s:
+        t = await s.get(PrintTask, int(c.data.split(":")[1]))
+        if not t or t.side != "front":
+            return await c.answer()
+        if (await s.execute(select(PrintTask.id).where(PrintTask.job_id == t.job_id, PrintTask.side == "back",
+                                                       PrintTask.status != "xato"))).first():
+            return await c.answer("2-tomon allaqachon yuborilgan.", show_alert=True)
+        s.add(PrintTask(job_id=t.job_id, side="back", printer=t.printer, by_id=t.by_id))
+        await s.commit()
+    await c.answer("Yuborildi")
+    await c.message.edit_text(c.message.html_text + "\n\n▶️ 2-tomon printerga yuborildi.")
+
+
+@router.callback_query(F.data.startswith("prbx:"))
+async def back_stop(c: CallbackQuery) -> None:
+    await c.answer()
+    await c.message.edit_text(c.message.html_text + "\n\n⛔ To'xtatildi. So'rov navbatda qoldi — qayta "
+                              "«🖨 Printerga yuborish» yoki «✅ Qo'lda chiqarildi».")
+
+
+@router.callback_query(F.data.startswith("prre:"))
+async def retry(c: CallbackQuery) -> None:
+    async with Session() as s:
+        t = await s.get(PrintTask, int(c.data.split(":")[1]))
+        if not t or t.status != "xato":
+            return await c.answer()
+        s.add(PrintTask(job_id=t.job_id, side=t.side, printer=t.printer, by_id=t.by_id))
+        t.status = "bekor"
+        await s.commit()
+    await c.answer("Qayta yuborildi")
+    await c.message.edit_text(c.message.html_text + "\n\n🔁 Qayta yuborildi.")
+
+
+# ---------------- ikki tomon sinovi (kalibrovka) ----------------
+async def _pname(s, i: str) -> str | None:
+    st = await agent_state(s)
+    names = list(st.get("printers") or [])
+    return names[int(i)] if i.isdigit() and int(i) < len(names) else None
+
+
+@router.callback_query(F.data.startswith("prt:"))
+async def cal_start(c: CallbackQuery) -> None:
+    async with Session() as s:
+        me = await _me(s, c.from_user.id)
+        name = await _pname(s, c.data.split(":")[1])
+        if not me or not name:
+            return await c.answer("Printer topilmadi.", show_alert=True)
+        s.add(PrintTask(job_id=None, side="front", printer=name, by_id=me.id))
+        await s.commit()
+    await c.answer()
+    await c.message.answer(f"🧪 <b>Ikki tomon sinovi</b> — {name}\nPrinterga 2 ta toza varaq qo'ying. "
+                           "1-qadam yuborildi: «OLD TOMON» yozilgan 2 varaq chiqadi.")
+
+
+@router.callback_query(F.data.startswith("prt2:"))
+async def cal_back(c: CallbackQuery) -> None:
+    async with Session() as s:
+        me = await _me(s, c.from_user.id)
+        name = await _pname(s, c.data.split(":")[1])
+        if not me or not name:
+            return await c.answer("Printer topilmadi.", show_alert=True)
+        s.add(PrintTask(job_id=None, side="back", printer=name, by_id=me.id))
+        await s.commit()
+    await c.answer("Yuborildi")
+    await c.message.edit_text(c.message.html_text + "\n\n▶️ Orqa tomon yuborildi.")
+
+
+@router.callback_query(F.data.startswith("prtq:"))
+async def cal_q1(c: CallbackQuery) -> None:
+    _, i, a = c.data.split(":")
+    await c.answer()
+    if a == "x":
+        return await c.message.edit_text("🧪 Varaqlar noto'g'ri solingan ko'rinadi. Sinovni qaytadan o'tkazing: "
+                                         "varaqlarni <b>toza tomoni chop etiladigan</b> qilib soling.",
+                                         reply_markup=IM(inline_keyboard=[[IB(text="🧪 Qaytadan", callback_data=f"prt:{i}")]]))
+    await c.message.edit_text("🧪 Endi shu varaqning ikkala tomonidagi <b>strelkalarni</b> solishtiring "
+                              "(varaqni chap-o'ngga ag'darib qarang). Ikkalasi ham yuqoriga qaraydimi?",
+                              reply_markup=IM(inline_keyboard=[
+                                  [IB(text="✅ Ha, bir xil", callback_data=f"prtr:{i}:{a}:0")],
+                                  [IB(text="🔄 Yo'q, orqadagisi teskari", callback_data=f"prtr:{i}:{a}:1")]]))
+
+
+@router.callback_query(F.data.startswith("prtr:"))
+async def cal_save(c: CallbackQuery) -> None:
+    _, i, rev, rot = c.data.split(":")
+    async with Session() as s:
+        me = await _me(s, c.from_user.id)
+        name = await _pname(s, i)
+        if not name:
+            return await c.answer("Printer topilmadi.", show_alert=True)
+        st = await agent_state(s)
+        cal = dict(st.get("cal") or {})
+        cal[name] = {"rev": rev == "1", "rot": rot == "1"}
+        st["cal"] = cal
+        await save_state(s, st)
+        await S.audit(s, me, "printer_sinov", printer=name, rev=rev, rot=rot)
+        await s.commit()
+    await c.answer("Saqlandi ✅")
+    await c.message.edit_text(f"✅ <b>{name}</b> sozlandi. Endi kitobcha va ikki tomonlama hujjatlar shu printerdan "
+                              "to'g'ri chiqadi.\n\nEslatma: varaqlarni har doim sinovdagidek qayta soling.")
+
+
+# ---------------- botsiz chop etilganlar ----------------
+def _log_line(r: PrintLog) -> str:
+    return (f"«{r.doc[:60]}» — <b>{r.pages} sahifa</b>\n{r.printer} · {(r.at + timedelta(hours=5)):%d.%m %H:%M}"
+            + (f" · {r.user}" if r.user else ""))
+
+
+def _log_kb(r: PrintLog) -> IM:
+    return IM(inline_keyboard=[[IB(text="📄 Ichki hujjat", callback_data=f"plc:{r.id}:ichki"),
+                                IB(text="💰 Sotuv (pul olindi)", callback_data=f"plc:{r.id}:sotuv")],
+                               [IB(text="🗑 Isrof / xato", callback_data=f"plc:{r.id}:isrof"),
+                                IB(text="✔️ Avval kiritilgan", callback_data=f"plc:{r.id}:kiritilgan")]])
+
+
+async def notify_unaccounted(bot: Bot, ids: list[int]) -> None:
+    async with Session() as s:
+        rows = (await s.execute(select(PrintLog).where(PrintLog.id.in_(ids)).order_by(PrintLog.id))).scalars().all()
+        to = [x.tg_id for x in await S.staff_with_role(s, "admin") if x.tg_id] or \
+             [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+    if not rows:
+        return
+    for tg in to:
+        if len(rows) > 5:
+            await send(bot, tg, f"🖨 Bot orqali o'tmagan <b>{len(rows)} ta</b> hujjat chop etildi "
+                                f"({sum(r.pages for r in rows)} sahifa). Har birini belgilang:",
+                       reply_markup=IM(inline_keyboard=[[IB(text="🔎 Ko'rish", callback_data="pr:un")]]))
+            continue
+        for r in rows:
+            await send(bot, tg, "🖨 <b>Bot orqali o'tmagan chop etish</b>\n" + _log_line(r) + "\n\nBu nima edi?",
+                       reply_markup=_log_kb(r))
+
+
+@router.callback_query(F.data == "pr:un")
+async def unaccounted(c: CallbackQuery) -> None:
+    async with Session() as s:
+        rows = (await s.execute(select(PrintLog).where(PrintLog.status == "yangi").order_by(PrintLog.id)
+                                .limit(15))).scalars().all()
+    await c.answer()
+    if not rows:
+        return await c.message.answer("🔎 Belgilanmagan chop etish yo'q ✅")
+    for r in rows:
+        await c.message.answer("🖨 " + _log_line(r) + "\nBu nima edi?", reply_markup=_log_kb(r))
+
+
+@router.callback_query(F.data.startswith("plc:"))
+async def classify(c: CallbackQuery) -> None:
+    _, lid, kind = c.data.split(":")
+    async with Session() as s:
+        me = await _me(s, c.from_user.id)
+        if not me or _role(me) not in ("admin", "rahbar", "moliya"):
+            return await c.answer("Ruxsat yo'q.", show_alert=True)
+        r = await s.get(PrintLog, int(lid))
+        if not r or r.status != "yangi":
+            return await c.answer("Allaqachon belgilangan.", show_alert=True)
+        extra = ""
+        if kind in ("ichki", "isrof"):
+            s.add(PrinterUse(category="markaz" if kind == "ichki" else "isrof", pages=r.pages,
+                             note=f"Jurnal: {r.doc}"[:200], by_id=me.id))
+        elif kind == "sotuv":
+            sv = (await s.execute(select(Service).where(Service.kind == "printer", Service.active))).scalars().first()
+            if not sv:
+                return await c.answer("«Printer» xizmati narxi kiritilmagan (🛒 Xizmatlar). Avval narxni kiriting.",
+                                      show_alert=True)
+            s.add(ServiceSale(service_id=sv.id, qty=r.pages, amount=sv.price * r.pages,
+                              profit=(sv.price - (sv.cost or 0)) * r.pages, method="naqd", by_id=me.id))
+            extra = f"\n💰 Kassaga: {S.fmt_som(sv.price * r.pages)} (naqd)"
+        r.status, r.by_id = kind, me.id
+        await S.audit(s, me, "printer_jurnal", id=r.id, kind=kind, pages=r.pages)
+        await s.commit()
+    await c.answer("Belgilandi ✅")
+    await c.message.edit_text(c.message.html_text.replace("\nBu nima edi?", "").replace("\n\nBu nima edi?", "")
+                              + f"\n\n{LOG_ST[kind]} — {me.full_name}{extra}")
+
+
+# ---------------- holat va o'rnatish ----------------
+@router.callback_query(F.data == "pr:ag")
+async def agent_menu(c: CallbackQuery) -> None:
+    async with Session() as s:
+        me = await _me(s, c.from_user.id)
+        st, names = await _printer_pick(s)
+        un = (await s.execute(select(func.count(PrintLog.id)).where(PrintLog.status == "yangi"))).scalar()
+    cal = st.get("cal") or {}
+    if st.get("seen"):
+        seen = datetime.fromisoformat(st["seen"]) + timedelta(hours=5)
+        state = "🟢 ishlayapti" if online(st) else f"🔴 o'chiq (oxirgi marta: {seen:%d.%m %H:%M})"
+    else:
+        state = "⚪ hali o'rnatilmagan"
+    lines = [f"🖥 <b>Printer dasturi</b> — {state}"]
+    for n in names:
+        lines.append(f"• {n}" + (" — ikki tomon sozlangan ✅" if n in cal else " — ikki tomon sinovi o'tkazilmagan"))
+    rows = [[IB(text=f"🧪 Ikki tomon sinovi: {n[:28]}", callback_data=f"prt:{_pidx(st, n)}")] for n in names]
+    rows.append([IB(text=f"🔎 Botsiz chop etilganlar · {un}", callback_data="pr:un")])
+    if me and _role(me) == "rahbar":
+        rows.append([IB(text="🔑 O'rnatish / qayta o'rnatish", callback_data="pr:inst")])
+    await c.answer()
+    await c.message.answer("\n".join(lines), reply_markup=IM(inline_keyboard=rows))
+
+
+@router.callback_query(F.data == "pr:inst")
+async def agent_install(c: CallbackQuery, bot: Bot) -> None:
+    async with Session() as s:
+        me = await _me(s, c.from_user.id)
+        if not me or _role(me) != "rahbar":
+            return await c.answer("Faqat rahbar.", show_alert=True)
+        if not settings.print_host:
+            return await c.answer("Server hali sozlanmagan (PRINT_HOST). Yo'riqnomadagi server qadamini bajaring.",
+                                  show_alert=True)
+        _, link = await new_install(s)
+        await S.audit(s, me, "printer_ornatish")
+        await s.commit()
+    await c.answer()
+    m = await c.message.answer(
+        "🔑 <b>Printer dasturini o'rnatish</b> (havola 15 daqiqa amal qiladi, bir marta ishlaydi)\n\n"
+        "1. Printerlar ulangan kompyuterda <b>Start</b> → «PowerShell» deb yozing → oching.\n"
+        "2. Quyidagi qatorni nusxalab, PowerShell oynasiga qo'ying va <b>Enter</b> bosing:\n\n"
+        f"<code>irm {link} | iex</code>\n\n"
+        "3. «Ruxsat berasizmi?» oynasi chiqsa — <b>Ha</b>.\n"
+        "4. «TAYYOR» yozuvi chiqqach, oynani yoping va «🖥 Printer dasturi» ni qayta oching.\n\n"
+        "⚠️ Bu xabarni hech kimga yubormang — 15 daqiqadan keyin o'zi o'chadi. Eski o'rnatish bekor bo'ldi.")
+
+    async def _wipe():
+        import asyncio
+        await asyncio.sleep(15 * 60)
+        try:
+            await bot.delete_message(m.chat.id, m.message_id)
+        except Exception:
+            pass
+    import asyncio
+    asyncio.create_task(_wipe())
+
+
+async def daily_summary(bot: Bot) -> None:
+    """Har kuni kechqurun rahbarga: printer jurnali bo'yicha bugungi chop etish."""
+    now = datetime.utcnow() + timedelta(hours=5)
+    start = now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5)
+    async with Session() as s:
+        st = await agent_state(s)
+        if not st.get("seen"):
+            return
+        rows = (await s.execute(select(PrintLog).where(PrintLog.at >= start))).scalars().all()
+        un_all = (await s.execute(select(func.count(PrintLog.id)).where(PrintLog.status == "yangi"))).scalar()
+        bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+    if not rows and not un_all:
+        return
+    by_p: dict[str, dict[str, int]] = {}
+    for r in rows:
+        d = by_p.setdefault(r.printer, {})
+        d[r.status] = d.get(r.status, 0) + r.pages
+    lines = [f"🖨 <b>Printer — {now:%d.%m}</b>"]
+    for p, d in by_p.items():
+        lines.append(f"\n<b>{p}</b>: jami {sum(d.values())} sahifa")
+        lines.append(f"• bot orqali: {d.get('bot', 0)}")
+        for k, v in LOG_ST.items():
+            if d.get(k):
+                lines.append(f"• botsiz, {v}: {d[k]}")
+        if d.get("yangi"):
+            lines.append(f"• ⚠️ botsiz, belgilanmagan: <b>{d['yangi']}</b>")
+    if un_all:
+        lines.append(f"\n⚠️ Jami belgilanmagan yozuvlar: {un_all} — admin belgilashi kerak.")
+    if not online(st, 6 * 3600) and now.weekday() < 6:
+        lines.append("\n🔴 Printer dasturi bugun ishlamagan (kompyuter o'chiq bo'lgan bo'lishi mumkin).")
+    for b in bosses:
+        await send(bot, b, "\n".join(lines))

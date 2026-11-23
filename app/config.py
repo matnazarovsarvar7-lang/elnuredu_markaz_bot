@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     owner_phone: str = ""
     # Jonli skaner sahifasi (GitHub Pages, docs/scan.html)
     scanner_url: str = "https://matnazarovsarvar7-lang.github.io/elnuredu_markaz_bot/scan.html"
+    # Printer dasturi (admin kompyuteri) ulanadigan manzil, masalan: elnur.example.uz (faqat .env da)
+    print_host: str = ""
+    print_api_port: int = 8088
 
 
 settings = Settings()
