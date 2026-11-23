@@ -355,6 +355,10 @@ async def student_summary(s, stu: Student) -> str:
                               .order_by(Lesson.date.desc()).limit(5))).all()
     if grades:
         lines.append("\n⭐ Oxirgi baholar: " + ", ".join(f"{S.GRADE_NAMES.get(g, g)} ({d:%d.%m})" for g, d in grades))
+    from app.bot.rating import child_line
+    rl = await child_line(s, stu.id)
+    if rl:
+        lines.append("\n" + rl + "\nBatafsil va guruhdagi hamma o'quvchilar: «🏆 Reyting»")
     return "\n".join(lines)
 
 

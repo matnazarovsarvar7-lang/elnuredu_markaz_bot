@@ -30,6 +30,7 @@ B_EXAMS = "📝 Nazoratlar"
 B_TESTS = "📚 Testlar"
 B_SCAN = "📷 Skaner"
 B_STOCK = "📦 Ombor"
+B_RATING = "🏆 Reyting"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
@@ -61,6 +62,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     if role in ("oqituvchi", "yordamchi", "rahbar"):
         rows.append([B_TODAY, B_EXAMS])
         rows.append([B_TESTS, B_SCAN])
+        rows.append([B_RATING])
     if role == "oqituvchi":
         rows.append([B_DELEGATE, B_ACHIEVE])
     if role in ("moliya", "rahbar"):
@@ -97,14 +99,16 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
 
 def parent_menu(switch: bool = False) -> ReplyKeyboardMarkup:
     last = [KeyboardButton(text=B_HELP)] + ([KeyboardButton(text=B_SWITCH)] if switch else [])
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD), KeyboardButton(text=B_HOMEWORK)],
-                                         [KeyboardButton(text=B_PARENT_PAY), KeyboardButton(text=B_MARKET)],
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_CHILD), KeyboardButton(text=B_RATING)],
+                                         [KeyboardButton(text=B_HOMEWORK), KeyboardButton(text=B_MARKET)],
+                                         [KeyboardButton(text=B_PARENT_PAY)],
                                          last], resize_keyboard=True, is_persistent=True)
 
 
 def student_menu() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_ME), KeyboardButton(text=B_HOMEWORK)],
-                                         [KeyboardButton(text=B_MARKET), KeyboardButton(text=B_HELP)]],
+    return ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text=B_ME), KeyboardButton(text=B_RATING)],
+                                         [KeyboardButton(text=B_HOMEWORK), KeyboardButton(text=B_MARKET)],
+                                         [KeyboardButton(text=B_HELP)]],
                                resize_keyboard=True, is_persistent=True)
 
 
