@@ -99,6 +99,8 @@ async def evening_report(bot: Bot) -> None:
         from app.bot.cash import early_lessons, expected_cash
         from app.db.models import CashClose
         early = await early_lessons(s, t)
+        from app.bot.cash import auto_close
+        await auto_close(s, t)
         cl = (await s.execute(select(CashClose).where(CashClose.date == t).order_by(CashClose.id.desc()))).scalars().first()
         exp_cash = await expected_cash(s)
         from app.bot.vault import boss_balance, card_balance, petty_balance
@@ -123,7 +125,8 @@ async def evening_report(bot: Bot) -> None:
             + (f"\nErta tugagan darslar: {'; '.join(early)}" if early else "")
             )
     # pul holati — har bir pul o'z qatorida, aralashmaydi
-    close_txt = ({"mos": "✅ yopildi, mos", "farq": "⚠️ yopildi, farq bor", "boshlang": "▫️ boshlandi"}
+    close_txt = ("✅ hammasi topshirildi" if cl and cl.decision == "avto" else
+                 {"mos": "✅ yopildi, mos", "farq": "⚠️ yopildi, farq bor", "boshlang": "▫️ boshlandi"}
                  .get(cl.status, "") if cl else "❌ hali yopilmadi")
     text += ("\n\n💼 <b>Pul holati</b>"
              f"\n📥 <b>Moliyada — o'quvchilar puli:</b> {S.fmt_som(exp_cash or 0)}"

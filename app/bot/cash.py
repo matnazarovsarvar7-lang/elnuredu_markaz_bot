@@ -150,7 +150,9 @@ async def close_start(m: Message, state: FSMContext) -> None:
         done = (await s.execute(select(CashClose).where(CashClose.date == t, CashClose.decision != "qayta")
                                 .order_by(CashClose.id.desc()))).scalars().first()
     if done:
-        await m.answer("Bugungi kassa allaqachon yopilgan." + (" Natija: ✅ mos." if done.status != "farq" else
+        await m.answer("✅ Bugun hamma pul rahbarga topshirilgan va qabul qilingan — kassa o'zi yopildi, sanash shart emas."
+                       if done.decision == "avto" else
+                       "Bugungi kassa allaqachon yopilgan." + (" Natija: ✅ mos." if done.status != "farq" else
                        " Natija: ⚠️ farq — rahbar ko'rib chiqadi."))
         return
     await state.set_state(Cl.counted)
@@ -253,15 +255,39 @@ async def close_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         await send(bot, mtg, "⚠️ Kassa yopishdagi farq uchun −2 ball yozildi.")
 
 
+async def auto_close(s, t=None) -> bool:
+    """Moliyada o'quvchilar puli 0 qolgan va hamma topshirish rahbar tomonidan qabul qilingan bo'lsa —
+    kassa o'zi «✅ yopildi» deb belgilanadi (topshirishni rahbar sanab tasdiqlagani — tekshiruvning o'zi)."""
+    t = t or now().date()
+    if (await s.execute(select(CashClose.id).where(CashClose.date == t, CashClose.decision.is_distinct_from("qayta")))).first():
+        return True
+    exp = await expected_cash(s)
+    if exp is None or exp != 0 or await _pending(s):
+        return False
+    s.add(CashClose(date=t, expected=0, counted=0, diff=0, status="mos", decision="avto"))
+    await s.commit()
+    return True
+
+
 async def close_reminder(bot: Bot) -> None:
-    """19:30 — kassa yopilmagan bo'lsa moliyaga eslatma."""
-    t = now().date()
+    """19:30 — moliyada pul qolgan bo'lsagina kassani yopishni eslatadi; hammasi topshirilgan bo'lsa — o'zi yopadi."""
     async with Session() as s:
-        done = (await s.execute(select(CashClose.id).where(CashClose.date == t))).first()
+        if await auto_close(s):
+            return
+        exp = await expected_cash(s)
+        pend = await _pending(s)
         to = [x.tg_id for x in await S.staff_with_role(s, "moliya") if x.tg_id]
-    if not done:
-        for x in to:
-            await send(bot, x, "🔐 Kun oxiri: kassani yopishni unutmang — «🔐 Kassani yopish».")
+        bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+    if exp == 0 and pend:                       # pul konvertda, rahbar hali tasdiqlamagan
+        for b in bosses:
+            await send(bot, b, "💼 Moliyaning topshirish konverti ("
+                               + ", ".join(S.fmt_som(h.amount) for h in pend)
+                               + ") tasdiqingizni kutmoqda — sanab, «✅ Qabul qildim» ni bosing.")
+        return
+    for x in to:
+        await send(bot, x, (f"🔐 Kun oxiri: sizda o'quvchilar puli {S.fmt_som(exp)} qolgan — "
+                            if exp else "🔐 Kun oxiri: ") + "sanab, «🔐 Kassani yopish» ni bosing "
+                           "(yoki rahbarga «💼 Kassani topshirish» qiling).")
 
 
 # ================= 💼 inkassatsiya =================
@@ -435,7 +461,8 @@ async def _ho_save(msg: Message, state: FSMContext, bot: Bot, tg: int, to: str, 
     kb = _decide_kb(hid)
     text = (f"💼 <b>Inkassatsiya</b>\n{name}: <b>{S.fmt_som(d['amount'])}</b> → "
             + ("sizga (konvertda)" if to == "rahbar" else "bankka (kvitansiya ilova)")
-            + f"\nMoliyada shundan keyin qoladi: {S.fmt_som(left)}")
+            + f"\nMoliyada shundan keyin qoladi: {S.fmt_som(left)}"
+            + "\n\n🧮 Konvertni sanang va qo'lingizga kelgan summaga qarab tasdiqlang — bu kunlik kassa tekshiruvi.")
     if others:
         text += ("\n\n⚠️ <b>Diqqat:</b> bundan oldingi topshirish(lar) ham tasdiqlanmagan: "
                  + ", ".join(S.fmt_som(x.amount) for x in others)
@@ -534,6 +561,9 @@ async def ho_decide(c: CallbackQuery, bot: Bot, state: FSMContext) -> None:
         amt = h.amount
         from app.bot.vault import money_line
         line = await money_line(s)
+    if kind == "hoy":
+        async with Session() as s:
+            await auto_close(s)
     await c.message.edit_text(c.message.html_text + ("\n\n✅ Qabul qilindi" if kind == "hoy" else
                                                      "\n\n❌ Olinmadi — pul moliyada qoldi")
                               + (f"\n{line}" if kind == "hoy" and line else ""))
