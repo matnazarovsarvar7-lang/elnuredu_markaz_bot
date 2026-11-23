@@ -356,7 +356,11 @@ async def _ask_group(msg: Message, state: FSMContext) -> None:
 
 @router.callback_query(Rg.group, F.data.startswith("rgg:"))
 async def reg_group(c: CallbackQuery, state: FSMContext) -> None:
-    gid = int(c.data.split(":")[1])
+    await c.answer()
+    await _ask_date(c.message, state, int(c.data.split(":")[1]), edit=True)
+
+
+async def _ask_date(msg: Message, state: FSMContext, gid: int, edit: bool = False) -> None:
     async with Session() as s:
         g = await s.get(Group, gid)
     await state.update_data(gid=gid)
@@ -369,9 +373,50 @@ async def reg_group(c: CallbackQuery, state: FSMContext) -> None:
                              [IB(text="⬅️ Guruhni o'zgartirish", callback_data="rgbg")]])
     d = await state.get_data()
     step = "" if d.get("sid") else f"10/{N}. "
-    await c.message.edit_text(f"Guruh: <b>{g.name}</b> ✅\n\n{step}Birinchi darsga qaysi kuni keladi (keldi)?\nPastda shu guruhning eng yaqin dars kunlari.\n"
+    await (msg.edit_text if edit else msg.answer)(f"Guruh: <b>{g.name}</b> ✅\n\n{step}Birinchi darsga qaysi kuni keladi (keldi)?\nPastda shu guruhning eng yaqin dars kunlari.\n"
                               f"Boshqa sana bo'lsa yozing: <i>12.11</i>\n"
                               f"(ko'pi bilan {BACK_DAYS} kun oldingi sana)", reply_markup=kb)
+
+
+class GAdd(StatesGroup):
+    q = State()
+
+
+@router.callback_query(F.data.startswith("gadd:"))
+async def gadd_start(c: CallbackQuery, state: FSMContext) -> None:
+    """Guruh kartasidan: mavjud o'quvchini shu guruhga qo'shish (yangi bola — «➕ Yangi o'quvchi»)."""
+    if not await _staff(c.from_user.id):
+        return
+    await state.clear()
+    await state.set_state(GAdd.q)
+    await state.update_data(gadd=int(c.data.split(":")[1]))
+    await c.answer()
+    await c.message.answer("➕ Qaysi o'quvchini qo'shamiz? Ismi yoki familiyasidan 3–4 harf yozing:\n"
+                           "<i>Markazda hali yo'q yangi bola bo'lsa — «➕ Yangi o'quvchi» tugmasi.</i>")
+
+
+@router.message(GAdd.q, F.text, ~F.text.in_(K.menu_texts()))
+async def gadd_search(m: Message, state: FSMContext) -> None:
+    d = await state.get_data()
+    async with Session() as s:
+        inside = {e.student_id for e in await S.group_roster(s, d["gadd"], today())}
+        found = [x for x in await S.search_students(s, m.text, 15) if x.id not in inside][:12]
+    if not found:
+        await m.answer("Topilmadi (yoki allaqachon shu guruhda). Boshqacha yozing:")
+        return
+    await m.answer("Tanlang:", reply_markup=IM(inline_keyboard=[
+        [IB(text=f"{x.full_name}" + (f" · {x.grade}-sinf" if x.grade else ""), callback_data=f"gadp:{x.id}")]
+        for x in found]))
+
+
+@router.callback_query(GAdd.q, F.data.startswith("gadp:"))
+async def gadd_pick(c: CallbackQuery, state: FSMContext) -> None:
+    d = await state.get_data()
+    sid = int(c.data.split(":")[1])
+    await state.clear()
+    await state.update_data(sid=sid)
+    await c.answer()
+    await _ask_date(c.message, state, d["gadd"], edit=True)
 
 
 @router.callback_query(F.data == "rgbg")

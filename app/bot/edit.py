@@ -76,6 +76,7 @@ async def _group_card(gid: int) -> tuple[str, IM]:
                               IB(text="📚 Fan", callback_data=f"gsb:{gid}")],
                              [IB(text="👨‍🏫 O'qituvchi", callback_data=f"gtc:{gid}"),
                               IB(text="🤝 Yordamchi", callback_data=f"gas:{gid}")],
+                             [IB(text="➕ O'quvchi qo'shish", callback_data=f"gadd:{gid}")],
                              [IB(text="👥 O'quvchilar ro'yxati", callback_data=f"gls:{gid}"),
                               IB(text="🗂 O'tgan darslar", callback_data=f"lsn:{gid}")],
                              [IB(text="⏸ Guruhni to'xtatish (yoz / uzrli)", callback_data=f"gpz:{gid}")]])
