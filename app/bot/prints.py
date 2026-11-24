@@ -8,9 +8,12 @@
 """
 from __future__ import annotations
 
+import asyncio
+from collections import defaultdict
 from datetime import datetime, timedelta
 
 from aiogram import Bot, F, Router
+from aiogram.filters import StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import CallbackQuery, InlineKeyboardButton as IB, InlineKeyboardMarkup as IM, Message
@@ -142,6 +145,8 @@ async def bk_new(c: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(Pr.file, F.document | F.photo)
 async def got_file(m: Message, state: FSMContext, bot: Bot) -> None:
+    if (await state.get_data()).get("mode") == "lib":
+        return await _lib_collect(m, state, bot)
     pages = None
     if m.photo:
         fid, kind, pages = m.photo[-1].file_id, "photo", 1
@@ -168,6 +173,9 @@ async def got_file(m: Message, state: FSMContext, bot: Bot) -> None:
 
 @router.message(Pr.file, ~F.text.in_(K.menu_texts()))
 async def need_file(m: Message, state: FSMContext) -> None:
+    if (await state.get_data()).get("mode") == "lib":
+        return await m.answer("📚 Kitob PDF fayllarini yuboring (bir nechtasini birdaniga ham bo'ladi) yoki tugating:",
+                              reply_markup=IM(inline_keyboard=[[IB(text="✅ Tugatdim", callback_data="chp:lib")]]))
     await m.answer("Faylni yuboring (PDF, Word yoki rasm).")
 
 
@@ -205,6 +213,8 @@ async def got_layout(c: CallbackQuery, state: FSMContext) -> None:
     await c.answer()
     if d["kind"] == "ichki":
         return await _ask_copies(c.message, state)
+    if d.get("book_id"):                                   # kutubxonadan — fan va nom bor
+        return await _ask_group(c.message, state)
     # kitob: fan tanlash
     async with Session() as s:
         st = await _me(s, c.from_user.id)
@@ -253,12 +263,16 @@ async def got_subject(c: CallbackQuery, state: FSMContext) -> None:
     if i < 0 or i >= len(d.get("subs", [])):
         await state.set_state(Pr.subject)
         return await c.message.edit_text("Fan nomini yozing: Matematika")
+    if d.get("mode") == "lib":
+        return await _lib_save_batch(c.message, state, d["subs"][i])
     await state.update_data(subject=d["subs"][i])
     await _ask_title(c.message, state)
 
 
 @router.message(Pr.subject, F.text, ~F.text.in_(K.menu_texts()))
 async def typed_subject(m: Message, state: FSMContext) -> None:
+    if (await state.get_data()).get("mode") == "lib":
+        return await _lib_save_batch(m, state, m.text.strip()[:60].capitalize())
     await state.update_data(subject=m.text.strip()[:60].capitalize())
     await _ask_title(m, state)
 
@@ -291,9 +305,6 @@ async def got_title(m: Message, state: FSMContext) -> None:
 async def _set_title(msg: Message, state: FSMContext, title: str) -> None:
     await state.update_data(title=title)
     await state.set_state(None)
-    d = await state.get_data()
-    if d.get("mode") == "lib":
-        return await _lib_save(msg, state)
     await msg.answer(f"📗 <b>{title}</b>\n\n❓ Bu kitob <b>keyin ham kerak bo'ladimi?</b>\n"
                      "Ha — kutubxonaga saqlanadi, keyingi safar faylni qayta yubormay, ro'yxatdan tanlaysiz.",
                      reply_markup=IM(inline_keyboard=[[IB(text="✅ Ha, saqlansin", callback_data="prsv:1"),
@@ -339,6 +350,9 @@ async def lib_menu(m: Message, state: FSMContext) -> None:
 
 @router.callback_query(F.data == "chp:lib")
 async def lib(c: CallbackQuery, state: FSMContext) -> None:
+    d = await state.get_data()
+    await state.clear()
+    await state.update_data(last_subj=d.get("last_subj"))
     await c.answer()
     await _lib_view(c.message, state)
 
@@ -347,35 +361,114 @@ async def lib(c: CallbackQuery, state: FSMContext) -> None:
 async def lib_add(c: CallbackQuery, state: FSMContext) -> None:
     d = await state.get_data()
     await state.clear()
-    await state.update_data(kind="kitob", mode="lib", last_subj=d.get("last_subj"))
+    await state.update_data(mode="lib", kind="kitob", last_subj=d.get("last_subj"), queue=[])
     await state.set_state(Pr.file)
     await c.answer()
-    await c.message.answer("➕ <b>Kutubxonaga kitob qo'shish</b>\nKitob faylini yuboring (<b>PDF</b> — sahifalarni bot "
-                           "o'zi sanaydi).")
+    await c.message.answer("➕ <b>Kutubxonaga kitob qo'shish</b>\n\nKitoblarning <b>PDF</b> fayllarini yuboring — "
+                           "bittadan yoki bir nechtasini birdaniga. Nomi fayl nomidan olinadi, faqat fanini so'rayman.\n"
+                           "<i>Keyin ham to'xtovsiz yuboraverishingiz mumkin.</i>")
 
 
-async def _lib_save(msg: Message, state: FSMContext) -> None:
+_LOCK: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
+_GEN: dict[int, int] = {}
+
+
+def _clean_title(fname: str | None) -> str:
+    base = (fname or "Kitob").rsplit(".", 1)[0].replace("_", " ").replace("-", " ")
+    return " ".join(base.split())[:150] or "Kitob"
+
+
+async def _lib_collect(m: Message, state: FSMContext, bot: Bot) -> None:
+    """Kutubxona: PDF lar navbatga yig'iladi; oxirgi fayldan 2 soniya o'tib bitta umumiy savol (fan) beriladi."""
+    doc = m.document
+    if not doc or not ((doc.file_name or "").lower().endswith(".pdf") or doc.mime_type == "application/pdf"):
+        return await m.answer("Kutubxonaga faqat <b>PDF</b> kitoblar qo'shiladi (Word faylni PDF qilib saqlab yuboring) — "
+                              "printer ularni o'zi chiqara oladi.")
+    pages = None
+    if (doc.file_size or 0) <= 19 * 1024 * 1024:
+        try:
+            pages = P.pdf_pages((await bot.download(doc.file_id)).read())
+        except Exception:
+            pages = None
+    uid = m.from_user.id
+    async with _LOCK[uid]:
+        d = await state.get_data()
+        q = list(d.get("queue") or [])
+        q.append({"file_id": doc.file_id, "fname": doc.file_name, "pages": pages or 0})
+        await state.update_data(queue=q)
+        _GEN[uid] = gen = _GEN.get(uid, 0) + 1
+    await asyncio.sleep(2)
+    if _GEN.get(uid) != gen:
+        return
     d = await state.get_data()
+    q = d.get("queue") or []
+    if not q:
+        return
+    async with Session() as s:
+        st = await _me(s, uid)
+        subs = await _subjects(s, st)
+    if d.get("last_subj"):
+        subs = [d["last_subj"]] + [x for x in subs if x != d["last_subj"]]
+    await state.update_data(subs=subs)
+    lines = "\n".join(f"• {_clean_title(x['fname'])} — {x['pages'] or '?'} bet" for x in q)
+    await m.answer(f"📥 <b>{len(q)} ta kitob</b> qabul qilindi:\n{lines}\n\nQaysi fan bo'limiga qo'yilsin?",
+                   reply_markup=IM(inline_keyboard=_rows([IB(text=x, callback_data=f"prf:{i}") for i, x in enumerate(subs)])
+                                   + [[IB(text="✏️ Boshqa fan", callback_data="prf:-1"),
+                                       IB(text="❌ Bekor", callback_data="chp:libno")]]))
+
+
+async def _lib_save_batch(msg: Message, state: FSMContext, subject: str) -> None:
+    d = await state.get_data()
+    q = d.get("queue") or []
+    if not q:
+        return await msg.answer("Bu kitoblar allaqachon saqlangan.")
+    saved, dups = [], 0
     async with Session() as s:
         st = await _me(s, msg.chat.id)
-        dup = (await s.execute(select(PrintBook.id).where(
-            PrintBook.saved, PrintBook.active, PrintBook.subject == d["subject"],
-            func.lower(PrintBook.title) == d["title"].lower()))).first()
-        b = PrintBook(subject=d["subject"], title=d["title"], pages=d["pages"], layout=d["layout"],
-                      file_id=d["file_id"], file_kind=d["file_kind"], owner_id=st.id if st else None, saved=True)
-        s.add(b)
-        await S.audit(s, st, "kitob_qoshildi", title=b.title, subject=b.subject)
+        mine = {w.lower() for w in (st.full_name.split() if st else [])}
+        for x in q:
+            title = _clean_title(x["fname"])
+            words = title.split()
+            while len(words) > 1 and words[-1].lower() in mine:      # «... Matnazarov Sarvar» → muallif ismi olib tashlanadi
+                words.pop()
+            title = " ".join(words)
+            if (await s.execute(select(PrintBook.id).where(
+                    PrintBook.saved, PrintBook.active, PrintBook.subject == subject,
+                    func.lower(PrintBook.title) == title.lower()))).first():
+                dups += 1
+            b = PrintBook(subject=subject, title=title, pages=x["pages"] or 1, layout="buklet", file_id=x["file_id"],
+                          file_kind="pdf", owner_id=st.id if st else None, saved=True)
+            s.add(b)
+            saved.append(b)
+        await S.audit(s, st, "kitob_qoshildi", n=len(saved), subject=subject)
         await s.commit()
-        unit = int(await num(s, "sheet_price"))
-    await state.clear()
-    await state.update_data(last_subj=b.subject)
-    _, _, line = _calc_line(b.pages, b.layout, unit)
-    await msg.answer(f"✅ <b>{b.title}</b> kutubxonaga qo'shildi — 📚 {b.subject}\n{line}"
-                     + ("\n⚠️ Shu fanda shu nomli kitob avval ham bor edi — keraksizini o'chirib qo'ying." if dup else ""),
-                     reply_markup=IM(inline_keyboard=[
-                         [IB(text="➕ Yana kitob qo'shish", callback_data="chp:libadd")],
-                         [IB(text="🖨 Shu kitobni chiqartirish", callback_data=f"prbo:{b.id}")],
-                         [IB(text="📚 Kutubxona", callback_data="chp:lib")]]))
+    await state.update_data(queue=[], last_subj=subject, mode="lib", kind="kitob")
+    await state.set_state(Pr.file)
+    lines = "\n".join(f"• {b.title} — {b.pages} bet" for b in saved)
+    await msg.answer(f"✅ <b>{len(saved)} ta kitob</b> 📚 <b>{subject}</b> bo'limiga qo'shildi:\n{lines}"
+                     + (f"\n⚠️ {dups} tasi shu nom bilan avval ham bor edi — keraksizini o'chirib qo'ying." if dups else "")
+                     + "\n\nYana PDF yuborsangiz, ular ham qo'shiladi. Nomini o'zgartirish — kitob kartasidan.",
+                     reply_markup=IM(inline_keyboard=[[IB(text="✅ Tugatdim — kutubxonani ochish", callback_data="chp:lib")]]))
+
+
+@router.callback_query(F.data == "chp:libno")
+async def lib_cancel(c: CallbackQuery, state: FSMContext) -> None:
+    await state.update_data(queue=[])
+    await c.answer("Bekor qilindi")
+    await c.message.edit_text("❌ Bu fayllar qo'shilmadi. Boshqa PDF yuborishingiz yoki «📚 Kutubxona» ga qaytishingiz mumkin.")
+
+
+@router.message(StateFilter(None), F.document.file_name.lower().endswith(".pdf"))
+async def stray_pdf(m: Message, state: FSMContext, bot: Bot) -> None:
+    """Xodim hech qanday jarayonsiz PDF yuborsa — kutubxonaga qo'shishni taklif qiladi."""
+    async with Session() as s:
+        st = await _me(s, m.from_user.id)
+    if not st or _role(st) not in ("oqituvchi", "yordamchi", "rahbar", "admin"):
+        return
+    d = await state.get_data()
+    await state.update_data(mode="lib", kind="kitob", last_subj=d.get("last_subj"), queue=[])
+    await state.set_state(Pr.file)
+    await _lib_collect(m, state, bot)
 
 
 @router.callback_query(F.data == "chp:libq")
@@ -408,12 +501,11 @@ async def lib_subject(c: CallbackQuery, state: FSMContext) -> None:
     if i >= len(subs):
         return await c.answer("Qaytadan oching.", show_alert=True)
     async with Session() as s:
-        unit = int(await num(s, "sheet_price"))
         books = (await s.execute(select(PrintBook).where(PrintBook.saved, PrintBook.active,
                                                          PrintBook.subject == subs[i]).order_by(PrintBook.title))).scalars().all()
     await c.answer()
     await c.message.edit_text(f"📚 <b>{subs[i]}</b> — kitobni tanlang:", reply_markup=IM(inline_keyboard=[
-        [IB(text=f"{b.title[:38]} · {b.pages} bet · {S.fmt_som(P.price(P.sheets(b.pages, b.layout), unit))}",
+        [IB(text=f"{b.title[:45]} · {b.pages} bet",
             callback_data=f"prb:{b.id}")] for b in books] + [[IB(text="⬅️ Fanlar", callback_data="chp:lib")]]))
 
 
@@ -425,20 +517,18 @@ async def book_card(c: CallbackQuery) -> None:
         b = await s.get(PrintBook, bid)
         if not b or not b.active:
             return await c.answer("Kitob topilmadi.", show_alert=True)
-        unit = int(await num(s, "sheet_price"))
         owner = await s.get(Staff, b.owner_id) if b.owner_id else None
         used = (await s.execute(select(func.coalesce(func.sum(PrintJob.copies), 0)).where(
             PrintJob.book_id == b.id, PrintJob.status == "chiqarildi"))).scalar()
-    _, _, line = _calc_line(b.pages, b.layout, unit)
-    rows = [[IB(text="🖨 Buyurtma berish", callback_data=f"prbo:{b.id}")],
+    rows = [[IB(text="🖨 Chop ettirish", callback_data=f"prbo:{b.id}")],
             [IB(text="📎 Faylni ko'rish", callback_data=f"prbf:{b.id}")]]
     if st and (st.id == b.owner_id or _role(st) == "rahbar"):
         rows.append([IB(text="✏️ Nomini o'zgartirish", callback_data=f"prbr:{b.id}"),
                      IB(text="📂 Fanini o'zgartirish", callback_data=f"prbs:{b.id}")])
         rows.append([IB(text="🗑 Kutubxonadan olib tashlash", callback_data=f"prbd:{b.id}")])
     await c.answer()
-    await c.message.answer(f"📗 <b>{b.title}</b>\nFan: {b.subject}\n{line}\n"
-                           f"Muallif: {owner.full_name if owner else '—'} · shu paytgacha {used} nusxa chiqarilgan",
+    await c.message.answer(f"📗 <b>{b.title}</b>\n📚 {b.subject} · {b.pages} bet\n"
+                           f"Yuklagan: {owner.full_name if owner else '—'} · {used} nusxa chiqarilgan",
                            reply_markup=IM(inline_keyboard=rows))
 
 
@@ -537,9 +627,10 @@ async def book_order(c: CallbackQuery, state: FSMContext) -> None:
     if not b or not b.active:
         return await c.answer("Kitob topilmadi.", show_alert=True)
     await state.clear()
-    await state.update_data(kind="kitob", book_id=b.id, pages=b.pages, layout=b.layout, title=b.title)
+    await state.update_data(kind="kitob", book_id=b.id, pages=b.pages, title=b.title)
     await c.answer()
-    await _ask_group(c.message, state)
+    await c.message.answer(f"🖨 <b>{b.title}</b> — {b.pages} bet")
+    await _after_pages(c.message, state)
 
 
 # ---------------- guruh, nusxa, tasdiq ----------------
