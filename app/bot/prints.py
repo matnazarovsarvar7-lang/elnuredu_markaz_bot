@@ -96,23 +96,23 @@ async def menu(m: Message, state: FSMContext) -> None:
             return
         q = (await s.execute(select(func.count(PrintJob.id)).where(PrintJob.status == "yangi"))).scalar()
     r = _role(st)
-    rows = [[IB(text="📄 Ichki hujjat (bepul)", callback_data="pr:in")],
-            [IB(text="📚 Kitobcha chiqarish (sotuv)", callback_data="pr:bk")],
-            [IB(text="📂 Mening so'rovlarim", callback_data="pr:my")]]
+    rows = [[IB(text="📄 Ichki hujjat (bepul)", callback_data="chp:in")],
+            [IB(text="📚 Kitobcha chiqarish (sotuv)", callback_data="chp:bk")],
+            [IB(text="📂 Mening so'rovlarim", callback_data="chp:my")]]
     if r in ("admin", "rahbar"):
-        rows.append([IB(text=f"🗂 Chop navbati · {q}", callback_data="pr:q"),
-                     IB(text="🖥 Printer dasturi", callback_data="pr:ag")])
+        rows.append([IB(text=f"🗂 Chop navbati · {q}", callback_data="chp:q"),
+                     IB(text="🖥 Printer dasturi", callback_data="chp:ag")])
     if r in CASHIERS:
-        rows.append([IB(text="💵 Kitobcha to'lovlari", callback_data="pr:pay")])
+        rows.append([IB(text="💵 Kitobcha to'lovlari", callback_data="chp:pay")])
     if r == "rahbar":
-        rows.append([IB(text="📊 Hisobot", callback_data="pr:rep"), IB(text="⚙️ Narx va ulush", callback_data="pr:set")])
+        rows.append([IB(text="📊 Hisobot", callback_data="chp:rep"), IB(text="⚙️ Narx va ulush", callback_data="chp:set")])
     await m.answer("🖨 <b>Chop etish</b>\n\n📄 <b>Ichki hujjat</b> — o'zingizga yoki o'quvchilarga kerak hujjat, bepul.\n"
                    "📚 <b>Kitobcha</b> — o'quvchilarga sotiladigan qo'llanma: narxni bot hisoblaydi, "
                    "pulni admin yig'adi.", reply_markup=IM(inline_keyboard=rows))
 
 
 # ---------------- fayl qabul qilish (ichki va yangi kitob) ----------------
-@router.callback_query(F.data == "pr:in")
+@router.callback_query(F.data == "chp:in")
 async def in_start(c: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(kind="ichki")
@@ -122,16 +122,16 @@ async def in_start(c: CallbackQuery, state: FSMContext) -> None:
                            "<i>PDF bo'lsa sahifalarni bot o'zi sanaydi.</i>")
 
 
-@router.callback_query(F.data == "pr:bk")
+@router.callback_query(F.data == "chp:bk")
 async def bk_start(c: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await c.answer()
     await c.message.answer("📚 <b>Kitobcha</b>", reply_markup=IM(inline_keyboard=[
-        [IB(text="📚 Kutubxonadan tanlash", callback_data="pr:lib")],
-        [IB(text="➕ Yangi kitob yuborish", callback_data="pr:new")]]))
+        [IB(text="📚 Kutubxonadan tanlash", callback_data="chp:lib")],
+        [IB(text="➕ Yangi kitob yuborish", callback_data="chp:new")]]))
 
 
-@router.callback_query(F.data == "pr:new")
+@router.callback_query(F.data == "chp:new")
 async def bk_new(c: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
     await state.update_data(kind="kitob")
@@ -315,7 +315,7 @@ async def _lib_view(msg: Message, state: FSMContext) -> None:
     async with Session() as s:
         rows = (await s.execute(select(PrintBook.subject, func.count(PrintBook.id)).where(
             PrintBook.saved, PrintBook.active).group_by(PrintBook.subject).order_by(PrintBook.subject))).all()
-    add = [IB(text="➕ Kitob qo'shish", callback_data="pr:libadd"), IB(text="🔎 Qidirish", callback_data="pr:libq")]
+    add = [IB(text="➕ Kitob qo'shish", callback_data="chp:libadd"), IB(text="🔎 Qidirish", callback_data="chp:libq")]
     if not rows:
         return await msg.answer("📚 <b>Kutubxona</b> hozircha bo'sh.\n\nDoimiy ishlatadigan kitoblaringizni "
                                 "«➕ Kitob qo'shish» orqali yuklang — ular fanlar bo'yicha joylashadi va kerak bo'lganda "
@@ -337,13 +337,13 @@ async def lib_menu(m: Message, state: FSMContext) -> None:
     await _lib_view(m, state)
 
 
-@router.callback_query(F.data == "pr:lib")
+@router.callback_query(F.data == "chp:lib")
 async def lib(c: CallbackQuery, state: FSMContext) -> None:
     await c.answer()
     await _lib_view(c.message, state)
 
 
-@router.callback_query(F.data == "pr:libadd")
+@router.callback_query(F.data == "chp:libadd")
 async def lib_add(c: CallbackQuery, state: FSMContext) -> None:
     d = await state.get_data()
     await state.clear()
@@ -373,12 +373,12 @@ async def _lib_save(msg: Message, state: FSMContext) -> None:
     await msg.answer(f"✅ <b>{b.title}</b> kutubxonaga qo'shildi — 📚 {b.subject}\n{line}"
                      + ("\n⚠️ Shu fanda shu nomli kitob avval ham bor edi — keraksizini o'chirib qo'ying." if dup else ""),
                      reply_markup=IM(inline_keyboard=[
-                         [IB(text="➕ Yana kitob qo'shish", callback_data="pr:libadd")],
+                         [IB(text="➕ Yana kitob qo'shish", callback_data="chp:libadd")],
                          [IB(text="🖨 Shu kitobni chiqartirish", callback_data=f"prbo:{b.id}")],
-                         [IB(text="📚 Kutubxona", callback_data="pr:lib")]]))
+                         [IB(text="📚 Kutubxona", callback_data="chp:lib")]]))
 
 
-@router.callback_query(F.data == "pr:libq")
+@router.callback_query(F.data == "chp:libq")
 async def lib_search(c: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Pr.search)
     await c.answer()
@@ -395,7 +395,7 @@ async def lib_search_do(m: Message, state: FSMContext) -> None:
             .order_by(PrintBook.subject, PrintBook.title).limit(20))).scalars().all()
     if not books:
         return await m.answer(f"«{q}» bo'yicha kitob topilmadi.", reply_markup=IM(inline_keyboard=[
-            [IB(text="🔎 Qayta qidirish", callback_data="pr:libq"), IB(text="📚 Kutubxona", callback_data="pr:lib")]]))
+            [IB(text="🔎 Qayta qidirish", callback_data="chp:libq"), IB(text="📚 Kutubxona", callback_data="chp:lib")]]))
     await m.answer(f"🔎 «{q}» — {len(books)} ta:", reply_markup=IM(inline_keyboard=[
         [IB(text=f"{b.subject}: {b.title[:36]} · {b.pages} bet", callback_data=f"prb:{b.id}")] for b in books]))
 
@@ -414,7 +414,7 @@ async def lib_subject(c: CallbackQuery, state: FSMContext) -> None:
     await c.answer()
     await c.message.edit_text(f"📚 <b>{subs[i]}</b> — kitobni tanlang:", reply_markup=IM(inline_keyboard=[
         [IB(text=f"{b.title[:38]} · {b.pages} bet · {S.fmt_som(P.price(P.sheets(b.pages, b.layout), unit))}",
-            callback_data=f"prb:{b.id}")] for b in books] + [[IB(text="⬅️ Fanlar", callback_data="pr:lib")]]))
+            callback_data=f"prb:{b.id}")] for b in books] + [[IB(text="⬅️ Fanlar", callback_data="chp:lib")]]))
 
 
 @router.callback_query(F.data.startswith("prb:"))
@@ -806,7 +806,7 @@ async def reject_save(m: Message, state: FSMContext, bot: Bot) -> None:
         await send(bot, req.tg_id, f"❌ Chop etish so'rovingiz №{job.id} bekor qilindi.\nSabab: {m.text.strip()}")
 
 
-@router.callback_query(F.data == "pr:q")
+@router.callback_query(F.data == "chp:q")
 async def queue(c: CallbackQuery) -> None:
     async with Session() as s:
         jobs = (await s.execute(select(PrintJob).where(PrintJob.status == "yangi").order_by(PrintJob.id))).scalars().all()
@@ -863,7 +863,7 @@ async def pay_card(s, job: PrintJob, readonly: bool = False) -> tuple[str, IM | 
     return txt, IM(inline_keyboard=rows)
 
 
-@router.callback_query(F.data == "pr:pay")
+@router.callback_query(F.data == "chp:pay")
 async def pay_list(c: CallbackQuery) -> None:
     edge = datetime.utcnow() - timedelta(days=120)
     async with Session() as s:
@@ -942,7 +942,7 @@ async def pay_save(c: CallbackQuery, bot: Bot) -> None:
 
 
 # ---------------- mening so'rovlarim ----------------
-@router.callback_query(F.data == "pr:my")
+@router.callback_query(F.data == "chp:my")
 async def my_jobs(c: CallbackQuery) -> None:
     async with Session() as s:
         st = await _me(s, c.from_user.id)
@@ -998,7 +998,7 @@ async def paper_sheets(s, holder_id: int, since: datetime | None) -> int:
 
 
 # ---------------- rahbar: hisobot va sozlamalar ----------------
-@router.callback_query(F.data == "pr:rep")
+@router.callback_query(F.data == "chp:rep")
 async def report(c: CallbackQuery) -> None:
     now = datetime.utcnow() + timedelta(hours=5)
     start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(hours=5)
@@ -1033,7 +1033,7 @@ async def report(c: CallbackQuery) -> None:
     await c.message.answer("\n".join(lines))
 
 
-@router.callback_query(F.data == "pr:set")
+@router.callback_query(F.data == "chp:set")
 async def settings_view(c: CallbackQuery) -> None:
     async with Session() as s:
         vals = {k: await num(s, k) for k in SET_KEYS}
@@ -1335,14 +1335,14 @@ async def notify_unaccounted(bot: Bot, ids: list[int]) -> None:
         if len(rows) > 5:
             await send(bot, tg, f"🖨 Bot orqali o'tmagan <b>{len(rows)} ta</b> hujjat chop etildi "
                                 f"({sum(r.pages for r in rows)} sahifa). Har birini belgilang:",
-                       reply_markup=IM(inline_keyboard=[[IB(text="🔎 Ko'rish", callback_data="pr:un")]]))
+                       reply_markup=IM(inline_keyboard=[[IB(text="🔎 Ko'rish", callback_data="chp:un")]]))
             continue
         for r in rows:
             await send(bot, tg, "🖨 <b>Bot orqali o'tmagan chop etish</b>\n" + _log_line(r) + "\n\nBu nima edi?",
                        reply_markup=_log_kb(r))
 
 
-@router.callback_query(F.data == "pr:un")
+@router.callback_query(F.data == "chp:un")
 async def unaccounted(c: CallbackQuery) -> None:
     async with Session() as s:
         rows = (await s.execute(select(PrintLog).where(PrintLog.status == "yangi").order_by(PrintLog.id)
@@ -1385,7 +1385,7 @@ async def classify(c: CallbackQuery) -> None:
 
 
 # ---------------- holat va o'rnatish ----------------
-@router.callback_query(F.data == "pr:ag")
+@router.callback_query(F.data == "chp:ag")
 async def agent_menu(c: CallbackQuery) -> None:
     async with Session() as s:
         me = await _me(s, c.from_user.id)
@@ -1401,14 +1401,14 @@ async def agent_menu(c: CallbackQuery) -> None:
     for n in names:
         lines.append(f"• {n}" + (" — ikki tomon sozlangan ✅" if n in cal else " — ikki tomon sinovi o'tkazilmagan"))
     rows = [[IB(text=f"🧪 Ikki tomon sinovi: {n[:28]}", callback_data=f"prt:{_pidx(st, n)}")] for n in names]
-    rows.append([IB(text=f"🔎 Botsiz chop etilganlar · {un}", callback_data="pr:un")])
+    rows.append([IB(text=f"🔎 Botsiz chop etilganlar · {un}", callback_data="chp:un")])
     if me and _role(me) == "rahbar":
-        rows.append([IB(text="🔑 O'rnatish / qayta o'rnatish", callback_data="pr:inst")])
+        rows.append([IB(text="🔑 O'rnatish / qayta o'rnatish", callback_data="chp:inst")])
     await c.answer()
     await c.message.answer("\n".join(lines), reply_markup=IM(inline_keyboard=rows))
 
 
-@router.callback_query(F.data == "pr:inst")
+@router.callback_query(F.data == "chp:inst")
 async def agent_install(c: CallbackQuery, bot: Bot) -> None:
     async with Session() as s:
         me = await _me(s, c.from_user.id)
