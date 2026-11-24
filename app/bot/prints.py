@@ -373,6 +373,21 @@ _LOCK: dict[int, asyncio.Lock] = defaultdict(asyncio.Lock)
 _GEN: dict[int, int] = {}
 
 
+def _strip_name(title: str, mine: set[str]) -> str:
+    """Yuklovchining «Familiya Ism» juftligi nom ichida qayerda bo'lsa ham olib tashlanadi."""
+    w = title.split()
+    out, k = [], 0
+    while k < len(w):
+        if k + 1 < len(w) and w[k].lower() in mine and w[k + 1].lower() in mine:
+            k += 2
+            continue
+        out.append(w[k])
+        k += 1
+    while len(out) > 1 and out[-1].lower() in mine:
+        out.pop()
+    return " ".join(out) or title
+
+
 def _clean_title(fname: str | None) -> str:
     base = (fname or "Kitob").rsplit(".", 1)[0].replace("_", " ").replace("-", " ")
     return " ".join(base.split())[:150] or "Kitob"
@@ -428,10 +443,7 @@ async def _lib_save_batch(msg: Message, state: FSMContext, subject: str) -> None
         mine = {w.lower() for w in (st.full_name.split() if st else [])}
         for x in q:
             title = _clean_title(x["fname"])
-            words = title.split()
-            while len(words) > 1 and words[-1].lower() in mine:      # «... Matnazarov Sarvar» → muallif ismi olib tashlanadi
-                words.pop()
-            title = " ".join(words)
+            title = _strip_name(title, mine)
             if (await s.execute(select(PrintBook.id).where(
                     PrintBook.saved, PrintBook.active, PrintBook.subject == subject,
                     func.lower(PrintBook.title) == title.lower()))).first():
@@ -500,13 +512,40 @@ async def lib_subject(c: CallbackQuery, state: FSMContext) -> None:
     i = int(c.data.split(":")[1])
     if i >= len(subs):
         return await c.answer("Qaytadan oching.", show_alert=True)
-    async with Session() as s:
-        books = (await s.execute(select(PrintBook).where(PrintBook.saved, PrintBook.active,
-                                                         PrintBook.subject == subs[i]).order_by(PrintBook.title))).scalars().all()
     await c.answer()
-    await c.message.edit_text(f"📚 <b>{subs[i]}</b> — kitobni tanlang:", reply_markup=IM(inline_keyboard=[
-        [IB(text=f"{b.title[:45]} · {b.pages} bet",
-            callback_data=f"prb:{b.id}")] for b in books] + [[IB(text="⬅️ Fanlar", callback_data="chp:lib")]]))
+    await _subject_view(c, subs[i], i, delete=False)
+
+
+async def _subject_view(c: CallbackQuery, subject: str, i: int, delete: bool) -> None:
+    async with Session() as s:
+        st = await _me(s, c.from_user.id)
+        books = (await s.execute(select(PrintBook).where(PrintBook.saved, PrintBook.active,
+                                                         PrintBook.subject == subject).order_by(PrintBook.title))).scalars().all()
+    boss = bool(st and _role(st) == "rahbar")
+    if delete and boss:
+        head = f"🗑 <b>{subject}</b> — o'chiriladigan kitobni bosing:"
+        rows = [[IB(text=f"🗑 {b.title[:42]} · {b.pages} bet", callback_data=f"prbd:{b.id}:{i}")] for b in books]
+        rows.append([IB(text="✅ Tayyor", callback_data=f"prls:{i}")])
+    else:
+        head = f"📚 <b>{subject}</b> — kitobni tanlang:" if books else f"📚 <b>{subject}</b> — bu fanda kitob qolmadi."
+        rows = [[IB(text=f"{b.title[:45]} · {b.pages} bet", callback_data=f"prb:{b.id}")] for b in books]
+        if boss and books:
+            rows.append([IB(text="🗑 Kitob o'chirish", callback_data=f"prdel:{i}")])
+        rows.append([IB(text="⬅️ Fanlar", callback_data="chp:lib")])
+    try:
+        await c.message.edit_text(head, reply_markup=IM(inline_keyboard=rows))
+    except Exception:
+        await c.message.answer(head, reply_markup=IM(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("prdel:"))
+async def lib_delete_mode(c: CallbackQuery, state: FSMContext) -> None:
+    subs = (await state.get_data()).get("libsubs") or []
+    i = int(c.data.split(":")[1])
+    if i >= len(subs):
+        return await c.answer("Qaytadan oching.", show_alert=True)
+    await c.answer()
+    await _subject_view(c, subs[i], i, delete=True)
 
 
 @router.callback_query(F.data.startswith("prb:"))
@@ -525,7 +564,8 @@ async def book_card(c: CallbackQuery) -> None:
     if st and (st.id == b.owner_id or _role(st) == "rahbar"):
         rows.append([IB(text="✏️ Nomini o'zgartirish", callback_data=f"prbr:{b.id}"),
                      IB(text="📂 Fanini o'zgartirish", callback_data=f"prbs:{b.id}")])
-        rows.append([IB(text="🗑 Kutubxonadan olib tashlash", callback_data=f"prbd:{b.id}")])
+        if _role(st) == "rahbar":
+            rows.append([IB(text="🗑 Kutubxonadan olib tashlash", callback_data=f"prbd:{b.id}:-1")])
     await c.answer()
     await c.message.answer(f"📗 <b>{b.title}</b>\n📚 {b.subject} · {b.pages} bet\n"
                            f"Yuklagan: {owner.full_name if owner else '—'} · {used} nusxa chiqarilgan",
@@ -608,16 +648,40 @@ async def book_file(c: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("prbd:"))
 async def book_del(c: CallbackQuery) -> None:
+    _, bid, i = c.data.split(":")
     async with Session() as s:
         st = await _me(s, c.from_user.id)
-        b = await s.get(PrintBook, int(c.data.split(":")[1]))
-        if not b or not st or (st.id != b.owner_id and _role(st) != "rahbar"):
-            return await c.answer("Faqat muallif yoki rahbar.", show_alert=True)
+        b = await s.get(PrintBook, int(bid))
+    if not st or _role(st) != "rahbar":
+        return await c.answer("Kitobni faqat rahbar o'chiradi.", show_alert=True)
+    if not b or not b.active:
+        return await c.answer("Kitob allaqachon o'chirilgan.", show_alert=True)
+    await c.answer()
+    back = f"prls:{i}" if i != "-1" else f"prb:{b.id}"
+    await c.message.edit_text(f"🗑 <b>{b.title}</b> ({b.subject}, {b.pages} bet) kutubxonadan o'chirilsinmi?\n"
+                              "<i>Avval chiqarilgan buyurtmalar va to'lovlar hisobi saqlanib qoladi.</i>",
+                              reply_markup=IM(inline_keyboard=[[IB(text="✅ Ha, o'chirish", callback_data=f"prbdy:{b.id}:{i}"),
+                                                                IB(text="↩️ Yo'q", callback_data=back)]]))
+
+
+@router.callback_query(F.data.startswith("prbdy:"))
+async def book_del_yes(c: CallbackQuery, state: FSMContext) -> None:
+    _, bid, i = c.data.split(":")
+    async with Session() as s:
+        st = await _me(s, c.from_user.id)
+        if not st or _role(st) != "rahbar":
+            return await c.answer("Kitobni faqat rahbar o'chiradi.", show_alert=True)
+        b = await s.get(PrintBook, int(bid))
+        if not b or not b.active:
+            return await c.answer("Kitob allaqachon o'chirilgan.", show_alert=True)
         b.active = False
         await S.audit(s, st, "kitob_ochirildi", id=b.id, title=b.title)
         await s.commit()
-    await c.answer("Olib tashlandi")
-    await c.message.edit_text(c.message.html_text + "\n\n🗑 Kutubxonadan olib tashlandi.")
+    await c.answer("O'chirildi ✅")
+    subs = (await state.get_data()).get("libsubs") or []
+    if i != "-1" and int(i) < len(subs):
+        return await _subject_view(c, subs[int(i)], int(i), delete=True)
+    await c.message.edit_text(f"🗑 <b>{b.title}</b> kutubxonadan o'chirildi.")
 
 
 @router.callback_query(F.data.startswith("prbo:"))
