@@ -34,6 +34,7 @@ B_RATING = "🏆 Reyting"
 B_APPEAL = "✉️ Murojaat"
 B_APPEALS = "📨 Murojaatlar"
 B_PRINT = "🖨 Chop etish"
+B_LIBRARY = "📚 Kutubxona"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
@@ -65,7 +66,8 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
     if role in ("oqituvchi", "yordamchi", "rahbar"):
         rows.append([B_TODAY, B_EXAMS])
         rows.append([B_TESTS, B_SCAN])
-        rows.append([B_RATING, B_PRINT])
+        rows.append([B_RATING, B_LIBRARY])
+        rows.append([B_PRINT])
     if role == "oqituvchi":
         rows.append([B_DELEGATE, B_ACHIEVE])
     if role in ("oqituvchi", "yordamchi"):
@@ -84,6 +86,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_NEW_STUDENT, B_LEADS])
         rows.append([B_SERVICES, B_STOCK])
         rows.append([B_ACHIEVE, B_PRINT])
+        rows.append([B_LIBRARY])
     if role == "rahbar":
         rows.append([B_PENDING, B_STAFF])
         rows.append([B_APPEALS])
