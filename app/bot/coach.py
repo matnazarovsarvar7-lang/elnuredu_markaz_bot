@@ -239,12 +239,14 @@ async def morning_text(s, cache: Cache, st: Staff, d: date) -> tuple[str, IM | N
     if mine:
         lines.append("\n📚 <b>Darslar</b>")
         for g, _ in mine:
-            tm = f"{g.start_time:%H:%M}–{g.end_time:%H:%M}" if g.start_time and g.end_time else "vaqt —"
+            tm = f"🕐 {g.start_time:%H:%M}–{g.end_time:%H:%M} · " if g.start_time and g.end_time else "▫️ "
             duty = [w for w, k in (("davomat", "attendance"), ("uy vazifasi", "homework")) if _resp(g, k) == st.id]
             if g.id in c.hw_prev and _resp(g, "homework") == st.id:
                 duty.insert(1, "vazifani tekshirish")
-            lines.append(f"  🕐 {tm} · <b>{g.name}</b>" + (f" · {g.room}" if g.room else "")
-                         + f"\n      ↳ {', '.join(duty) or 'dars'}")
+            if not duty:
+                duty = ["dars o'tish (davomat va uy vazifasi — yordamchida)"]
+            lines.append(f"  {tm}<b>{g.name}</b>" + (f" · {g.room}" if g.room else "")
+                         + f"\n      ↳ {', '.join(duty)}")
         body += 1
     ex = [e for e in c.exams if e.status == "reja" and _cond(e, c) == st.id]
     if ex:
