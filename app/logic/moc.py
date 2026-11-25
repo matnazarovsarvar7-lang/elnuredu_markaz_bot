@@ -51,7 +51,7 @@ class Section:
 class Spec:
     name: str
     sections: list[Section]
-    mode: str = "ball"        # ball | foiz | shkala | cefr | ielts
+    mode: str = "ball"        # ball | foiz | shkala | rasch | cefr | ielts
     scale: float = 100.0      # shkala uchun eng katta ball
     levels: list[tuple[float, str]] = field(default_factory=list)   # kamayish tartibida
     errors: list[str] = field(default_factory=list)
@@ -99,7 +99,8 @@ class Spec:
                 lines.append(f"{s.start}-{s.start + s.n - 1}: {s.name} | yozma {int(s.mx)} | {_num(s.pts)}")
             else:
                 lines.append(f"{s.name} | baho {_num(s.mx)}")
-        lines.append("natija: " + ({"shkala": f"shkala {_num(self.scale)}"}.get(self.mode, self.mode)))
+        lines.append("natija: " + ({"shkala": f"shkala {_num(self.scale)}",
+                                    "rasch": f"rasch {_num(self.scale)}"}.get(self.mode, self.mode)))
         if self.levels:
             lines.append("daraja: " + "; ".join(f"{_num(a)} {b}" for a, b in self.levels))
         return "\n".join(lines)
@@ -116,7 +117,8 @@ class Spec:
             else:
                 out.append(f"• {s.name} — o'qituvchi botga yozadi (0–{_num(s.mx)})")
         res = {"ball": f"jami ball (maks. {_num(sum(s.max_score for s in self.sections))})", "foiz": "foiz",
-               "shkala": f"{_num(self.scale)} ballik shkala (taxminiy)", "cefr": "CEFR: har bo'lim 75 ballik, daraja o'rtachadan",
+               "shkala": f"{_num(self.scale)} ballik shkala (taxminiy)",
+               "rasch": f"Rasch modeli, {_num(self.scale)} ballik shkala", "cefr": "CEFR: har bo'lim 75 ballik, daraja o'rtachadan",
                "ielts": "IELTS band (0–9), umumiy band o'rtachadan"}[self.mode]
         out.append(f"Natija: {res}")
         if self.levels:
@@ -133,7 +135,7 @@ MS_LEVELS = "70 A+; 65 A; 60 B+; 55 B; 50 C+; 46 C"
 PRESETS: dict[str, tuple[str, str]] = {
     "oddiy": ("📝 Oddiy test", "nom: Test\n1-20: Test | test 4 | 1\nnatija: foiz"),
     "ms": ("🏅 Milliy sertifikat", "nom: Milliy sertifikat (matematika)\n1-35: Yopiq savollar | test 4 | 1\n"
-                                   "36-45: Ochiq savollar (a, b) | yozma 2 | 1\nnatija: shkala 75\n"
+                                   "36-45: Ochiq savollar (a, b) | yozma 2 | 1\nnatija: rasch 75\n"
                                    f"daraja: {MS_LEVELS}"),
     "dtm": ("🎓 DTM (abituriyent)", "nom: DTM (abituriyent)\n1-10: Ona tili | test 4 | 1.1\n11-20: Matematika | test 4 | 1.1\n"
                                     "21-30: O'zbekiston tarixi | test 4 | 1.1\n31-60: 1-fan | test 4 | 3.1\n"
@@ -172,11 +174,13 @@ def parse_spec(text: str) -> Spec:
             continue
         if low.startswith("natija:"):
             v = low.split(":", 1)[1].split()
-            if not v or v[0] not in ("ball", "foiz", "shkala", "cefr", "ielts"):
-                sp.errors.append(f"«{line}» — natija: ball, foiz, shkala 75, cefr yoki ielts bo'lishi kerak")
+            if not v or v[0] not in ("ball", "foiz", "shkala", "rasch", "cefr", "ielts"):
+                sp.errors.append(f"«{line}» — natija: ball, foiz, shkala 75, rasch 75, cefr yoki ielts bo'lishi kerak")
                 continue
             sp.mode = v[0]
-            if sp.mode == "shkala":
+            if sp.mode == "rasch" and len(v) < 2:
+                sp.scale = 75.0
+            elif sp.mode in ("shkala", "rasch"):
                 try:
                     sp.scale = float(v[1].replace(",", "."))
                 except (IndexError, ValueError):
@@ -316,7 +320,7 @@ def level_of(sp: Spec, total: float) -> str | None:
         if total >= lo - 1e-9:
             return name
     if sp.levels:
-        return "Sertifikatsiz" if sp.mode == "shkala" else (sp.levels[-1][1] if sp.levels[-1][0] <= 0 else "—")
+        return "Sertifikatsiz" if sp.mode in ("shkala", "rasch") else (sp.levels[-1][1] if sp.levels[-1][0] <= 0 else "—")
     return None
 
 
@@ -376,7 +380,7 @@ def score(sp: Spec, key: str, answers: str, baho: dict | None = None) -> dict:
         pmax = sum(x["max"] for x in secs) or 1
         if sp.mode == "foiz":
             res.update(total=round(prim / pmax * 100, 1), total_max=100.0)
-        elif sp.mode == "shkala":
+        elif sp.mode in ("shkala", "rasch"):        # rasch: yakunda hamma qatnashchilar bilan qayta hisoblanadi
             res.update(total=round(prim / pmax * sp.scale, 1), total_max=sp.scale)
         else:
             res.update(total=round(prim, 2), total_max=round(pmax, 2))

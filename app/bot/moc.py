@@ -24,8 +24,8 @@ from app import services as S
 from app.bot import keyboards as K
 from app.bot.notify import send
 from app.config import settings
-from app.db.models import (Enrollment, Exam, ExamResult, Group, Moc, MocSeat, PrintJob, Service, ServiceSale, Staff,
-                           Student)
+from app.db.models import (Enrollment, Exam, ExamResult, Group, Moc, MocSeat, PrintJob, Service, ServiceSale, Setting,
+                           Staff, Student)
 from app.db.session import Session
 from app.logic import moc as M
 from app.logic import printing as P
@@ -38,6 +38,7 @@ VIEWERS = MAKERS + ("admin", "moliya")
 
 
 class Mc(StatesGroup):
+    cal = State()
     title = State()
     spec = State()
     pdf = State()
@@ -91,6 +92,8 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
             icon = "✅" if x.status == "yakun" else ("📄" if x.kind == "nazorat" else "🎓")
             rows.append([IB(text=f"{icon} {x.date:%d.%m} · {x.title[:28]} · {done}/{len(seats)}",
                             callback_data=f"mqc:{x.id}")])
+    if _role(st) == "rahbar":
+        rows.append([IB(text="📐 Rasch: rasmiy natijalar bilan sozlash", callback_data="mq:cal")])
     if _role(st) in MAKERS:
         rows.append([IB(text="➕ Yangi MOC imtihon", callback_data="mq:new")])
         rows.append([IB(text="📄 Tayyor PDF test (nazorat)", callback_data="mq:pdf")])
@@ -253,7 +256,7 @@ async def got_pdf(m: Message, state: FSMContext, bot: Bot) -> None:
             pages = None
     w = (await state.get_data())["w"]
     v = VARS[w["cur"]]
-    w["booklets"][v] = {"file_id": doc.file_id, "pages": pages or 1, "name": doc.file_name}
+    w["booklets"][v] = {"file_id": doc.file_id, "pages": pages or 1, "name": doc.file_name, "uid": doc.file_unique_id}
     await state.update_data(w=w)
     sp = M.parse_spec(w["spec"])
     if not sp.n_test:
@@ -753,7 +756,8 @@ def _line(moc: Moc, sp: M.Spec, z: MocSeat) -> str:
         return f"• {who} — ⚠️ variant aniqlanmadi"
     key = (moc.keys or {}).get(z.variant) or "." * sp.n_questions
     r = M.score(sp, key, z.answers or "", z.baho or {})
-    line = f"• {who} ({z.variant}) — <b>{M.fmt_total(sp, r)}</b>" + (f" · {r['level']}" if r.get("level") else "")
+    line = f"• {who} ({z.variant}) — <b>{'≈' if sp.mode == 'rasch' else ''}{M.fmt_total(sp, r)}</b>" \
+        + (f" · {r['level']}" if r.get("level") else "")
     if r.get("missing"):
         line += f" · {', '.join(r['missing'])} kutilmoqda"
     dbl = (z.answers or "").count("*")
@@ -1242,6 +1246,8 @@ def _res_text(moc: Moc, sp: M.Spec, z: MocSeat, n: int) -> str:
     lines = [f"{'📄' if moc.kind == 'nazorat' else '🎓'} <b>{moc.title}</b> · {moc.date:%d.%m.%Y}", f"{z.name}",
              f"Natija: <b>{M.fmt_total(sp, r)}</b>" + (f" · <b>{r['level']}</b>" if r.get("level") else "")
              + (f"\nO'rin: {r['rank']} / {n}" if r.get("rank") else "")]
+    if sp.mode == "rasch" and r.get("raw_total") is not None:
+        lines.append(f"Xom ball: {r['primary']:g} / {r['primary_max']:g} (oddiy hisobda {r['raw_total']:g})")
     for x in r["sections"]:
         if x["kind"] == "baho":
             lines.append(f"• {x['name']}: {x['raw'] if x['raw'] is not None else '—'}")
@@ -1257,6 +1263,8 @@ def _res_text(moc: Moc, sp: M.Spec, z: MocSeat, n: int) -> str:
         lines.append(f"⚠️ {dbl} ta savolda ikkita javob belgilangan — xato hisoblandi.")
     if sp.mode == "shkala" and sp.levels:
         lines.append("\n<i>Ball taxminiy: rasmiy imtihonda Rasch modeli qo'llanadi.</i>")
+    if sp.mode == "rasch":
+        lines.append("\n<i>Rasch modeli bo'yicha hisoblangan mock bali — rasmiy imtihon natijasining bashorati.</i>")
     return "\n".join(lines)
 
 
@@ -1273,6 +1281,8 @@ def _card_png(moc: Moc, sp: M.Spec, z: MocSeat, n: int) -> bytes:
         else:
             secs.append((x["name"], f"{x['raw']:g} / {x['raw_max']:g}", x["raw"] / x["raw_max"] * 100 if x["raw_max"] else 0))
     note = "Taxminiy ball: rasmiy imtihonda Rasch modeli qo'llanadi." if sp.mode == "shkala" and sp.levels else ""
+    if sp.mode == "rasch":
+        note = f"Rasch modeli · xom ball {r.get('primary', 0):g}/{r.get('primary_max', 0):g}"
     return moc_card.render(moc.title, f"{moc.date:%d.%m.%Y}", z.name or "", M.fmt_total(sp, r), r.get("level"),
                            r["percent"], secs, r.get("rank"), n, note)
 
@@ -1311,6 +1321,7 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
             r["wrong"] = wrong
             r.pop("per_q", None)
             z.result = r
+        rinfo = await _rasch(s, moc, sp, present) if sp.mode == "rasch" and present else None
         order = sorted(present, key=lambda z: -z.result["total"])
         rank, prev = 0, None
         for i, z in enumerate(order, 1):
@@ -1352,6 +1363,7 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
                + (f" / {present[0].result['total_max']:g}" if present else "")
                + ("\nDarajalar: " + ", ".join(f"{k} — {v}" for k, v in levels.items()) if levels else "")
                + (f"\n\n🏆 Eng yaxshilar:\n{top}" if top else "")
+               + (_rasch_note(rinfo) if rinfo else "")
                + f"\n\n📨 Natija yuborildi: {sent} ta manzilga"
                + (f"\n⏳ {wait_ext} ta tashqi qatnashchi hali Telegramga ulanmagan — chiptadagi QR ni skanerlasa, "
                   "natija o'sha zahoti boradi." if wait_ext else "")
@@ -1404,7 +1416,9 @@ def excel(moc: Moc, sp: M.Spec, seats: list[MocSeat]) -> bytes:
     ws = wb.active
     ws.title = "Natijalar"
     secs = [x.name for x in sp.sections]
-    ws.append(["O'rin", "F.I.Sh", "Kod", "Variant", "Telefon"] + secs + ["Jami", "Foiz", "Daraja", "Holat"])
+    rasch = sp.mode == "rasch"
+    ws.append(["O'rin", "F.I.Sh", "Kod", "Variant", "Telefon"] + secs + ["Jami", "Foiz", "Daraja", "Holat"]
+              + (["Xom ball", "θ (logit)", "Xato (SE)"] if rasch else []))
     for cell in ws[1]:
         cell.font = Font(bold=True, color="FFFFFF")
         cell.fill = PatternFill("solid", fgColor="0E2A47")
@@ -1423,12 +1437,15 @@ def excel(moc: Moc, sp: M.Spec, seats: list[MocSeat]) -> bytes:
             vals = [None] * len(secs)
         ws.append([r.get("rank"), z.name or "(bo'sh varaq)", z.code, z.variant, z.phone] + vals
                   + [r.get("total"), r.get("percent"), r.get("level"),
-                     "qatnashmadi" if z.absent else ("" if r else "kiritilmagan")])
+                     "qatnashmadi" if z.absent else ("" if r else "kiritilmagan")]
+                  + ([r.get("raw_total"), r.get("theta"), r.get("se")] if rasch else []))
     for col, wd in zip("ABCDE", (6, 30, 11, 8, 14)):
         ws.column_dimensions[col].width = wd
     # savollar tahlili
     wa = wb.create_sheet("Savollar tahlili")
-    wa.append(["Savol", "Bo'lim", "Variant", "To'g'ri, %", "Javob berganlar", "Eng ko'p tanlangan xato"])
+    wa.append(["Savol", "Bo'lim", "Variant", "To'g'ri, %", "Javob berganlar", "Eng ko'p tanlangan xato"]
+              + (["Qiyinlik (logit)"] if rasch else []))
+    diff = ((moc.meta or {}).get("rasch") or {}).get("items") or {}
     for cell in wa[1]:
         cell.font = Font(bold=True)
     kinds = sp.bubbles()
@@ -1448,10 +1465,11 @@ def excel(moc: Moc, sp: M.Spec, seats: list[MocSeat]) -> bytes:
                         wrong[a] = wrong.get(a, 0) + 1
                 common = max(wrong, key=wrong.get) if wrong else ""
                 wa.append([q, sec.name if sec else "", v, round(ok / len(ans) * 100), len(ans),
-                           f"{common} ({wrong[common]})" if common else ""])
+                           f"{common} ({wrong[common]})" if common else ""] + ([diff.get(f"{v}{q}")] if rasch else []))
             else:
                 got = sum(int(a) for a in ans if a.isdigit())
-                wa.append([q, sec.name if sec else "", v, round(got / (len(ans) * nb) * 100), len(ans), "yozma"])
+                wa.append([q, sec.name if sec else "", v, round(got / (len(ans) * nb) * 100), len(ans), "yozma"]
+                          + ([diff.get(f"{v}{q}")] if rasch else []))
     wa.column_dimensions["B"].width = 24
     wa.column_dimensions["F"].width = 22
     out = io.BytesIO()
@@ -1493,3 +1511,222 @@ async def claim(m: Message, arg: str, bot: Bot) -> bool:
     await m.answer(f"✅ Siz «{moc.title}» ({moc.date:%d.%m.%Y}) qatnashchisisiz — kod {z.code}.\n"
                    "Natija tayyor bo'lishi bilan shu yerga keladi.")
     return True
+
+
+# ======================= Rasch modeli =======================
+CAL_KEY = "rasch_cal"
+
+
+def _item_prefix(moc: Moc, v: str) -> str:
+    """Savollar banki: bir xil PDF (Telegram fayl uid) qaysi imtihonda bo'lmasin — bitta savol to'plami."""
+    b = (moc.booklets or {}).get(v) or {}
+    return f"u{b['uid']}" if b.get("uid") else f"m{moc.id}{v}"
+
+
+def _response(sp: M.Spec, key: str, answers: str, prefix: str) -> tuple[dict, dict]:
+    resp, mc = {}, {}
+    for q, (k, nb) in enumerate(sp.bubbles(), 1):
+        a = answers[q - 1] if len(answers) >= q else "-"
+        iid = f"{prefix}:{q}"
+        if k == "t":
+            resp[iid], mc[iid] = int(a == key[q - 1]), 1
+        else:
+            resp[iid], mc[iid] = (int(a) if a.isdigit() else 0), nb
+    return resp, mc
+
+
+async def _cal_points(s, family: str) -> list:
+    row = await s.get(Setting, CAL_KEY)
+    return list(((row.value or {}) if row else {}).get(family) or [])
+
+
+async def _rasch(s, moc: Moc, sp: M.Spec, present: list[MocSeat]) -> dict:
+    """Hamma qatnashchilar (+ shu PDF ishlatilgan oldingi imtihonlar) javoblaridan Rasch hisobi."""
+    from app.logic import rasch as RS
+    responses, maxcat = [], {}
+    for z in present:
+        key = (moc.keys or {}).get(z.variant or "A") or "." * sp.n_questions
+        r, mc = _response(sp, key, z.answers or "-" * sp.n_questions, _item_prefix(moc, z.variant or "A"))
+        responses.append(r)
+        maxcat.update(mc)
+    uids = {b.get("uid") for b in (moc.booklets or {}).values() if b.get("uid")}
+    pooled = 0
+    if uids:
+        others = (await s.execute(select(Moc).where(Moc.status == "yakun", Moc.id != moc.id))).scalars().all()
+        for o in others:
+            if M.parse_spec(o.spec).layout() != sp.layout():
+                continue
+            vs = [v for v, b in (o.booklets or {}).items() if b.get("uid") in uids]
+            if not vs:
+                continue
+            for z in await _seats(s, o.id):
+                if z.answers and not z.absent and z.variant in vs:
+                    r, mc = _response(sp, (o.keys or {}).get(z.variant) or "." * sp.n_questions, z.answers,
+                                      _item_prefix(o, z.variant))
+                    responses.append(r)
+                    maxcat.update(mc)
+                    pooled += 1
+    fit = RS.fit(responses, maxcat)
+    n = len(present)
+    th = fit.theta[:n]
+    pts = await _cal_points(s, sp.name)
+    if len(pts) >= 5:
+        a, b = RS.linear_scale([p[0] for p in pts], [p[1] for p in pts])
+        how = f"rasmiy natijalar bo'yicha sozlangan ({len(pts)} ta)"
+    else:
+        raw = [z.result["total"] for z in present]
+        a, b = RS.linear_scale(th, raw)
+        how = "xom ball darajasiga moslangan (rasmiy natijalar hali kiritilmagan)"
+    for z, t_, se in zip(present, th, fit.se[:n]):
+        ball = round(float(min(sp.scale, max(0.0, a + b * t_))), 1)
+        r = dict(z.result)
+        r.update(raw_total=r["total"], total=ball, theta=round(float(t_), 3), se=round(float(se), 2),
+                 percent=round(ball / sp.scale * 100, 1), level=M.level_of(sp, ball))
+        z.result = r
+    items = {}
+    for v in VARS[:moc.n_variants]:
+        pre = _item_prefix(moc, v)
+        for q in range(1, sp.n_questions + 1):
+            d = fit.difficulty.get(f"{pre}:{q}")
+            if d is not None:
+                items[f"{v}{q}"] = round(d, 2)
+    info = {"n": n, "pooled": pooled, "a": round(a, 3), "b": round(b, 3), "cal": len(pts), "how": how,
+            "converged": bool(fit.converged), "items": items}
+    moc.meta = {**(moc.meta or {}), "rasch": info}
+    return info
+
+
+def _rasch_note(info: dict) -> str:
+    out = (f"\n\n📐 <b>Rasch modeli</b>: {info['n']} qatnashchi"
+           + (f" + oldingi imtihonlardan {info['pooled']} ta javob varag'i (shu PDF savollari)" if info["pooled"] else "")
+           + f"\nShkala: {info['how']}.")
+    if info["n"] + info["pooled"] < 30:
+        out += "\n⚠️ Qatnashchilar 30 tadan kam — savollar qiyinligi aniq emas, Rasch bali taxminiyroq."
+    if info["cal"] < 5:
+        out += ("\n💡 O'quvchilaringiz rasmiy imtihonni topshirgach, ularning ballini «📐 Rasch sozlash» ga "
+                "kiriting — keyingi mock'lar rasmiy natijaga yaqinlashadi.")
+    return out
+
+
+@router.callback_query(F.data == "mq:cal")
+async def cal_menu(c: CallbackQuery, state: FSMContext) -> None:
+    async with Session() as s:
+        st = await _staff(s, c.from_user.id)
+        if _role(st) != "rahbar":
+            return await c.answer("Faqat rahbar.", show_alert=True)
+        fams = []
+        for m in (await s.execute(select(Moc).where(Moc.status == "yakun"))).scalars():
+            sp = _spec(m)
+            if sp.mode == "rasch" and sp.name not in fams:
+                fams.append(sp.name)
+        row = await s.get(Setting, CAL_KEY)
+        cal = (row.value or {}) if row else {}
+    await state.update_data(fams=fams)
+    await c.answer()
+    if not fams:
+        return await c.message.answer("📐 Hali Rasch modeli bilan yakunlangan MOC yo'q. Milliy sertifikat formatidagi "
+                                      "mock o'tkazilgach, shu yerda rasmiy natijalarni kiritasiz.")
+    lines = ["📐 <b>Rasch shkalasini sozlash</b>\n",
+             "O'quvchilaringiz rasmiy imtihonni topshirgach, ularning <b>rasmiy ballini</b> kiriting. Bot ularning "
+             "oxirgi mock natijasi bilan solishtirib, shkalani rasmiy natijaga moslaydi (kamida 5 ta kerak).\n"]
+    for f in fams:
+        pts = cal.get(f) or []
+        lines.append(f"• {f}: {len(pts)} ta rasmiy natija" + (" ✅ sozlangan" if len(pts) >= 5 else ""))
+    await c.message.answer("\n".join(lines), reply_markup=IM(inline_keyboard=[
+        [IB(text=f"➕ {f[:40]}", callback_data=f"mqcf:{i}")] for i, f in enumerate(fams)]
+        + [[IB(text=f"🗑 {f[:36]} — tozalash", callback_data=f"mqcx:{i}")] for i, f in enumerate(fams) if cal.get(f)]))
+
+
+@router.callback_query(F.data.startswith("mqcf:"))
+async def cal_ask(c: CallbackQuery, state: FSMContext) -> None:
+    fams = (await state.get_data()).get("fams") or []
+    i = int(c.data.split(":")[1])
+    if i >= len(fams):
+        return await c.answer("Qaytadan oching.", show_alert=True)
+    await state.update_data(fam=fams[i])
+    await state.set_state(Mc.cal)
+    await c.answer()
+    await c.message.answer(f"📐 <b>{fams[i]}</b> — rasmiy natijalarni yozing, har qatorda bitta:\n"
+                           "<code>Qodirova Charos 66.4\nAliyev Vali 58</code>\n"
+                           "Bot har birini shu formatdagi oxirgi mock natijasi bilan bog'laydi.")
+
+
+def _norm(x: str) -> str:
+    return " ".join(sorted(w for w in x.lower().replace("ʻ", "'").replace("`", "'").split() if w))
+
+
+@router.message(Mc.cal, F.text, ~F.text.in_(K.menu_texts()))
+async def cal_save(m: Message, state: FSMContext) -> None:
+    from app.logic import rasch as RS
+    fam = (await state.get_data()).get("fam")
+    rows = []
+    for line in m.text.splitlines():
+        bits = line.replace(",", ".").split()
+        if len(bits) < 2:
+            continue
+        try:
+            ball = float(bits[-1])
+        except ValueError:
+            continue
+        if 0 <= ball <= 100:
+            rows.append((" ".join(bits[:-1]), ball))
+    if not rows:
+        return await m.answer("Namuna: <code>Qodirova Charos 66.4</code>")
+    await state.set_state(None)
+    async with Session() as s:
+        st = await _staff(s, m.from_user.id)
+        mocs = [x for x in (await s.execute(select(Moc).where(Moc.status == "yakun").order_by(Moc.date.desc(), Moc.id.desc())))
+                .scalars() if _spec(x).name == fam and _spec(x).mode == "rasch"]
+        latest: dict[str, tuple] = {}
+        for x in mocs:
+            for z in await _seats(s, x.id):
+                if z.name and z.result and z.result.get("theta") is not None and _norm(z.name) not in latest:
+                    latest[_norm(z.name)] = (z.result["theta"], x.title, x.date)
+        row = await s.get(Setting, CAL_KEY)
+        cal = dict((row.value or {}) if row else {})
+        pts = list(cal.get(fam) or [])
+        ok, miss = [], []
+        for name, ball in rows:
+            hit = latest.get(_norm(name))
+            if not hit:
+                miss.append(name)
+                continue
+            pts = [p for p in pts if p[2] != _norm(name)] + [[hit[0], ball, _norm(name)]]
+            ok.append(f"{name}: mock θ={hit[0]:+.2f} ({hit[1][:24]}, {hit[2]:%d.%m}) → rasmiy {ball:g}")
+        cal[fam] = pts
+        if row:
+            row.value = cal
+        else:
+            s.add(Setting(key=CAL_KEY, value=cal))
+        await S.audit(s, st, "rasch_sozlash", family=fam, n=len(ok))
+        await s.commit()
+    text = f"📐 <b>{fam}</b>: {len(ok)} ta natija qo'shildi, jami {len(pts)} ta."
+    if ok:
+        text += "\n" + "\n".join("• " + x for x in ok[:15])
+    if miss:
+        text += "\n\n❓ Mock natijasi topilmadi: " + ", ".join(miss[:15])
+    if len(pts) >= 5:
+        a, b = RS.linear_scale([p[0] for p in pts], [p[1] for p in pts])
+        text += (f"\n\n✅ Shkala sozlandi: ball = {a:.1f} {'+' if b >= 0 else '−'} {abs(b):.1f}·θ\n"
+                 f"Masalan: θ=0 → {a:.1f}, θ=+1 → {a + b:.1f}. Keyingi mock'lar shu bilan hisoblanadi.")
+    else:
+        text += f"\n\nShkala sozlanishi uchun yana {5 - len(pts)} ta natija kerak."
+    await m.answer(text)
+
+
+@router.callback_query(F.data.startswith("mqcx:"))
+async def cal_clear(c: CallbackQuery, state: FSMContext) -> None:
+    fams = (await state.get_data()).get("fams") or []
+    i = int(c.data.split(":")[1])
+    async with Session() as s:
+        st = await _staff(s, c.from_user.id)
+        if _role(st) != "rahbar" or i >= len(fams):
+            return await c.answer("Ruxsat yo'q.", show_alert=True)
+        row = await s.get(Setting, CAL_KEY)
+        if row:
+            cal = dict(row.value or {})
+            cal.pop(fams[i], None)
+            row.value = cal
+            await s.commit()
+    await c.answer("Tozalandi")
+    await c.message.edit_text(f"🗑 «{fams[i]}» sozlamasi tozalandi.")

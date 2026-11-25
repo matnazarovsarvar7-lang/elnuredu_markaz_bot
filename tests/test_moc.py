@@ -84,3 +84,24 @@ def test_live_decode():
     from app.bot.moc import _decode_live
     ans, uns, v = _decode_live("AbC-*pq?@B")
     assert ans == "ABC-*12?" and uns == [2, 6, 7, 8] and v == "B"
+
+
+def test_rasch_recovers_and_equates():
+    import numpy as np
+    from app.logic import rasch as R
+    rng = np.random.default_rng(1)
+    th = rng.normal(0, 1, 120)
+    dA = rng.uniform(-2, 2, 25)
+    resp, mc = [], {}
+    for n, t in enumerate(th):
+        tag, shift = ("A", 0.0) if n % 2 == 0 else ("B", 0.8)
+        resp.append({f"{tag}{i}": int(rng.random() < 1 / (1 + np.exp(-(t - x - shift)))) for i, x in enumerate(dA)})
+    for v in "AB":
+        mc.update({f"{v}{i}": 1 for i in range(25)})
+    f = R.fit(resp, mc)
+    assert f.converged
+    assert np.corrcoef(th, f.theta)[0, 1] > 0.78          # 25 savolli test ishonchliligi chegarasi
+    gap = np.mean([f.difficulty[f"B{i}"] - f.difficulty[f"A{i}"] for i in range(25)])
+    assert 0.4 < gap < 1.2                      # B variant qiyinroq ekanini topadi
+    a, b = R.linear_scale(f.theta, f.theta * 10 + 50)
+    assert abs(a - 50) < 1e-6 and abs(b - 10) < 1e-6
