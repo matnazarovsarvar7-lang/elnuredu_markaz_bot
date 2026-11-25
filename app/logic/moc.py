@@ -134,9 +134,16 @@ def _num(x: float) -> str:
 MS_LEVELS = "70 A+; 65 A; 60 B+; 55 B; 50 C+; 46 C"
 PRESETS: dict[str, tuple[str, str]] = {
     "oddiy": ("📝 Oddiy test", "nom: Test\n1-20: Test | test 4 | 1\nnatija: foiz"),
-    "ms": ("🏅 Milliy sertifikat", "nom: Milliy sertifikat (matematika)\n1-35: Yopiq savollar | test 4 | 1\n"
+    "ms": ("🏅 Milliy sertifikat (matematika)", "nom: Milliy sertifikat (matematika)\n1-35: Yopiq savollar | test 4 | 1\n"
                                    "36-45: Ochiq savollar (a, b) | yozma 2 | 1\nnatija: rasch 75\n"
                                    f"daraja: {MS_LEVELS}"),
+    "msbio": ("🧬 Milliy sertifikat (biologiya)",
+              "nom: Milliy sertifikat (biologiya)\n1-32: Yopiq test | test 4 | 1\n33-35: Moslashtirish | yozma 2 | 1\n"
+              "36-40: Qisqa javob | yozma 1 | 1\n41-topshiriq (yozma ish) | baho 30\n42-topshiriq (yozma ish) | baho 35\n"
+              f"43-topshiriq (yozma ish) | baho 10\nnatija: rasch 75\ndaraja: {MS_LEVELS}"),
+    "msona": ("📖 Milliy sertifikat (ona tili)",
+              "nom: Milliy sertifikat (ona tili va adabiyot)\n1-32: Yopiq test | test 4 | 1\n33-35: Moslashtirish | yozma 2 | 1\n"
+              f"36-44: Qisqa javob | yozma 1 | 1\nEsse (45-topshiriq) | baho 20\nnatija: rasch 75\ndaraja: {MS_LEVELS}"),
     "dtm": ("🎓 DTM (abituriyent)", "nom: DTM (abituriyent)\n1-10: Ona tili | test 4 | 1.1\n11-20: Matematika | test 4 | 1.1\n"
                                     "21-30: O'zbekiston tarixi | test 4 | 1.1\n31-60: 1-fan | test 4 | 3.1\n"
                                     "61-90: 2-fan | test 4 | 2.1\nnatija: ball"),

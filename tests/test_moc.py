@@ -115,3 +115,25 @@ def test_dense_ties_and_tones():
     assert level_tone("Band 6.5")[0] == "silver"
     from app.logic.certificate import uz
     assert uz("o'rin g'olib To'xtash Ma'ruf") == "o‘rin g‘olib To‘xtash Ma’ruf"
+
+
+def test_ms_bio_and_ona_tili_presets():
+    bio = M.preset("msbio")
+    assert not bio.errors and bio.n_questions == 40 and bio.n_test == 32 and bio.mode == "rasch"
+    assert [s.mx for s in bio.sections if s.kind == "baho"] == [30, 35, 10]
+    ona = M.preset("msona")
+    assert not ona.errors and ona.n_questions == 44 and ona.n_test == 32
+    assert [s.name for s in ona.sections if s.kind == "baho"] == ["Esse (45-topshiriq)"]
+    key, err = M.parse_key("A" * 32, ona)
+    assert not err and key.count(".") == 12
+    r = M.score(bio, "A" * 32 + "." * 8, "A" * 32 + "2" * 3 + "1" * 5,
+                {"41-topshiriq (yozma ish)": 30, "42-topshiriq (yozma ish)": 35, "43-topshiriq (yozma ish)": 10})
+    assert r["total"] == 75.0 and r["level"] == "A+"
+
+
+def test_rasch_uses_written_work():
+    from app.bot.moc import _response
+    sp = M.preset("msbio")
+    r, mc = _response(sp, "A" * 32 + "." * 8, "A" * 40, "x", {"41-topshiriq (yozma ish)": 15})
+    assert mc["x:b3"] == 5 and r["x:b3"] in (2, 3)                         # 15/30 → 2.5 → 0..5 toifada 2 yoki 3
+    assert "x:b4" not in r                                                  # kiritilmagan — tashlab ketiladi

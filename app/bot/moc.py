@@ -1028,7 +1028,7 @@ async def _baho_next(msg: Message, state: FSMContext, mid: int) -> None:
     await state.set_state(Mc.baho)
     await state.update_data(sid=z.id, mid=mid)
     rng = ", ".join(f"{x.name} (0–{x.mx:g})" for x in names)
-    ex = " ".join("55" if x.mx > 9 else "6.5" for x in names)
+    ex = " ".join(f"{round(x.mx * 0.7):g}" if x.mx > 9 else "6.5" for x in names)
     await msg.answer(f"📝 <b>{z.name}</b>\n{rng} — ketma-ket yozing: <code>{ex}</code>\nQolgan: {len(todo)}",
                      reply_markup=IM(inline_keyboard=[[IB(text="⏭ Keyinroq", callback_data=f"mqhs:{z.id}"),
                                                        IB(text="🚫 Qatnashmadi", callback_data=f"mqhn:{z.id}")]]))
@@ -1527,8 +1527,14 @@ def _item_prefix(moc: Moc, v: str) -> str:
     return f"u{b['uid']}" if b.get("uid") else f"m{moc.id}{v}"
 
 
-def _response(sp: M.Spec, key: str, answers: str, prefix: str) -> tuple[dict, dict]:
+def _response(sp: M.Spec, key: str, answers: str, prefix: str, baho: dict | None = None) -> tuple[dict, dict]:
+    """Rasch uchun javoblar. Varaqdagi savollar — o'z bali; yozma ish / esse (botga yozilgan ball) —
+    0..5 toifaga keltirilib qo'shiladi (aks holda katta yozma ish natijaga ta'sir qilmay qolardi)."""
     resp, mc = {}, {}
+    for j, s in enumerate(sp.sections):
+        if s.kind == "baho" and s.mx and (baho or {}).get(s.name) is not None:
+            iid = f"{prefix}:b{j}"
+            resp[iid], mc[iid] = int(round(max(0.0, min(float(baho[s.name]), s.mx)) / s.mx * 5)), 5
     for q, (k, nb) in enumerate(sp.bubbles(), 1):
         a = answers[q - 1] if len(answers) >= q else "-"
         iid = f"{prefix}:{q}"
@@ -1550,7 +1556,7 @@ async def _rasch(s, moc: Moc, sp: M.Spec, present: list[MocSeat]) -> dict:
     responses, maxcat = [], {}
     for z in present:
         key = (moc.keys or {}).get(z.variant or "A") or "." * sp.n_questions
-        r, mc = _response(sp, key, z.answers or "-" * sp.n_questions, _item_prefix(moc, z.variant or "A"))
+        r, mc = _response(sp, key, z.answers or "-" * sp.n_questions, _item_prefix(moc, z.variant or "A"), z.baho)
         responses.append(r)
         maxcat.update(mc)
     uids = {b.get("uid") for b in (moc.booklets or {}).values() if b.get("uid")}
@@ -1566,7 +1572,7 @@ async def _rasch(s, moc: Moc, sp: M.Spec, present: list[MocSeat]) -> dict:
             for z in await _seats(s, o.id):
                 if z.answers and not z.absent and z.variant in vs:
                     r, mc = _response(sp, (o.keys or {}).get(z.variant) or "." * sp.n_questions, z.answers,
-                                      _item_prefix(o, z.variant))
+                                      _item_prefix(o, z.variant), z.baho)
                     responses.append(r)
                     maxcat.update(mc)
                     pooled += 1
