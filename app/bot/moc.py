@@ -93,7 +93,7 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
             rows.append([IB(text=f"{icon} {x.date:%d.%m} · {x.title[:28]} · {done}/{len(seats)}",
                             callback_data=f"mqc:{x.id}")])
     if _role(st) == "rahbar":
-        rows.append([IB(text="📐 Rasch: rasmiy natijalar bilan sozlash", callback_data="mq:cal")])
+        rows.append([IB(text="📐 Mock ballini rasmiy natijaga moslash", callback_data="mq:cal")])
     if _role(st) in MAKERS:
         rows.append([IB(text="➕ Yangi MOC imtihon", callback_data="mq:new")])
         rows.append([IB(text="📄 Tayyor PDF test (nazorat)", callback_data="mq:pdf")])
@@ -1628,11 +1628,20 @@ async def cal_menu(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(fams=fams)
     await c.answer()
     if not fams:
-        return await c.message.answer("📐 Hali Rasch modeli bilan yakunlangan MOC yo'q. Milliy sertifikat formatidagi "
-                                      "mock o'tkazilgach, shu yerda rasmiy natijalarni kiritasiz.")
-    lines = ["📐 <b>Rasch shkalasini sozlash</b>\n",
-             "O'quvchilaringiz rasmiy imtihonni topshirgach, ularning <b>rasmiy ballini</b> kiriting. Bot ularning "
-             "oxirgi mock natijasi bilan solishtirib, shkalani rasmiy natijaga moslaydi (kamida 5 ta kerak).\n"]
+        return await c.message.answer(
+            "📐 <b>Bu bo'lim nima uchun?</b>\n"
+            "Bot mock'da qo'ygan ballni rasmiy Milliy sertifikat baliga yaqinlashtirish uchun.\n\n"
+            "<b>Qanday ishlaydi:</b>\n"
+            "1️⃣ Milliy sertifikat formatida mock o'tkazasiz — bot har o'quvchiga ball qo'yadi.\n"
+            "2️⃣ O'quvchilar rasmiy imtihonni topshiradi.\n"
+            "3️⃣ Ularning rasmiy ballini shu yerga yozasiz: <code>Aliyev Vali 66</code>\n"
+            "4️⃣ 5 ta natija yig'ilgach, bot keyingi mock'larni rasmiy natijaga moslab hisoblaydi.\n\n"
+            "⏳ Hozircha Milliy sertifikat formatida yakunlangan mock yo'q — avval mock o'tkazing. "
+            "Hozir hech narsa qilish shart emas.")
+    lines = ["📐 <b>Mock ballini rasmiy natijaga moslash</b>\n",
+             "O'quvchilaringiz rasmiy imtihonni topshirgach, ularning <b>rasmiy ballini</b> shu yerga yozing. "
+             "Bot uni o'quvchining oxirgi mock bali bilan solishtiradi. 5 ta natija yig'ilgach, keyingi mock'lar "
+             "rasmiy natijaga yaqinroq hisoblanadi.\n"]
     for f in fams:
         pts = cal.get(f) or []
         lines.append(f"• {f}: {len(pts)} ta rasmiy natija" + (" ✅ sozlangan" if len(pts) >= 5 else ""))
