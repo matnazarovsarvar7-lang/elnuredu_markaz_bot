@@ -657,6 +657,8 @@ class PrintBook(Base):
     file_kind: Mapped[str] = mapped_column(String(20), default="document")
     owner_id: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))   # yuklagan o'qituvchi — ulush unga
     saved: Mapped[bool] = mapped_column(Boolean, default=True)
+    price: Mapped[int | None] = mapped_column(Integer)             # qat'iy narx (dona); None — varaq × narx
+    bought: Mapped[bool] = mapped_column(Boolean, default=False)   # markaz sotib olgan — muallif ulushi yo'q
     active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -672,6 +674,8 @@ class PrintJob(Base):
     copies: Mapped[int] = mapped_column(Integer, default=1)
     pages: Mapped[int] = mapped_column(Integer)                    # 1 nusxadagi bet
     layout: Mapped[str] = mapped_column(String(10), default="bir")  # bir | ikki | buklet
+    auto_price: Mapped[int | None] = mapped_column(Integer)        # varaq hisobidagi narx (qo'lda o'zgartirilsa)
+    bought: Mapped[bool] = mapped_column(Boolean, default=False)   # sotib olingan material
     sheets: Mapped[int] = mapped_column(Integer)                   # 1 nusxadagi varaq
     price: Mapped[int] = mapped_column(Integer, default=0)         # kitob: 1 nusxa narxi
     file_id: Mapped[str | None] = mapped_column(String(250))

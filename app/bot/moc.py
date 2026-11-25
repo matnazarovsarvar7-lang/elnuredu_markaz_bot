@@ -35,6 +35,15 @@ router = Router()
 VARS = "ABCDEF"
 MAKERS = ("rahbar", "oqituvchi", "yordamchi")
 VIEWERS = MAKERS + ("admin", "moliya")
+KIND_ICON = {"moc": "🎓", "nazorat": "📄", "tashqi": "🌐"}
+
+
+def payers(moc: Moc, seats: list[MocSeat]) -> list[MocSeat]:
+    """To'lashi kerak bo'lganlar: tashqi qatnashchilar (yoki «hamma to'laydi» bo'lsa — barcha ismlilar)."""
+    if not moc.price:
+        return []
+    every = (moc.meta or {}).get("pay_all")
+    return [z for z in seats if z.name and not z.absent and (every or not z.enrollment_id)]
 
 
 class Mc(StatesGroup):
@@ -52,6 +61,7 @@ class Mc(StatesGroup):
     name = State()
     baho = State()
     add = State()
+    extmax = State()
 
 
 def now() -> datetime:
@@ -89,7 +99,8 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
         for x in mocs:
             seats = (await s.execute(select(MocSeat).where(MocSeat.moc_id == x.id))).scalars().all()
             done = sum(1 for z in seats if z.answers or z.absent)
-            icon = "✅" if x.status == "yakun" else ("📄" if x.kind == "nazorat" else "🎓")
+            done = sum(1 for z in seats if z.answers or z.absent or z.baho)
+            icon = "✅" if x.status == "yakun" else {"nazorat": "📄", "tashqi": "🌐"}.get(x.kind, "🎓")
             rows.append([IB(text=f"{icon} {x.date:%d.%m} · {x.title[:28]} · {done}/{len(seats)}",
                             callback_data=f"mqc:{x.id}")])
     if _role(st) == "rahbar":
@@ -97,8 +108,10 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
     if _role(st) in MAKERS:
         rows.append([IB(text="➕ Yangi MOC imtihon", callback_data="mq:new")])
         rows.append([IB(text="📄 Tayyor PDF test (nazorat)", callback_data="mq:pdf")])
+        rows.append([IB(text="🌐 Tashqi tekshiruvli test (kanal tekshiradi)", callback_data="mq:ext")])
     text = ("🎓 <b>MOC imtihonlar va PDF testlar</b>\n\nFormatlar: Milliy sertifikat, DTM, CEFR, IELTS, oddiy test "
-            "yoki o'z formatingiz. Savollar — sizning PDF faylingiz, javob varaqlari va tekshirish — bot.")
+            "yoki o'z formatingiz. Savollar — sizning PDF faylingiz, javob varaqlari va tekshirish — bot.\n"
+            "🌐 <b>Tashqi tekshiruv</b> — test sotib olingan kanalda tekshiriladi, siz faqat natijani yuklaysiz.")
     kb = IM(inline_keyboard=rows)
     if edit:
         try:
@@ -131,6 +144,78 @@ async def new_moc(c: CallbackQuery, state: FSMContext) -> None:
     await c.message.answer("🎓 <b>Yangi MOC imtihon</b>\n\nImtihon nomini yozing (masalan: <i>Noyabr DTM mock</i>):")
 
 
+@router.callback_query(F.data == "mq:ext")
+async def new_ext(c: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.update_data(w={"kind": "tashqi"})
+    await state.set_state(Mc.title)
+    await c.answer()
+    await c.message.answer("🌐 <b>Tashqi tekshiruvli test</b>\n\nTest sotib olingan kanal (bot) javoblarni o'zi "
+                           "tekshiradi — siz faqat tayyor natijani botga yuklaysiz. Bot uni o'quvchilarga moslab, "
+                           "ota-onalarga natija kartasi, reyting va sertifikat sifatida tarqatadi.\n\n"
+                           "Test nomini yozing (masalan: <i>Noyabr biologiya mock</i>):")
+
+
+EXT_FORMATS = {     # kalit: (tugma, maks., natija turi, darajalar)
+    "ms": ("🏅 Milliy sertifikat bali (0–75) + daraja", 75, "ball", M.MS_LEVELS + "; 0 Sertifikatsiz"),
+    "cefr": ("🇬🇧 CEFR multilevel (0–75) + daraja", 75, "ball", "65 C1; 51 B2; 38 B1; 0 B1 dan past"),
+    "dtm": ("🎯 DTM bali (0–189)", 189, "ball", None),
+    "foiz": ("💯 Foiz (0–100)", 100, "foiz", None),
+    "ball": ("🔢 Boshqa ball (maksimumini yozasiz)", None, "ball", None),
+}
+
+
+def ext_spec(title: str, mx: float, mode: str, levels: str | None) -> str:
+    return f"nom: {title}\nBall | baho {mx:g}\nnatija: {mode}" + (f"\ndaraja: {levels}" if levels else "")
+
+
+@router.callback_query(F.data.startswith("mqk:"))
+async def ext_format(c: CallbackQuery, state: FSMContext) -> None:
+    key = c.data.split(":")[1]
+    w = (await state.get_data()).get("w") or {}
+    if key not in EXT_FORMATS or not w.get("title"):
+        return await c.answer("Jarayon eskirgan — qaytadan boshlang.", show_alert=True)
+    await c.answer()
+    _, mx, mode, lv = EXT_FORMATS[key]
+    if mx is None:
+        await state.set_state(Mc.extmax)
+        return await c.message.answer("Maksimal ball nechchi? (masalan: <code>30</code> yoki <code>100</code>)")
+    await _ext_after_format(c.message, state, ext_spec(w["title"], mx, mode, lv))
+
+
+@router.message(Mc.extmax, F.text, ~F.text.in_(K.menu_texts()))
+async def ext_max(m: Message, state: FSMContext) -> None:
+    try:
+        mx = float(m.text.strip().replace(",", "."))
+        assert 0 < mx <= 10000
+    except (ValueError, AssertionError):
+        return await m.answer("Raqam yozing: 30")
+    w = (await state.get_data()).get("w") or {}
+    await _ext_after_format(m, state, ext_spec(w.get("title", "Test"), mx, "ball", None))
+
+
+async def _ext_after_format(msg: Message, state: FSMContext, spec: str) -> None:
+    w = (await state.get_data()).get("w") or {}
+    w.update(spec=spec, nv=1, booklets={}, keys={}, cur=0)
+    await state.update_data(w=w)
+    await state.set_state(Mc.pdf)
+    await msg.answer("📎 Sotib olingan test <b>PDF faylini</b> yuboring — admin qatnashchilar soniga qarab chop etadi.\n"
+                     "Testni o'zingiz chiqargan bo'lsangiz — «PDFsiz davom etish».",
+                     reply_markup=IM(inline_keyboard=[[IB(text="⏭ PDFsiz davom etish", callback_data="mqtp")]]))
+
+
+@router.callback_query(F.data == "mqtp")
+async def ext_no_pdf(c: CallbackQuery, state: FSMContext) -> None:
+    w = (await state.get_data()).get("w") or {}
+    if w.get("kind") != "tashqi":
+        return await c.answer("Jarayon eskirgan.", show_alert=True)
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=None)
+    w["cur"] = 0
+    await state.update_data(w=w)
+    await _next_variant(c.message, state)
+
+
 @router.callback_query(F.data == "mq:pdf")
 async def new_pdf(c: CallbackQuery, state: FSMContext) -> None:
     await state.clear()
@@ -161,6 +246,9 @@ async def got_title(m: Message, state: FSMContext) -> None:
     w["title"] = m.text.strip()[:140]
     await state.update_data(w=w)
     await state.set_state(None)
+    if w.get("kind") == "tashqi":
+        return await m.answer("Kanal natijani qaysi ko'rinishda beradi?", reply_markup=IM(inline_keyboard=[
+            [IB(text=v[0], callback_data=f"mqk:{k}")] for k, v in EXT_FORMATS.items()]))
     if w.get("kind") == "nazorat":
         btns = [IB(text=f"{n} ta savol", callback_data=f"mqf:n{n}") for n in (10, 15, 20, 25, 30, 35, 40, 50)]
         return await m.answer("Testda nechta savol bor? (har biri A–D, 1 ball)", reply_markup=IM(
@@ -350,7 +438,8 @@ async def _participants(msg: Message, state: FSMContext, tg: int, edit: bool = F
     btns = [IB(text=("✅ " if g.id in sel else "▫️ ") + g.name, callback_data=f"mqg:{g.id}") for g in gs]
     rows = _rows(btns)
     rows.append([IB(text=f"➕ Tashqi qatnashchilar ({len(w['ext'])})", callback_data="mqx")])
-    rows.append([IB(text=f"📄 Bo'sh varaqlar ({w['blanks']})", callback_data="mqb")])
+    if w.get("kind") != "tashqi":
+        rows.append([IB(text=f"📄 Bo'sh varaqlar ({w['blanks']})", callback_data="mqb")])
     rows.append([IB(text="➡️ Davom etish", callback_data="mqgo")])
     text = ("👥 <b>Qatnashchilar</b>\n• Guruhlarni belgilang — o'quvchilar ismi yozilgan varaq oladi.\n"
             "• Tashqi qatnashchilar — ism va telefon bilan (chiptada natijani olish QR kodi bo'ladi).\n"
@@ -432,10 +521,32 @@ async def participants_done(c: CallbackQuery, state: FSMContext) -> None:
     if not (w.get("gids") or w.get("ext") or w.get("blanks")):
         return await c.answer("Kamida bitta guruh, tashqi qatnashchi yoki bo'sh varaq tanlang.", show_alert=True)
     await c.answer()
-    if w.get("ext") or w.get("blanks"):
+    if w.get("ext") or w.get("blanks") or w.get("kind") == "tashqi":
         await state.set_state(Mc.price)
-        return await c.message.answer("💵 Tashqi qatnashchilar uchun imtihon narxi (so'm)? Bepul bo'lsa — 0.",
+        who = "Qatnashish" if w.get("kind") == "tashqi" else "Tashqi qatnashchilar uchun imtihon"
+        return await c.message.answer(f"💵 {who} narxi (so'm)? Bepul bo'lsa — 0.\n"
+                                      "<i>Narxni o'zingiz belgilaysiz — varaq hisobiga bog'liq emas.</i>",
                                       reply_markup=IM(inline_keyboard=[[IB(text="Bepul", callback_data="mqpr:0")]]))
+    await _confirm(c.message, state)
+
+
+async def _after_price(msg: Message, state: FSMContext) -> None:
+    w = (await state.get_data())["w"]
+    if w.get("price") and w.get("gids"):
+        return await msg.answer(f"💵 {S.fmt_som(w['price'])} — kimlar to'laydi?", reply_markup=IM(inline_keyboard=[
+            [IB(text="👥 Hamma (guruh o'quvchilari ham)", callback_data="mqwp:all")],
+            [IB(text="🙋 Faqat tashqi qatnashchilar", callback_data="mqwp:ext")]]))
+    await _confirm(msg, state)
+
+
+@router.callback_query(F.data.startswith("mqwp:"))
+async def who_pays(c: CallbackQuery, state: FSMContext) -> None:
+    w = (await state.get_data()).get("w") or {}
+    if "price" not in w:
+        return await c.answer("Jarayon eskirgan.", show_alert=True)
+    w["pay_all"] = c.data.endswith("all")
+    await state.update_data(w=w)
+    await c.answer()
     await _confirm(c.message, state)
 
 
@@ -446,7 +557,7 @@ async def price_btn(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(w=w)
     await state.set_state(None)
     await c.answer()
-    await _confirm(c.message, state)
+    await _after_price(c.message, state)
 
 
 @router.message(Mc.price, F.text, ~F.text.in_(K.menu_texts()))
@@ -461,7 +572,7 @@ async def price_got(m: Message, state: FSMContext) -> None:
     w["price"] = int(v)
     await state.update_data(w=w)
     await state.set_state(None)
-    await _confirm(m, state)
+    await _after_price(m, state)
 
 
 async def _confirm(msg: Message, state: FSMContext) -> None:
@@ -475,13 +586,19 @@ async def _confirm(msg: Message, state: FSMContext) -> None:
             names.append(f"{g.name} ({len(r)})")
             n_st += len(r)
     total = n_st + len(w.get("ext", [])) + w.get("blanks", 0)
-    text = (f"{'🎓' if w['kind'] == 'moc' else '📄'} <b>{w['title']}</b> · {date.fromisoformat(w['date']):%d.%m.%Y}\n\n"
-            f"{sp.summary()}\n\nVariantlar: {w['nv']} ({', '.join(VARS[:w['nv']])})\n"
-            f"Qatnashchilar: {total} ta" + (f"\n• Guruhlar: {', '.join(names)}" if names else "")
+    ext = w["kind"] == "tashqi"
+    text = (f"{KIND_ICON.get(w['kind'], '🎓')} <b>{w['title']}</b> · {date.fromisoformat(w['date']):%d.%m.%Y}\n\n"
+            + (f"🌐 Tashqi tekshiruv (kanal tekshiradi)\n{sp.summary().split(chr(10), 2)[-1]}\n"
+               f"📎 Test PDF: {'bor — chop etishga ketadi' if w.get('booklets') else 'yo`q'}\n"
+               if ext else f"{sp.summary()}\n\nVariantlar: {w['nv']} ({', '.join(VARS[:w['nv']])})\n")
+            + f"Qatnashchilar: {total} ta" + (f"\n• Guruhlar: {', '.join(names)}" if names else "")
             + (f"\n• Tashqi: {len(w['ext'])}" if w.get("ext") else "")
             + (f"\n• Bo'sh varaq: {w['blanks']}" if w.get("blanks") else "")
-            + (f"\n💵 Narx (tashqi): {S.fmt_som(w.get('price', 0))}" if w.get("price") else "")
-            + "\n\nTasdiqlasangiz — javob varaqlari tayyorlanadi va savollar bilan birga adminga chop etishga ketadi.")
+            + (f"\n💵 Narx: {S.fmt_som(w.get('price', 0))} · "
+               + ("hamma to'laydi" if w.get("pay_all") else "faqat tashqi qatnashchilar") if w.get("price") else "")
+            + ("\n\nTasdiqlasangiz — test chop etishga ketadi; natija kelgach «📥 Natijani yuklash» ni bosasiz."
+               if ext else "\n\nTasdiqlasangiz — javob varaqlari tayyorlanadi va savollar bilan birga adminga "
+                           "chop etishga ketadi."))
     await msg.answer(text, reply_markup=IM(inline_keyboard=[[IB(text="✅ Tasdiqlash", callback_data="mqok"),
                                                              IB(text="❌ Bekor", callback_data="mqno")]]))
 
@@ -505,15 +622,20 @@ async def wizard_ok(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         st = await _staff(s, c.from_user.id)
         moc = Moc(kind=w["kind"], title=w["title"], spec=w["spec"], date=date.fromisoformat(w["date"]),
                   group_ids=w.get("gids", []), n_variants=w["nv"], booklets=w["booklets"], keys=w["keys"],
-                  price=int(w.get("price") or 0), created_by=st.id if st else None)
+                  price=int(w.get("price") or 0), created_by=st.id if st else None,
+                  meta={"pay_all": bool(w.get("pay_all"))})
         s.add(moc)
         await s.flush()
         ids = await _make_seats(s, moc, w.get("gids", []), [tuple(x) for x in w.get("ext", [])], w.get("blanks", 0))
         await S.audit(s, st, "moc_yaratildi", id=moc.id, title=moc.title, seats=len(ids))
         await s.commit()
         mid = moc.id
-    await c.message.answer(f"⏳ {len(ids)} ta javob varag'i tayyorlanmoqda…")
-    await issue(bot, mid, ids, c.from_user.id, booklets=True)
+    if w["kind"] == "tashqi":
+        from app.bot.moc_ext import issue_ext
+        await issue_ext(bot, mid, ids, c.from_user.id)
+    else:
+        await c.message.answer(f"⏳ {len(ids)} ta javob varag'i tayyorlanmoqda…")
+        await issue(bot, mid, ids, c.from_user.id, booklets=True)
     await card(c.message, mid, c.from_user.id)
 
 
@@ -646,9 +768,12 @@ async def card(msg: Message, mid: int, tg: int, edit: bool = False) -> None:
     baho = [x.name for x in sp.sections if x.kind == "baho"]
     need_baho = [z for z in seats if baho and not z.absent and (z.answers or not z.blank)
                  and any(n not in (z.baho or {}) for n in baho)]
-    ext = [z for z in seats if not z.enrollment_id and z.name]
+    ext = payers(moc, seats)
     unpaid = [z for z in ext if moc.price and z.paid < moc.price]
-    lines = [f"{'📄' if moc.kind == 'nazorat' else '🎓'} <b>{moc.title}</b> · {moc.date:%d.%m.%Y}"
+    if moc.kind == "tashqi":
+        from app.bot.moc_ext import ext_card
+        return await ext_card(msg, moc, sp, seats, st, unpaid, ext, edit)
+    lines = [f"{KIND_ICON.get(moc.kind, '🎓')} <b>{moc.title}</b> · {moc.date:%d.%m.%Y}"
              + (" · ✅ yakunlangan" if moc.status == "yakun" else ""),
              f"{sp.name} · {sp.n_questions} savol · {moc.n_variants} variant",
              f"\n📷 Tekshirildi: <b>{len(done)}</b> / {len(named)}" + (f" · qatnashmadi: {len(absent)}" if absent else ""),
@@ -672,6 +797,8 @@ async def card(msg: Message, mid: int, tg: int, edit: bool = False) -> None:
             rows.append([IB(text="⚠️ Noaniqlarni hal qilish", callback_data=f"mqu:{first.id}")])
         if baho:
             rows.append([IB(text=f"📝 {', '.join(baho)} ballari", callback_data=f"mqh:{mid}")])
+        if len(baho) == 1:
+            rows.append([IB(text=f"📥 {baho[0]} ballarini fayldan yuklash", callback_data=f"xri:{mid}")])
     rows.append([IB(text="👥 Qatnashchilar", callback_data=f"mql:{mid}"),
                  IB(text="➕ Qo'shish", callback_data=f"mqa:{mid}")] if moc.status != "yakun" else
                 [IB(text="👥 Qatnashchilar", callback_data=f"mql:{mid}")])
@@ -1084,12 +1211,12 @@ async def people(c: CallbackQuery) -> None:
     sp = _spec(moc)
     lines = [f"👥 <b>{moc.title}</b> — {len(seats)} o'rin"]
     for z in seats:
-        st = ("🚫" if z.absent else "✅" if z.answers else "⏳")
+        st = ("🚫" if z.absent else "✅" if (z.answers or z.baho) else "⏳")
         extra = ""
         if z.result:
             extra = f" — {M.fmt_total(sp, z.result)}" + (f" {z.result.get('level')}" if z.result.get("level") else "")
         lines.append(f"{st} {z.code} {z.name or '(bo`sh varaq)'} · {z.variant or '?'}{extra}"
-                     + (" 📱" if z.tg_id else "") + (" 💵" if moc.price and not z.enrollment_id and z.paid >= moc.price else ""))
+                     + (" 📱" if z.tg_id else "") + (" 💵" if moc.price and z.paid >= moc.price else ""))
     await c.answer()
     await _long(c.message, "\n".join(lines), IM(inline_keyboard=[[IB(text="⬅️ Karta", callback_data=f"mqc:{mid}")]]))
 
@@ -1114,6 +1241,10 @@ async def add_got(m: Message, state: FSMContext, bot: Bot) -> None:
         moc = await s.get(Moc, mid)
         ids = await _make_seats(s, moc, [], ppl, blanks)
         await s.commit()
+    if moc.kind == "tashqi":
+        from app.bot.moc_ext import issue_ext
+        await m.answer(f"✅ {len(ids)} ta qo'shildi.")
+        return await issue_ext(bot, mid, ids, m.from_user.id, extra=True)
     await m.answer(f"✅ {len(ids)} ta qo'shildi — varaqlar tayyorlanmoqda…")
     await issue(bot, mid, ids, m.from_user.id, booklets=True)
 
@@ -1136,7 +1267,7 @@ async def payments(c: CallbackQuery) -> None:
 async def _pay_view(msg: Message, mid: int) -> None:
     async with Session() as s:
         moc = await s.get(Moc, mid)
-        ext = [z for z in await _seats(s, mid) if not z.enrollment_id and z.name]
+        ext = payers(moc, await _seats(s, mid))
     unpaid = [z for z in ext if z.paid < moc.price]
     text = (f"💵 <b>{moc.title}</b> — narx {S.fmt_som(moc.price)}\nTo'ladi: {len(ext) - len(unpaid)}/{len(ext)} · "
             f"{S.fmt_som(sum(z.paid for z in ext))}" + ("\n\nTo'lamaganlar:" if unpaid else "\n\nHammasi to'ladi ✅"))
@@ -1241,14 +1372,14 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
                             caption=f"📊 Natijalar va savollar tahlili · {n_sent} ta manzilga yuborildi")
     async with Session() as s:
         kind = (await s.get(Moc, mid)).kind
-    if kind == "moc":                                    # nazorat (PDF test) — guruh sertifikatlari 48 soatdan so'ng
+    if kind in ("moc", "tashqi"):                        # nazorat (PDF test) — guruh sertifikatlari 48 soatdan so'ng
         from app.bot.certs import moc_certs
         await moc_certs(bot, mid)
 
 
 def _res_text(moc: Moc, sp: M.Spec, z: MocSeat, n: int) -> str:
     r = z.result
-    lines = [f"{'📄' if moc.kind == 'nazorat' else '🎓'} <b>{moc.title}</b> · {moc.date:%d.%m.%Y}", f"{z.name}",
+    lines = [f"{KIND_ICON.get(moc.kind, '🎓')} <b>{moc.title}</b> · {moc.date:%d.%m.%Y}", f"{z.name}",
              f"Natija: <b>{M.fmt_total(sp, r)}</b>" + (f" · <b>{r['level']}</b>" if r.get("level") else "")
              + (f"\nO'rin: {r['rank']} / {n}" if r.get("rank") else "")]
     if sp.mode == "rasch" and r.get("raw_total") is not None:
@@ -1334,7 +1465,7 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
             z.result = {**z.result, "rank": ranks[z.id]}
         moc.status = "yakun"
         st = await s.get(Staff, staff_id)
-        if moc.kind == "nazorat":
+        if moc.kind in ("nazorat", "tashqi"):
             await _to_exam(s, moc, present, st)
         await S.audit(s, st, "moc_yakun", id=moc.id, n=len(present))
         await s.commit()
@@ -1377,12 +1508,28 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
 
 
 async def _to_exam(s, moc: Moc, present: list[MocSeat], st: Staff | None) -> None:
-    """Tayyor PDF nazorat: haftalik nazorat (Exam) va reyting/coin tizimiga yoziladi."""
-    from app.bot.exams import _apply_coins
-    gid = (moc.group_ids or [None])[0]
-    if not gid:
+    """Nazorat / tashqi test: har bir guruhning haftalik nazorati (Exam) va reyting/coin tizimiga yoziladi."""
+    gids = list(moc.group_ids or [])
+    if not gids:
         return
-    ex = await s.get(Exam, moc.exam_id) if moc.exam_id else None
+    eg = {e.id: e.group_id for e in (await s.execute(select(Enrollment).where(
+        Enrollment.id.in_([z.enrollment_id for z in present if z.enrollment_id] or [0])))).scalars()}
+    done = dict((moc.meta or {}).get("exams") or {})
+    for gid in gids:
+        mine = [z for z in present if z.enrollment_id and eg.get(z.enrollment_id) == gid]
+        if not mine:
+            continue
+        eid = await _to_exam_one(s, moc, gid, mine, st,
+                                 done.get(str(gid)) or (moc.exam_id if len(gids) == 1 else None))
+        done[str(gid)] = eid
+    moc.meta = {**(moc.meta or {}), "exams": done}
+    if len(gids) == 1 and done:
+        moc.exam_id = next(iter(done.values()))
+
+
+async def _to_exam_one(s, moc: Moc, gid: int, present: list[MocSeat], st: Staff | None, eid: int | None) -> int:
+    from app.bot.exams import _apply_coins
+    ex = await s.get(Exam, eid) if eid else None
     if not ex:
         ex = (await s.execute(select(Exam).where(Exam.group_id == gid, Exam.status == "reja",
                                                  Exam.date >= moc.date - timedelta(days=7),
@@ -1395,11 +1542,8 @@ async def _to_exam(s, moc: Moc, present: list[MocSeat], st: Staff | None) -> Non
         s.add(ex)
         await s.flush()
     ex.kind, ex.status, ex.done_at, ex.max_score, ex.topic = "test", "otdi", now().replace(tzinfo=None), 100.0, moc.title[:200]
-    moc.exam_id = ex.id
     rules = await S.get_rules(s)
     for z in present:
-        if not z.enrollment_id:
-            continue
         r = (await s.execute(select(ExamResult).where(ExamResult.exam_id == ex.id,
                                                       ExamResult.enrollment_id == z.enrollment_id))).scalar_one_or_none()
         if not r:
@@ -1411,6 +1555,7 @@ async def _to_exam(s, moc: Moc, present: list[MocSeat], st: Staff | None) -> Non
         await s.flush()
         stu = await s.get(Student, z.student_id)
         await _apply_coins(s, r, stu, rules, st, ex)
+    return ex.id
 
 
 def excel(moc: Moc, sp: M.Spec, seats: list[MocSeat]) -> bytes:

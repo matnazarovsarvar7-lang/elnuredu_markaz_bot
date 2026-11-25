@@ -5,6 +5,8 @@
   Narx: varaq × 500 so'm, 1000 ga yaxlitlanadi (15 varaqgacha yuqoriga, undan ko'pi pastga).
   Admin chiqargach guruh ro'yxatidan kim to'laganini belgilaydi → kassaga tushadi.
   Har to'langan kitobchadan: yuklagan o'qituvchiga 7%, pulni olgan adminga 8% (maoshga qo'shiladi).
+  Narxni qo'lda ham belgilash mumkin (sotib olingan test, maxsus material): bir martalik yoki kitobga doimiy.
+  «🛒 Sotib olingan material» — markaz pul to'lab olgan: muallif ulushi (7%) berilmaydi, admin ulushi qoladi.
 """
 from __future__ import annotations
 
@@ -46,6 +48,7 @@ class Pr(StatesGroup):
     subject = State()
     reason = State()
     setv = State()
+    price = State()
 
 
 # ---------------- yordamchilar ----------------
@@ -567,9 +570,62 @@ async def book_card(c: CallbackQuery) -> None:
         if _role(st) == "rahbar":
             rows.append([IB(text="🗑 Kutubxonadan olib tashlash", callback_data=f"prbd:{b.id}:-1")])
     await c.answer()
+    if st and (st.id == b.owner_id or _role(st) == "rahbar"):
+        rows.append([IB(text="💰 Narx", callback_data=f"prbp:{b.id}"),
+                     IB(text=f"{'✅' if b.bought else '▫️'} 🛒 Sotib olingan", callback_data=f"prbb:{b.id}")])
+    async with Session() as s:
+        unit = int(await num(s, "sheet_price"))
+    auto = P.price(P.sheets(b.pages, b.layout), unit)
     await c.message.answer(f"📗 <b>{b.title}</b>\n📚 {b.subject} · {b.pages} bet\n"
-                           f"Yuklagan: {owner.full_name if owner else '—'} · {used} nusxa chiqarilgan",
+                           + (f"💰 Narx: <b>{S.fmt_som(b.price)}</b> (belgilangan; varaq hisobida {S.fmt_som(auto)})\n"
+                              if b.price is not None else f"💰 Narx: {S.fmt_som(auto)} (varaq hisobida)\n")
+                           + ("🛒 Sotib olingan material — muallif ulushi yo'q\n" if b.bought else "")
+                           + f"Yuklagan: {owner.full_name if owner else '—'} · {used} nusxa chiqarilgan",
                            reply_markup=IM(inline_keyboard=rows))
+
+
+@router.callback_query(F.data.startswith("prbp:"))
+async def book_price(c: CallbackQuery, state: FSMContext) -> None:
+    bid = int(c.data.split(":")[1])
+    async with Session() as s:
+        st, b = await _can_edit(s, c.from_user.id, bid)
+        if not b:
+            return await c.answer("Ruxsat yo'q.", show_alert=True)
+        unit = int(await num(s, "sheet_price"))
+    await state.clear()
+    await state.set_state(Pr.price)
+    await state.update_data(book_price=bid)
+    await c.answer()
+    await c.message.answer(f"💰 <b>{b.title}</b> — 1 dona narxini yozing (so'm).\n"
+                           f"Varaq hisobida: {S.fmt_som(P.price(P.sheets(b.pages, b.layout), unit))}. "
+                           "Avtomatik hisobga qaytarish uchun — <code>avto</code>")
+
+
+async def _book_price_set(m: Message, state: FSMContext, v: int | None) -> None:
+    bid = (await state.get_data()).get("book_price")
+    await state.clear()
+    async with Session() as s:
+        st, b = await _can_edit(s, m.from_user.id, bid)
+        if not b:
+            return
+        b.price = v
+        await S.audit(s, st, "kitob_narx", book=b.id, price=v)
+        await s.commit()
+    await m.answer(f"✅ <b>{b.title}</b>: narx " + (S.fmt_som(v) if v is not None else "avtomatik (varaq hisobida)"),
+                   reply_markup=IM(inline_keyboard=[[IB(text="📗 Kitob", callback_data=f"prb:{bid}")]]))
+
+
+@router.callback_query(F.data.startswith("prbb:"))
+async def book_bought(c: CallbackQuery) -> None:
+    bid = int(c.data.split(":")[1])
+    async with Session() as s:
+        st, b = await _can_edit(s, c.from_user.id, bid)
+        if not b:
+            return await c.answer("Ruxsat yo'q.", show_alert=True)
+        b.bought = not b.bought
+        await S.audit(s, st, "kitob_sotib_olingan", book=b.id, v=b.bought)
+        await s.commit()
+    await c.answer("🛒 Sotib olingan — muallif ulushi berilmaydi" if b.bought else "Muallif ulushi qaytarildi")
 
 
 async def _can_edit(s, tg: int, bid: int) -> tuple[Staff | None, PrintBook | None]:
@@ -754,14 +810,90 @@ async def _set_copies(msg: Message, state: FSMContext, n: int) -> None:
         return await msg.answer("Qisqa izoh (nima uchun, qachongacha kerak):",
                                 reply_markup=IM(inline_keyboard=[[IB(text="⏭ Izohsiz yuborish", callback_data="prnn")]]))
     await state.set_state(None)
+    if d.get("book_id") and "bought" not in d:          # kutubxona kitobi: saqlangan narx va belgi
+        async with Session() as s:
+            b = await s.get(PrintBook, d["book_id"])
+        await state.update_data(bought=bool(b and b.bought), custom=b.price if b and b.price is not None else None,
+                                keep=False)
+    await _kit_confirm(msg, state)
+
+
+async def _kit_confirm(msg: Message, state: FSMContext) -> None:
+    d = await state.get_data()
+    n = d["copies"]
     async with Session() as s:
         unit = int(await num(s, "sheet_price"))
         g = await s.get(Group, d["group_id"]) if d.get("group_id") else None
-    sh, pr, line = _calc_line(d["pages"], d["layout"], unit)
+    sh, auto, line = _calc_line(d["pages"], d["layout"], unit)
+    pr = d["custom"] if d.get("custom") is not None else auto
+    if d.get("custom") is not None:
+        line = (f"{d['pages']} bet · {P.LAYOUT_SHORT[d['layout']]} → {sh} varaq\n"
+                f"💰 Narx: <b>{S.fmt_som(pr)}</b> — qo'lda belgilangan (varaq hisobida {S.fmt_som(auto)})"
+                + (" · 📌 doimiy" if d.get("keep") else ""))
+    warn = ("\n⚠️ <i>Narx qog'oz hisobidan arzon — markaz zarar ko'rishi mumkin.</i>"
+            if 0 < pr < sh * unit * 0.6 else "")
+    bought = d.get("bought")
     await msg.answer(f"📚 <b>{d['title']}</b>" + (f" · {g.name}" if g else "") + f"\n{line}\n"
-                     f"{n} nusxa → {sh * n} varaq qog'oz · jami <b>{S.fmt_som(pr * n)}</b> tushum\n\n"
-                     "Adminga yuboraymi?", reply_markup=IM(inline_keyboard=[
-                         [IB(text="📤 Adminga yuborish", callback_data="prok"), IB(text="❌ Bekor", callback_data="prx")]]))
+                     f"{n} nusxa → {sh * n} varaq qog'oz · jami <b>{S.fmt_som(pr * n)}</b> tushum"
+                     + ("\n🛒 Sotib olingan material — muallif ulushi berilmaydi" if bought else "") + warn
+                     + "\n\nAdminga yuboraymi?", reply_markup=IM(inline_keyboard=[
+                         [IB(text="📤 Adminga yuborish", callback_data="prok")],
+                         [IB(text="✏️ Narxni o'zgartirish", callback_data="prv:e")]
+                         + ([IB(text="↩️ Avto narx", callback_data="prv:a")] if d.get("custom") is not None else []),
+                         [IB(text=f"{'✅' if bought else '▫️'} 🛒 Sotib olingan material (ulushsiz)",
+                             callback_data="prv:b")],
+                         [IB(text="❌ Bekor", callback_data="prx")]]))
+
+
+@router.callback_query(F.data.startswith("prv:"))
+async def price_opts(c: CallbackQuery, state: FSMContext) -> None:
+    v = c.data.split(":")[1]
+    d = await state.get_data()
+    if "copies" not in d or d.get("kind") != "kitob":
+        return await c.answer("Jarayon eskirgan — qaytadan boshlang.", show_alert=True)
+    await c.answer()
+    try:
+        await c.message.edit_reply_markup(reply_markup=None)
+    except Exception:
+        pass
+    if v == "e":
+        async with Session() as s:
+            unit = int(await num(s, "sheet_price"))
+        auto = P.price(P.sheets(d["pages"], d["layout"]), unit)
+        await state.set_state(Pr.price)
+        return await c.message.answer(f"💰 1 dona narxini yozing (so'm). Varaq hisobida: {S.fmt_som(auto)}\n"
+                                      "Masalan: <code>15000</code> · bepul tarqatish uchun — <code>0</code>")
+    if v == "a":
+        await state.update_data(custom=None, keep=False)
+    elif v == "b":
+        await state.update_data(bought=not d.get("bought"))
+    elif v in ("k1", "k0"):
+        await state.update_data(keep=v == "k1")
+    await _kit_confirm(c.message, state)
+
+
+@router.message(Pr.price, F.text, ~F.text.in_(K.menu_texts()))
+async def price_typed(m: Message, state: FSMContext) -> None:
+    if m.text.strip().lower() in ("avto", "auto") and (await state.get_data()).get("book_price"):
+        return await _book_price_set(m, state, None)
+    t = m.text.lower().replace(" ", "").replace("so'm", "").replace("som", "")
+    mul = 1000 if t.endswith(("k", "ming")) else 1
+    t = t.rstrip("kming").replace(",", ".")
+    try:
+        v = int(round(float(t) * mul))
+        assert 0 <= v <= 10_000_000
+    except (ValueError, AssertionError):
+        return await m.answer("Summani raqamda yozing: 15000")
+    if (await state.get_data()).get("book_price"):
+        return await _book_price_set(m, state, v)
+    await state.set_state(None)
+    await state.update_data(custom=v)
+    d = await state.get_data()
+    if d.get("book_id") or d.get("saved"):
+        return await m.answer(f"💰 {S.fmt_som(v)} — bu narx qachon amal qilsin?", reply_markup=IM(inline_keyboard=[
+            [IB(text="📌 Bu kitob uchun doim shu narx", callback_data="prv:k1")],
+            [IB(text="1️⃣ Faqat shu buyurtma", callback_data="prv:k0")]]))
+    await _kit_confirm(m, state)
 
 
 @router.callback_query(F.data == "prnn")
@@ -810,7 +942,18 @@ async def _create(msg: Message, state: FSMContext, tg: int, note: str | None, bo
                               file_id=d["file_id"], file_kind=d["file_kind"], owner_id=st.id, saved=d.get("saved", False))
                 s.add(b)
                 await s.flush()
-            job.book_id, job.file_id, job.file_kind, job.price = b.id, b.file_id, b.file_kind, P.price(sh, unit)
+            auto = P.price(sh, unit)
+            custom = d.get("custom")
+            job.book_id, job.file_id, job.file_kind = b.id, b.file_id, b.file_kind
+            job.price = custom if custom is not None else auto
+            job.auto_price = auto if custom is not None else None
+            job.bought = bool(d.get("bought"))
+            if b.saved:
+                b.bought = job.bought                    # material xususiyati — kitobda saqlanadi
+                if d.get("keep") and custom is not None:
+                    b.price = custom
+                elif custom is None and b.price is not None and not d.get("book_id"):
+                    b.price = None
         else:
             job.file_id, job.file_kind = d["file_id"], d["file_kind"]
         s.add(job)
@@ -850,7 +993,9 @@ async def _job_card(s, job: PrintJob) -> tuple[str, IM | None]:
         b = await s.get(PrintBook, job.book_id)
         cap = (f"📚 <b>Kitobcha №{job.id}</b> — SOTUV\n{b.title} ({b.subject})\n"
                f"{job.pages} bet · {P.LAYOUT_SHORT[job.layout]} → {job.sheets} varaq\n"
-               f"💰 Narx: <b>{S.fmt_som(job.price)}</b> (dona)\n"
+               f"💰 Narx: <b>{S.fmt_som(job.price)}</b> (dona)"
+               + (f" — qo'lda belgilangan (varaq hisobida {S.fmt_som(job.auto_price)})" if job.auto_price is not None else "")
+               + ("\n🛒 Sotib olingan material — muallif ulushi yo'q" if job.bought else "") + "\n"
                f"🖨 {job.copies} nusxa = {total} varaq" + (f" · {g.name}" if g else "")
                + f"\n👤 {st.full_name if st else ''}")
     else:
@@ -1083,7 +1228,7 @@ async def pay_save(c: CallbackQuery, bot: Bot) -> None:
         b = await s.get(PrintBook, job.book_id)
         sv = await book_service(s)
         s.add(ServiceSale(service_id=sv.id, qty=1, amount=job.price, profit=job.price, method=method, by_id=st.id,
-                          job_id=job.id, student_id=sid, owner_id=b.owner_id))
+                          job_id=job.id, student_id=sid, owner_id=None if job.bought else b.owner_id))
         await S.audit(s, st, "kitobcha_tolov", job=job.id, student=sid, amount=job.price, method=method)
         await s.commit()
         x = await s.get(Student, sid) if sid else None
