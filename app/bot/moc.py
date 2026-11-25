@@ -1239,6 +1239,11 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
     await c.message.answer(summary)
     await bot.send_document(c.message.chat.id, BufferedInputFile(xls, f"MOC{mid}_natijalar.xlsx"),
                             caption=f"📊 Natijalar va savollar tahlili · {n_sent} ta manzilga yuborildi")
+    async with Session() as s:
+        kind = (await s.get(Moc, mid)).kind
+    if kind == "moc":                                    # nazorat (PDF test) — guruh sertifikatlari 48 soatdan so'ng
+        from app.bot.certs import moc_certs
+        await moc_certs(bot, mid)
 
 
 def _res_text(moc: Moc, sp: M.Spec, z: MocSeat, n: int) -> str:
@@ -1323,11 +1328,10 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
             z.result = r
         rinfo = await _rasch(s, moc, sp, present) if sp.mode == "rasch" and present else None
         order = sorted(present, key=lambda z: -z.result["total"])
-        rank, prev = 0, None
-        for i, z in enumerate(order, 1):
-            if z.result["total"] != prev:
-                rank, prev = i, z.result["total"]
-            z.result = {**z.result, "rank": rank}
+        from app.bot.certs import dense
+        ranks = dense({z.id: z.result["total"] for z in present})      # teng natija — teng o'rin
+        for z in order:
+            z.result = {**z.result, "rank": ranks[z.id]}
         moc.status = "yakun"
         st = await s.get(Staff, staff_id)
         if moc.kind == "nazorat":
@@ -1390,7 +1394,7 @@ async def _to_exam(s, moc: Moc, present: list[MocSeat], st: Staff | None) -> Non
         ex = Exam(group_id=gid, date=moc.date, week=week, slot=n + 1, conductor_id=st.id if st else None, kind="test")
         s.add(ex)
         await s.flush()
-    ex.kind, ex.status, ex.done_at, ex.max_score, ex.topic = "test", "otdi", datetime.utcnow(), 100.0, moc.title[:200]
+    ex.kind, ex.status, ex.done_at, ex.max_score, ex.topic = "test", "otdi", now().replace(tzinfo=None), 100.0, moc.title[:200]
     moc.exam_id = ex.id
     rules = await S.get_rules(s)
     for z in present:

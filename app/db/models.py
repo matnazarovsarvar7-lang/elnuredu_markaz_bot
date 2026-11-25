@@ -267,6 +267,7 @@ class Exam(Base):
     monthly: Mapped[bool] = mapped_column(Boolean, default=False)
     test_id: Mapped[int | None] = mapped_column(Integer)
     done_at: Mapped[datetime | None] = mapped_column(DateTime)
+    cert_done: Mapped[bool] = mapped_column(Boolean, default=False)   # sertifikatlar berib bo'lingan
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
@@ -759,6 +760,26 @@ class MocSeat(Base):
     pay_method: Mapped[str | None] = mapped_column(String(10))
     entered_by: Mapped[int | None] = mapped_column(Integer)
     sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class Certificate(Base):
+    """Berilgan sertifikat: QR orqali haqiqiyligi tekshiriladi, PDF qayta yuborilishi mumkin."""
+    __tablename__ = "certificates"
+    __table_args__ = (UniqueConstraint("kind", "ref", "who"),)
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(20))       # group_place | month_place | moc_level | moc_place | perfect | star | growth
+    ref: Mapped[str] = mapped_column(String(40))        # exam:12 | month:2026-11 | moc:3 | star:2026-11:g5
+    who: Mapped[str] = mapped_column(String(20))        # s<o'quvchi id> | z<MOC o'rni id>
+    student_id: Mapped[int | None] = mapped_column(Integer)
+    seat_id: Mapped[int | None] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(120))
+    place: Mapped[int | None] = mapped_column(Integer)
+    level: Mapped[str | None] = mapped_column(String(20))
+    data: Mapped[dict] = mapped_column(JSON, default=dict)     # chizish uchun matnlar
+    token: Mapped[str] = mapped_column(String(12))
+    file_id: Mapped[str | None] = mapped_column(String(250))
+    sent: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 

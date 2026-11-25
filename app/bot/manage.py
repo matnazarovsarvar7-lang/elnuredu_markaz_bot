@@ -69,6 +69,7 @@ async def settings_menu(m: Message, state: FSMContext) -> None:
         [IB(text="💳 Moliyadagi xarajat puli", callback_data="set:petty")],
         [IB(text="📐 Moliya foizi va doimiy xarajatlar", callback_data="set:nums")],
         [IB(text="🔐 PIN-kod (pul amallari)", callback_data="set:pin")],
+        [IB(text="🏅 Sertifikatlar", callback_data="set:cert")],
     ])
     await m.answer("🛠 <b>Sozlamalar</b>\nHar bir o'zgarish kiritilgan paytdan kuchga kiradi va tarixga yoziladi.",
                    reply_markup=kb)

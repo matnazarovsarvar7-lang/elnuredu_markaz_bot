@@ -55,6 +55,10 @@ async def start(m: Message, state: FSMContext | None = None, bot: Bot | None = N
         from app.bot.moc import claim
         if await claim(m, arg, bot):
             return
+    if arg.startswith("c") and "_" in arg:                   # sertifikat QR: haqiqiyligini tekshirish
+        from app.bot.certs import verify
+        if await verify(m, arg):
+            return
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
     if who.staff or who.parent or who.student:

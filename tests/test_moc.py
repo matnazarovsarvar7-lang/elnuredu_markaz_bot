@@ -105,3 +105,13 @@ def test_rasch_recovers_and_equates():
     assert 0.4 < gap < 1.2                      # B variant qiyinroq ekanini topadi
     a, b = R.linear_scale(f.theta, f.theta * 10 + 50)
     assert abs(a - 50) < 1e-6 and abs(b - 10) < 1e-6
+
+
+def test_dense_ties_and_tones():
+    from app.bot.certs import dense, level_tone
+    r = dense({"a": 96, "b": 96, "c": 91.0, "d": 88, "e": 88.04})
+    assert r == {"a": 1, "b": 1, "c": 2, "d": 3, "e": 3}
+    assert level_tone("A+")[0] == "gold" and level_tone("B2")[0] == "silver" and level_tone("C")[0] == "bronze"
+    assert level_tone("Band 6.5")[0] == "silver"
+    from app.logic.certificate import uz
+    assert uz("o'rin g'olib To'xtash Ma'ruf") == "o‘rin g‘olib To‘xtash Ma’ruf"

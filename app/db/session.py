@@ -63,6 +63,7 @@ MIGRATIONS = [
     "ALTER TABLE service_sales ADD COLUMN job_id INTEGER",
     "ALTER TABLE service_sales ADD COLUMN student_id INTEGER",
     "ALTER TABLE service_sales ADD COLUMN owner_id INTEGER",
+    "ALTER TABLE exams ADD COLUMN cert_done BOOLEAN DEFAULT FALSE",
 ]
 
 

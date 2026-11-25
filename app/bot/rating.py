@@ -289,6 +289,7 @@ STAR_COINS = 10
 async def month_stars(bot: Bot) -> None:
     end = today() - timedelta(days=1)
     msgs: list[tuple[int, str]] = []
+    cert_ids: list[int] = []
     async with Session() as s:
         if await s.get(Setting, f"stars_{end:%Y-%m}"):
             return
@@ -307,9 +308,20 @@ async def month_stars(bot: Bot) -> None:
             for r, why in winners:
                 stu = await s.get(Student, r.sid)
                 await S.add_coins(s, stu, STAR_COINS, "reyting", f"Oy yulduzi {end:%m.%Y}: {g.name}")
+                from app.bot.certs import star_cert
+                grow_by = (r.score - before[r.eid]) if r is not best and before.get(r.eid) is not None else None
+                cid = await star_cert(s, "star" if r is best else "growth", f"{end:%Y-%m}", g.id, r.sid, stu.full_name,
+                                      g.name, r.score, grow_by)
+                if cid:
+                    cert_ids.append(cid)
                 for tg in await S.parent_tg_ids(s, r.sid):
                     msgs.append((tg, f"🌟 <b>Oy yulduzi!</b> {r.name} — «{g.name}» guruhida {end:%m.%Y} oyining {why}. "
                                      f"Tabriklaymiz! 🎉"))
         await s.commit()
     for tg, txt in msgs:
         await send(bot, tg, txt)
+    if cert_ids:
+        from app.bot.certs import deliver
+        async with Session() as s:
+            bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
+        await deliver(bot, cert_ids, f"Oy yulduzlari — {end:%m.%Y}", bosses)
