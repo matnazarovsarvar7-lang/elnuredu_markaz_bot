@@ -99,6 +99,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_CASH_CLOSE, B_HANDOVER])
         rows.append([B_EXPENSE, B_SERVICES])
         rows.append([B_STOCK, B_PRINT])
+        rows.append([B_MOC])
     if role == "admin":
         rows.append([B_STUDENT, B_DEBTS])
         rows.append([B_NEW_STUDENT, B_LEADS])

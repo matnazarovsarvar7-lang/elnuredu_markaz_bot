@@ -21,9 +21,12 @@ STOP = {"ball", "bal", "ta", "foiz", "daraja", "natija", "natijasi", "togri", "j
         "fish", "fio", "ism", "familiya", "ishtirokchi", "oquvchi", "guruh", "variant", "ball:", "umumiy",
         "kelmadi", "qatnashmadi", "kelmagan", "yoq", "reyting", "orin", "test", "baho", "max", "maks", "dan",
         "javoblar", "javobi", "togrilar", "savol", "savollar", "ballar", "umumiy", "foizi", "sertifikati", "xato",
-        "xatolar", "natijalar", "vaqt", "sana", "fan", "natijangiz", "tabriklaymiz", "darajasi", "ishtirokchilar", "soni"}
+        "xatolar", "natijalar", "vaqt", "sana", "fan", "natijangiz", "tabriklaymiz", "darajasi", "ishtirokchilar", "soni", "id", "qism",
+        "bosqich", "pers", "persentil", "reyting", "joy", "viloyat", "tuman", "maktab", "sinf", "kod"}
 ABSENT = ("kelmadi", "qatnashmadi", "kelmagan", "ishtirok etmadi", "н/я", "неявка")
 LEVEL = re.compile(r"^(?:[ABC][12]?\+?|[ABC]\+|PRE-?A1|A0)$", re.I)
+LVL_AFTER = re.compile(r"(\d+(?:[.,]\d+)?)\s*[|;,]?\s*\(?\b([ABC][12]?\+?)(?=[\s|;,)]|$)")
+PCT = re.compile(r"\d+(?:[.,]\d+)?\s*%")
 NUM = re.compile(r"(?<![\w.,])(\d+(?:[.,]\d+)?)(?:\s*/\s*(\d+(?:[.,]\d+)?))?(?![\w])")
 PHONE = re.compile(r"\+?998[\d\s\-()]{9,14}|\b\d{2}[\s\-]\d{3}[\s\-]\d{2}[\s\-]\d{2}\b|\b\d{9}\b")
 DATE = re.compile(r"\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b|\b\d{1,2}:\d{2}\b")
@@ -92,6 +95,8 @@ class Row:
     name: str
     value: float | None          # None — kelmagan
     raw: str
+    level: str | None = None     # kanal bergan daraja (C, B+, …)
+    rank: int | None = None      # umumiy ro'yxatdagi o'rin
     seat: int | None = None
     sim: float = 0.0
     cands: list[int] = field(default_factory=list)
@@ -106,13 +111,16 @@ def parse_line(line: str, mx: float) -> Row | str | None:
     s = " ".join(line.replace("\t", " ").split())
     if len(s) < 3:
         return None
-    s = PHONE.sub(" ", DATE.sub(" ", s))
+    s = PCT.sub(" ", PHONE.sub(" ", DATE.sub(" ", s)))           # foizlar ball emas
     nums = NUM.findall(s)
     body = INDEX.sub("", s, count=1)
+    rank = None
     if body != s:
+        rank = int(re.match(r"\D*(\d+)", s).group(1))
         nums = NUM.findall(body)
-    elif len(nums) >= 2 and re.match(r"^\s*\d{1,4}\s+[^\d\s]", s):      # «1 Aliyev Vali 56»
-        body = re.sub(r"^\s*\d{1,4}\s+", "", s)
+    elif len(nums) >= 2 and re.match(r"^\s*\d{1,5}\s+[^\d\s]", s):      # «610 Aliyev Vali 47.39 C»
+        rank = int(re.match(r"\s*(\d+)", s).group(1))
+        body = re.sub(r"^\s*\d{1,5}\s+", "", s)
         nums = NUM.findall(body)
     words = [w for w in re.findall(r"[^\W\d_][^\s\d|,;:—–\-()]*", body) if not LEVEL.match(w.strip(".+"))]
     name = " ".join(w for w in words if tokens(w))
@@ -120,37 +128,54 @@ def parse_line(line: str, mx: float) -> Row | str | None:
         return None
     low = latin(body).lower()
     if any(k in low for k in ABSENT):
-        return Row(name, None, line.strip())
+        return Row(name, None, line.strip(), rank=rank)
+    # 0) daraja oldidagi son — umumiy ball («… 47.39 C 72.9% …»)
+    for a, lv in LVL_AFTER.findall(body):
+        v = _num(a)
+        if 0 <= v <= mx:
+            return Row(name, v, line.strip(), lv.upper(), rank)
     # 1) «Ball: 62» yoki «62.5 ball» — yorliqli son ustun
     for rx in (r"(?:ball|natija|umumiy|jami)[^\d\n]{0,8}?(\d+(?:[.,]\d+)?)(?!\s*/)", r"(\d+(?:[.,]\d+)?)\s*(?:ball|bal\b)"):
         hit = [_num(x) for x in re.findall(rx, low)]
         hit = [v for v in hit if 0 <= v <= mx]
         if hit:
-            return Row(name, hit[-1], line.strip())
+            return Row(name, hit[-1], line.strip(), rank=rank)
     # 2) «33/45» — to'g'ri javoblar soni; boshqa son bo'lsa o'shani olamiz
     plain = [_num(a) for a, b in nums if not b]
     frac = [_num(a) for a, b in nums if b]
     ok = [v for v in plain if 0 <= v <= mx] or [v for v in frac if 0 <= v <= mx]
     if ok:
-        return Row(name, ok[-1], line.strip())
+        return Row(name, ok[-1], line.strip(), rank=rank)
     if not nums:
         return None                                   # sarlavha, izoh yoki natijasiz ism
     return line.strip()
 
 
+def _is_name(t: str) -> bool:
+    words = [w for w in re.findall(r"[^\W\d_][^\s\d]*", t) if not LEVEL.match(w.strip(".+()"))]
+    return any(len(x) >= 3 for x in tokens(" ".join(words)))
+
+
 def _stream(lines: list[str]) -> list[str]:
-    """Jadval ustunlari alohida qatorlarga tushgan PDF: «ism» qatori + keyingi raqam qatorlari = bitta yozuv."""
+    """Jadval ustunlari alohida qatorlarga tushgan PDF: [o'rin] + ism qatori + keyingi raqam qatorlari = bitta yozuv."""
+    ls = [x.strip() for x in lines if x.strip()]
     out, cur = [], ""
-    for ln in lines:
-        t = ln.strip()
-        if not t:
+    i = 0
+    while i < len(ls):
+        t = ls[i]
+        if re.fullmatch(r"\d{1,5}", t) and i + 1 < len(ls) and _is_name(ls[i + 1]):
+            if cur:
+                out.append(cur)
+            cur = t + " " + ls[i + 1]
+            i += 2
             continue
-        if tokens(t) and not re.fullmatch(r"[\d\s.,/%+\-]+", t):
+        if _is_name(t):
             if cur:
                 out.append(cur)
             cur = t
         elif cur:
             cur += " " + t
+        i += 1
     if cur:
         out.append(cur)
     return out
@@ -209,11 +234,21 @@ def text_from_file(data: bytes, fname: str) -> str:
 THRESH, GAP = 0.8, 0.06
 
 
-def match(rows: list[Row], seats: list[tuple[int, str]]) -> None:
-    """Har bir qatorga eng mos qatnashchini biriktiradi (bir qatnashchi — bitta qator). Noaniqlar — cands bilan."""
-    pairs = []
+def big_list(rows: list[Row], seats: list[tuple[int, str]]) -> bool:
+    """Kanalning umumiy (respublika) ro'yxati — bizdan boshqa markazlar ham bor."""
+    return len(rows) > 2 * len(seats) + 10
+
+
+def match(rows: list[Row], seats: list[tuple[int, str]]) -> int:
+    """Har bir qatorga eng mos qatnashchini biriktiradi (bir qatnashchi — bitta qator). Noaniqlar — cands bilan.
+    Umumiy ro'yxatda bizga o'xshamagan qatorlar (boshqa markazlar) olib tashlanadi; ularning soni qaytariladi."""
+    big = big_list(rows, seats)
+    pairs, foreign = [], []
     for i, r in enumerate(rows):
         sims = sorted(((name_sim(r.name, nm), sid) for sid, nm in seats), reverse=True)
+        if big and (not sims or sims[0][0] < 0.7):
+            foreign.append(i)
+            continue
         r.cands = [sid for v, sid in sims[:6] if v >= 0.45]
         if sims and sims[0][0] >= THRESH and (len(sims) == 1 or sims[1][0] < sims[0][0] - GAP):
             pairs.append((sims[0][0], i, sims[0][1]))
@@ -223,3 +258,6 @@ def match(rows: list[Row], seats: list[tuple[int, str]]) -> None:
             continue
         rows[i].seat, rows[i].sim = sid, v
         taken.add(sid)
+    for i in reversed(foreign):
+        del rows[i]
+    return len(foreign)

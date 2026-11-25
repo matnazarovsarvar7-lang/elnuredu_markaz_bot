@@ -109,6 +109,24 @@ async def exp_start(m: Message, state: FSMContext, tg_id: int | None = None) -> 
     await m.answer(head + "Toifani tanlang:", reply_markup=IM(inline_keyboard=rows))
 
 
+async def start_linked(msg: Message, state: FSMContext, tg: int, cat: str, note_prefix: str, link: dict) -> None:
+    """Boshqa bo'limdan (masalan imtihon kartasidan) xarajat kiritish: toifa tayyor, xarajat o'sha joyga bog'lanadi."""
+    async with Session() as s:
+        who = await S.who_by_tg(s, tg)
+        if not (who.staff and who.staff.current_role in ("moliya", "rahbar")):
+            return
+        from app.bot.vault import petty_balance
+        pb = await petty_balance(s)
+    if who.staff.current_role == "moliya" and pb is None:
+        await msg.answer("💳 Xarajat puli hali yo'q. Rahbar «💼 Kassa → 💳 Moliyaga xarajat puli berish» orqali bergach, "
+                         "xarajat kiritiladi.")
+        return
+    await state.clear()
+    await state.update_data(cat=cat, link=link, note_prefix=note_prefix)
+    await state.set_state(Ex.amount)
+    await msg.answer(f"🧾 <b>{cat}</b>\n{note_prefix}\n\nSumma (so'm):")
+
+
 @router.callback_query(Ex.cat, F.data.startswith("xc:"))
 async def exp_cat(c: CallbackQuery, state: FSMContext) -> None:
     async with Session() as s:
@@ -146,7 +164,8 @@ async def exp_method(c: CallbackQuery, state: FSMContext) -> None:
 
 @router.message(Ex.note)
 async def exp_note(m: Message, state: FSMContext) -> None:
-    await state.update_data(note=(m.text or "").strip()[:300])
+    d = await state.get_data()
+    await state.update_data(note=((d.get("note_prefix") or "") + " " + (m.text or "").strip()).strip()[:300])
     await state.set_state(Ex.receipt)
     await m.answer("📷 Chekni yuboring — rasm yoki PDF fayl (chek bo'lmasa — «chek yo'q» deb yozing):")
 
@@ -186,6 +205,13 @@ async def exp_save(m: Message, state: FSMContext, bot: Bot) -> None:
         await S.audit(s, who.staff, "xarajat", category=d["cat"], amount=d["amount"], status=e.status)
         await s.commit()
         eid, status = e.id, e.status
+        link = d.get("link") or {}
+        if link.get("moc"):
+            from app.db.models import Moc
+            mc = await s.get(Moc, link["moc"])
+            if mc:
+                mc.meta = {**(mc.meta or {}), "exp": list((mc.meta or {}).get("exp") or []) + [eid]}
+                await s.commit()
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         name = who.staff.full_name
         bb = await boss_balance(s)

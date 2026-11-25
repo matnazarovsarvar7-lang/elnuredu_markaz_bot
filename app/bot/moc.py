@@ -36,6 +36,7 @@ VARS = "ABCDEF"
 MAKERS = ("rahbar", "oqituvchi", "yordamchi")
 VIEWERS = MAKERS + ("admin", "moliya")
 KIND_ICON = {"moc": "🎓", "nazorat": "📄", "tashqi": "🌐"}
+PRICERS = ("moliya", "rahbar")              # qatnashish narxi va xarid xarajatini faqat shular kiritadi
 
 
 def payers(moc: Moc, seats: list[MocSeat]) -> list[MocSeat]:
@@ -521,6 +522,12 @@ async def participants_done(c: CallbackQuery, state: FSMContext) -> None:
     if not (w.get("gids") or w.get("ext") or w.get("blanks")):
         return await c.answer("Kamida bitta guruh, tashqi qatnashchi yoki bo'sh varaq tanlang.", show_alert=True)
     await c.answer()
+    async with Session() as s:
+        st = await _staff(s, c.from_user.id)
+    if _role(st) not in PRICERS:                # narx — markaz moliyasi ishi: moliya/rahbar kartada belgilaydi
+        w["price"] = 0
+        await state.update_data(w=w)
+        return await _confirm(c.message, state)
     if w.get("ext") or w.get("blanks") or w.get("kind") == "tashqi":
         await state.set_state(Mc.price)
         who = "Qatnashish" if w.get("kind") == "tashqi" else "Tashqi qatnashchilar uchun imtihon"
@@ -630,6 +637,9 @@ async def wizard_ok(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         await S.audit(s, st, "moc_yaratildi", id=moc.id, title=moc.title, seats=len(ids))
         await s.commit()
         mid = moc.id
+    if _role(st) not in PRICERS and (w["kind"] == "tashqi" or w.get("ext")):
+        from app.bot.moc_ext import ask_price
+        await ask_price(bot, mid)
     if w["kind"] == "tashqi":
         from app.bot.moc_ext import issue_ext
         await issue_ext(bot, mid, ids, c.from_user.id)
@@ -751,6 +761,11 @@ async def _seats(s, mid: int) -> list[MocSeat]:
     return list((await s.execute(select(MocSeat).where(MocSeat.moc_id == mid).order_by(MocSeat.id))).scalars())
 
 
+async def _money_line(moc: Moc, payers_: list[MocSeat]) -> str:
+    from app.bot.moc_ext import money_line
+    return await money_line(moc, payers_)
+
+
 async def card(msg: Message, mid: int, tg: int, edit: bool = False) -> None:
     async with Session() as s:
         moc = await s.get(Moc, mid)
@@ -804,6 +819,10 @@ async def card(msg: Message, mid: int, tg: int, edit: bool = False) -> None:
                 [IB(text="👥 Qatnashchilar", callback_data=f"mql:{mid}")])
     if moc.price and ext:
         rows.append([IB(text="💵 To'lovlar", callback_data=f"mqp:{mid}")])
+    if r in PRICERS:
+        from app.bot.moc_ext import money_rows
+        rows += money_rows(moc)
+        lines.append(await _money_line(moc, ext))
     if moc.status != "yakun" and r in MAKERS:
         rows.append([IB(text="🏁 Yakunlash va natijalarni yuborish", callback_data=f"mqz:{mid}")])
     if moc.status == "yakun":
@@ -1381,7 +1400,10 @@ def _res_text(moc: Moc, sp: M.Spec, z: MocSeat, n: int) -> str:
     r = z.result
     lines = [f"{KIND_ICON.get(moc.kind, '🎓')} <b>{moc.title}</b> · {moc.date:%d.%m.%Y}", f"{z.name}",
              f"Natija: <b>{M.fmt_total(sp, r)}</b>" + (f" · <b>{r['level']}</b>" if r.get("level") else "")
-             + (f"\nO'rin: {r['rank']} / {n}" if r.get("rank") else "")]
+             + (f"\n{'Markazda' if r.get('ext_rank') else 'O`rin'}: {r['rank']}"
+                + (f"-o'rin ({n} kishidan)" if r.get("ext_rank") else f" / {n}") if r.get("rank") else "")
+             + (f"\n🌍 Umumiy reytingda: {r['ext_rank']}-o'rin" + (f" ({r['ext_of']} ta qatnashchidan)" if r.get("ext_of") else "")
+                if r.get("ext_rank") else "")]
     if sp.mode == "rasch" and r.get("raw_total") is not None:
         lines.append(f"Xom ball: {r['primary']:g} / {r['primary_max']:g} (oddiy hisobda {r['raw_total']:g})")
     for x in r["sections"]:
@@ -1456,6 +1478,11 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
                     wrong.append(f"{q} ({'—' if a == '-' else 'ikkita' if a == '*' else a}→{key[q - 1]})")
             r["wrong"] = wrong
             r.pop("per_q", None)
+            ext = (z.baho or {}).get("_ext") or {}
+            if ext.get("lvl") and sp.levels:              # tashqi kanal bergan daraja — o'shani qo'yamiz
+                r["level"] = ext["lvl"]
+            if ext.get("rank"):
+                r["ext_rank"], r["ext_of"] = ext["rank"], ext.get("of")
             z.result = r
         rinfo = await _rasch(s, moc, sp, present) if sp.mode == "rasch" and present else None
         order = sorted(present, key=lambda z: -z.result["total"])

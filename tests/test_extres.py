@@ -25,3 +25,15 @@ def test_matching_cyrillic_order_initials():
     E.match(rows, seats)
     assert [r.seat for r in rows] == [1, 2, 3, None]          # «Sobirova M.» — ikki nomzod, so'raladi
     assert set(rows[3].cands[:2]) == {4, 5}
+
+
+def test_national_list_row_level_and_rank():
+    rows, _ = E.parse_text(["610 Kumush Xudayberdiyeva 31.83 15.56 47.39 C 72.9% 78.8\n"
+                            "612 ID 0030 29.76 17.61 47.37 C 72.9% 78.8"], 75)
+    assert [(r.name, r.value, r.level, r.rank) for r in rows] == [("Kumush Xudayberdiyeva", 47.39, "C", 610)]
+
+
+def test_pdf_cells_one_per_line():
+    txt = "№\nF.I.Sh\nBall\nDaraja\n610\nKumush Xudayberdiyeva\n31.83\n15.56\n47.39\nC\n72.9%\n78.8\n611\nKomilov Islombek\n29.08\n18.3\n47.38\nC\n72.9%\n78.8"
+    rows, _ = E.parse_text([txt], 75)
+    assert [(r.name, r.value, r.rank) for r in rows] == [("Kumush Xudayberdiyeva", 47.39, 610), ("Komilov Islombek", 47.38, 611)]
