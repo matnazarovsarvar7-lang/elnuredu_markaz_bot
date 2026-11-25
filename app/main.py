@@ -80,6 +80,31 @@ async def announce_scanner(bot: Bot) -> None:
             pass
 
 
+async def announce_menu_v2(bot: Bot) -> None:
+    """Bir marta: hamma xodimga yangi (ixcham) menyu; rahbarga — bo'limlar haqida qisqa izoh."""
+    from app.db.session import Session
+    from sqlalchemy import select
+    from app.db.models import Setting, Staff
+    from app.bot import keyboards as K
+    async with Session() as s:
+        if await s.get(Setting, "menu_v2"):
+            return
+        s.add(Setting(key="menu_v2", value={"on": True}))
+        staff = list((await s.execute(select(Staff).where(Staff.tg_id.is_not(None), Staff.active))).scalars())
+        await s.commit()
+    for st in staff:
+        role = st.current_role or (st.role_list() or ["oqituvchi"])[0]
+        text = ("✨ <b>Menyu yangilandi</b> — ixchamroq bo'ldi.\n" + (
+            "Eng ko'p ishlatiladiganlar asosiy menyuda, qolganlari uchta bo'limda:\n"
+            "🎓 Ta'lim · 💰 Moliya · 🏢 Boshqaruv. Qaytish — «⬅️ Asosiy menyu».\n"
+            "Har tugma nima qilishi — «ℹ️ Yordam»." if role == "rahbar" else
+            "Har tugma nima qilishi — «ℹ️ Yordam»."))
+        try:
+            await bot.send_message(st.tg_id, text, reply_markup=K.staff_menu(role, len(st.role_list()) > 1))
+        except Exception:
+            pass
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     await init_db()
@@ -127,6 +152,7 @@ async def main() -> None:
     dp.include_router(router)
     setup_jobs(bot)
     await announce_scanner(bot)
+    await announce_menu_v2(bot)
     from app import agent_api
     await agent_api.start(bot)          # printer dasturi uchun API (faqat ichki port, tashqariga Caddy orqali)
     await dp.start_polling(bot)

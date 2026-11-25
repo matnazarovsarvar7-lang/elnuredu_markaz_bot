@@ -50,11 +50,22 @@ async def _sender(s, tg: int):
 @router.message(F.text == K.B_APPEAL)
 async def start(m: Message, state: FSMContext) -> None:
     await state.clear()
+    await _menu(m, m.from_user.id)
+
+
+@router.callback_query(F.data == "mjopen")
+async def open_from_hint(c: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await c.answer()
+    await _menu(c.message, c.from_user.id)
+
+
+async def _menu(m: Message, tg: int) -> None:
     async with Session() as s:
-        par, kids = await _sender(s, m.from_user.id)
+        par, kids = await _sender(s, tg)
         if not kids:
             return
-        mine = list((await s.execute(select(Murojaat).where(Murojaat.from_tg == m.from_user.id)
+        mine = list((await s.execute(select(Murojaat).where(Murojaat.from_tg == tg)
                                      .order_by(Murojaat.id.desc()).limit(5))).scalars())
     boss = [k for k in CATS if k != "ustoz"]
     rows = [[IB(text="👨‍🏫 Ustozga yozish", callback_data="mjc:ustoz")]]

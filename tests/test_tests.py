@@ -53,6 +53,10 @@ def test_menus_have_core_buttons():
     from app.bot import keyboards as K
     flat = lambda kb: {b.text for r in kb.keyboard for b in r}
     boss = flat(K.staff_menu("rahbar", False))
+    assert len(K.staff_menu("rahbar", True).keyboard) <= 7          # telefon ekraniga sig'sin
+    for key in K.SECTIONS:                                           # bo'limlar orqali hammasi qo'l ostida
+        assert key in boss
+        boss |= flat(K.section_menu(key))
     assert {K.B_STUDENT, K.B_GROUPS, K.B_NEW_STUDENT, K.B_PAY_IN, K.B_CASH, K.B_NOW, K.B_MARKET, K.B_TODAY} <= boss
     fin = flat(K.staff_menu("moliya", True))
     assert {K.B_STUDENT, K.B_CASH_CLOSE, K.B_HANDOVER, K.B_MARKET, K.B_SWITCH} <= fin

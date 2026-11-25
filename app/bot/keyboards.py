@@ -49,6 +49,11 @@ B_MARKET = "🛍 Market"
 B_DELEGATE = "🤝 Yordamchi"
 B_LEAVE = "🛂 Ruxsat"
 B_PARENT_PAY = "💳 To'lov chekini yuborish"
+# rahbar menyusi bo'limlari (pastki menyu almashadi; «⬅️ Asosiy menyu» — qaytish)
+B_SEC_EDU = "🎓 Ta'lim bo'limi"
+B_SEC_FIN = "💰 Moliya bo'limi"
+B_SEC_ADM = "🏢 Boshqaruv bo'limi"
+B_BACK = "⬅️ Asosiy menyu"
 
 
 def guest_kb() -> ReplyKeyboardMarkup:
@@ -62,49 +67,61 @@ def contact_kb() -> ReplyKeyboardMarkup:
                                resize_keyboard=True, one_time_keyboard=True)
 
 
+def _kb(rows: list[list[str]]) -> ReplyKeyboardMarkup:
+    def btn(t: str) -> KeyboardButton:
+        if t == B_SCAN and settings.scanner_url:          # jonli kamera (Telegram Mini App)
+            return KeyboardButton(text=t, web_app=WebAppInfo(url=settings.scanner_url))
+        return KeyboardButton(text=t)
+    return ReplyKeyboardMarkup(keyboard=[[btn(t) for t in r] for r in rows], resize_keyboard=True, is_persistent=True)
+
+
 def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
+    tail = [B_HELP] + ([B_SWITCH] if multi else [])
+    if role == "rahbar":                 # eng ko'p ishlatiladiganlar + 3 ta bo'lim (32 tugma 17 qatorda edi)
+        return _kb([[B_PENDING, B_NOW],
+                    [B_PAY_IN, B_DEBTS],
+                    [B_STUDENT, B_NEW_STUDENT],
+                    [B_TODAY, B_SCAN],
+                    [B_SEC_EDU, B_SEC_FIN],
+                    [B_SEC_ADM] + tail])
     rows: list[list[str]] = []
-    if role in ("oqituvchi", "yordamchi", "rahbar"):
+    if role in ("oqituvchi", "yordamchi"):
         rows.append([B_TODAY, B_EXAMS])
         rows.append([B_TESTS, B_SCAN])
-        rows.append([B_RATING, B_LIBRARY])
-        rows.append([B_PRINT])
+        rows.append([B_RATING, B_APPEALS])
+        rows.append([B_LIBRARY, B_PRINT])
     if role == "oqituvchi":
         rows.append([B_DELEGATE, B_ACHIEVE])
-    if role in ("oqituvchi", "yordamchi"):
-        rows.append([B_APPEALS])
-    if role in ("moliya", "rahbar"):
+    if role == "moliya":
         rows.append([B_PAY_IN, B_DEBTS])
         rows.append([B_STUDENT, B_GROUPS])
         rows.append([B_NEW_STUDENT, B_MARKET])
-    if role == "moliya":
         rows.append([B_CASH_CLOSE, B_HANDOVER])
-        rows.append([B_STOCK, B_PRINT])
-    if role in ("moliya", "rahbar"):
         rows.append([B_EXPENSE, B_SERVICES])
+        rows.append([B_STOCK, B_PRINT])
     if role == "admin":
         rows.append([B_STUDENT, B_DEBTS])
         rows.append([B_NEW_STUDENT, B_LEADS])
         rows.append([B_SERVICES, B_STOCK])
         rows.append([B_ACHIEVE, B_PRINT])
         rows.append([B_LIBRARY, B_MOC])
-    if role == "rahbar":
-        rows.append([B_PENDING, B_STAFF])
-        rows.append([B_APPEALS])
-        rows.append([B_TASK_NEW, B_TASKS_ALL])
-        rows.append([B_NOW, B_LEADS])
-        rows.append([B_DELEGATE, B_LEAVE])
-        rows.append([B_CASH, B_REPORT])
-        rows.append([B_ACHIEVE, B_HISTORY])
-        rows.append([B_SETTINGS, B_STOCK])
-    else:
-        rows.append([B_MY_TASKS, B_MY_SALARY])
-    rows.append([B_HELP] + ([B_SWITCH] if multi else []))
-    def btn(t: str) -> KeyboardButton:
-        if t == B_SCAN and settings.scanner_url:          # jonli kamera (Telegram Mini App)
-            return KeyboardButton(text=t, web_app=WebAppInfo(url=settings.scanner_url))
-        return KeyboardButton(text=t)
-    return ReplyKeyboardMarkup(keyboard=[[btn(t) for t in r] for r in rows], resize_keyboard=True, is_persistent=True)
+    rows.append([B_MY_TASKS, B_MY_SALARY])
+    rows.append(tail)
+    return _kb(rows)
+
+
+SECTIONS = {
+    B_SEC_EDU: ("🎓 <b>Ta'lim bo'limi</b>", [[B_EXAMS, B_TESTS], [B_MOC, B_RATING], [B_APPEALS, B_ACHIEVE],
+                                            [B_LIBRARY, B_PRINT], [B_BACK]]),
+    B_SEC_FIN: ("💰 <b>Moliya bo'limi</b>", [[B_CASH, B_REPORT], [B_EXPENSE, B_SERVICES], [B_MARKET, B_STOCK],
+                                            [B_BACK]]),
+    B_SEC_ADM: ("🏢 <b>Boshqaruv bo'limi</b>", [[B_STAFF, B_GROUPS], [B_TASK_NEW, B_TASKS_ALL], [B_LEADS, B_DELEGATE],
+                                               [B_LEAVE, B_HISTORY], [B_SETTINGS, B_BACK]]),
+}
+
+
+def section_menu(key: str) -> ReplyKeyboardMarkup:
+    return _kb(SECTIONS[key][1])
 
 
 def parent_menu(switch: bool = False) -> ReplyKeyboardMarkup:

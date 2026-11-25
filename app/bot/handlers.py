@@ -192,8 +192,15 @@ async def today_lessons(m: Message) -> None:
     rows = [[InlineKeyboardButton(text=(f"{g.start_time:%H:%M} · " if g.start_time else "") + g.name
                                   + (" · qo'shimcha dars" if l and l.extra else ""), callback_data=f"grp:{g.id}")]
             for g, l in groups]
-    if who.staff.current_role in ("oqituvchi", "rahbar"):
-        rows.append([InlineKeyboardButton(text="❌ Darsni bekor qilish / 📅 qo'shimcha dars", callback_data="lc:menu")])
+    extra = [InlineKeyboardButton(text="❌ Darsni bekor qilish / 📅 qo'shimcha dars", callback_data="lc:menu")] \
+        if who.staff.current_role in ("oqituvchi", "rahbar") else None
+    if len(groups) == 1:                     # bitta dars — davomat darhol ochiladi (ortiqcha bosish yo'q)
+        g, _ = groups[0]
+        if extra:
+            await m.answer(f"📋 Bugun bitta dars: <b>{g.name}</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=[extra]))
+        return await _open_group(m, g.id, edit=False)
+    if extra:
+        rows.append(extra)
     await m.answer("Bugungi darslaringiz. Guruhni tanlang:" if groups else "Bugun sizda dars yo'q.",
                    reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
@@ -207,7 +214,19 @@ async def _roster_rows(s, lesson: Lesson, draft: dict[int, str], default: str):
 
 @router.callback_query(F.data.startswith("grp:"))
 async def open_group(c: CallbackQuery) -> None:
-    gid = int(c.data.split(":")[1])
+    await c.answer()
+    await _open_group(c.message, int(c.data.split(":")[1]), edit=True)
+
+
+async def _open_group(msg: Message, gid: int, edit: bool) -> None:
+    async def out(text: str, kb=None):
+        if edit:
+            try:
+                return await msg.edit_text(text, reply_markup=kb)
+            except Exception:
+                pass
+        return await msg.answer(text, reply_markup=kb)
+
     async with Session() as s:
         g = await s.get(Group, gid)
         les = await S.get_or_create_lesson(s, gid, today())
@@ -215,19 +234,19 @@ async def open_group(c: CallbackQuery) -> None:
         if les.confirmed_at and les.id not in DRAFT_HW:
             from app.bot.homework import lesson_status_text, prompt_kb
             text, given = await lesson_status_text(les.id)
-            await c.message.edit_text("Davomat olingan ✅\n\n" + text, reply_markup=prompt_kb(les.id, given))
+            await out("Davomat olingan ✅\n\n" + text, prompt_kb(les.id, given))
             from app.bot.homework import exam_note
-            await exam_note(c.message, les.id)
+            await exam_note(msg, les.id)
             return
         draft = DRAFT_ATT.setdefault(les.id, {})
         rows = await _roster_rows(s, les, draft, "k")
     if not rows:
-        await c.message.edit_text(f"{g.name}: guruhda faol o'quvchi yo'q.")
+        await out(f"{g.name}: guruhda faol o'quvchi yo'q.")
         return
-    await c.message.edit_text(
+    await out(
         f"<b>{g.name}</b> · {les.date:%d.%m.%Y}\nHammasi «keldi» deb belgilangan. Kelmaganni bir marta, "
         "kechikkanni ikki marta bosing, keyin «💾 Tasdiqlash va davom etish» ni bosing — shundan keyin "
-        "uy vazifasi va «🔔 Dars tugadi» tugmalari chiqadi.", reply_markup=K.attendance_kb(les.id, rows))
+        "uy vazifasi va «🔔 Dars tugadi» tugmalari chiqadi.", K.attendance_kb(les.id, rows))
 
 
 @router.callback_query(F.data.startswith("att:"))
@@ -389,9 +408,81 @@ async def me(m: Message) -> None:
             await m.answer(await student_summary(s, who.student))
 
 
+HELP = {
+    "rahbar": ("ℹ️ <b>Rahbar menyusi</b>\n"
+               "• ⏳ Kutilayotganlar — tasdiq kutayotgan hamma narsa bitta joyda (to'lovlar, cheklar, so'rovlar)\n"
+               "• 📊 Hozirgi holat — bugungi tushum, darslar, davomat\n"
+               "• 💵 To'lov kiritish / 📒 Qarzdorlar / 👤 O'quvchi / ➕ Yangi o'quvchi\n"
+               "• 🎓 Ta'lim bo'limi — nazoratlar, testlar, MOC, reyting, murojaatlar, kutubxona, chop etish\n"
+               "• 💰 Moliya bo'limi — kassa, hisobot, xarajat, xizmatlar, market, ombor\n"
+               "• 🏢 Boshqaruv bo'limi — xodimlar, guruhlar, vazifalar, arizalar, ruxsatlar, sozlamalar\n\n"
+               "💡 Hech narsa bosmasdan o'quvchi ismini yozsangiz — bot o'zi topib, to'lov ekranini ochadi."),
+    "oqituvchi": ("ℹ️ <b>O'qituvchi menyusi</b>\n"
+                  "• 📋 Bugungi darslar — davomat → uy vazifasi → «🔔 Dars tugadi» (bitta dars bo'lsa, darhol ochiladi)\n"
+                  "• 📝 Nazoratlar — reja va natijalar · 📚 Testlar — test so'rash, PDF test, MOC\n"
+                  "• 📷 Skaner — javob varaqlarini kamera bilan tekshirish\n"
+                  "• 🏆 Reyting · 📨 Murojaatlar — ota-onalar savollari\n"
+                  "• 📚 Kutubxona · 🖨 Chop etish — hujjat va kitobcha chiqarish\n"
+                  "• 📝 Vazifalarim · 💰 Oyligim"),
+    "admin": ("ℹ️ <b>Administrator menyusi</b>\n"
+              "• 👤 O'quvchi — karta, tahrirlash · ➕ Yangi o'quvchi · 🧲 Arizalar\n"
+              "• 🛒 Xizmatlar — printer, sotuvlar · 🖨 Chop etish — navbat, kitobcha to'lovlari\n"
+              "• 📦 Ombor · 🎓 MOC imtihonlar — qatnashchilar va to'lovlar\n\n"
+              "💡 O'quvchi ismini yozsangiz — bot kartasini topib beradi."),
+    "moliya": ("ℹ️ <b>Moliya menyusi</b>\n"
+               "• 💵 To'lov kiritish — ism yozing → qarz tugmasi → to'lov usuli\n"
+               "• 📒 Qarzdorlar · 👤 O'quvchi · ⚙️ Guruhlar\n"
+               "• 🔐 Kassani yopish / 💼 Kassani topshirish — kun oxirida\n"
+               "• 🧾 Xarajat · 🛒 Xizmatlar · 📦 Ombor · 🖨 Chop etish\n\n"
+               "💡 O'quvchi ismini yozsangiz — to'lov ekrani darhol ochiladi."),
+}
+HELP["yordamchi"] = HELP["oqituvchi"]
+HELP_PARENT = ("ℹ️ <b>Ota-ona menyusi</b>\n"
+               "• 👦 Farzandim — davomat, nazoratlar, to'lovlar, coinlar\n"
+               "• 🏆 Reyting — guruhdagi o'rni · 📚 Uy vazifasi\n"
+               "• 💳 To'lov chekini yuborish — to'lovdan keyin chek rasmini yuboring\n"
+               "• ✉️ Murojaat — ustozga yoki rahbariyatga savol, taklif, shikoyat\n"
+               "• 🛍 Market — coinlar evaziga sovg'alar")
+HELP_STUDENT = ("ℹ️ <b>O'quvchi menyusi</b>\n• 📊 Mening holatim · 🏆 Reyting · 📚 Uy vazifasi\n"
+                "• 🛍 Market — coinlaringizga sovg'a · ✉️ Murojaat")
+
+
 @router.message(F.text == K.B_HELP)
 async def help_(m: Message) -> None:
-    await m.answer("Savol bo'lsa, markaz administratoriga murojaat qiling. Menyuni qayta ochish: /start")
+    async with Session() as s:
+        who = await S.who_by_tg(s, m.from_user.id)
+    if who.staff:
+        txt = HELP.get(who.staff.current_role or "", HELP["oqituvchi"])
+    elif who.parent:
+        txt = HELP_PARENT
+    elif who.student:
+        txt = HELP_STUDENT
+    else:
+        txt = "Kursga yozilish uchun «✍️ Kursga yozilish», farzandingiz o'qisa — «📱 Raqamni yuborish»."
+    await m.answer(txt + "\n\nMenyu yo'qolsa — /start yozing.")
+
+
+@router.message(F.text.in_(K.SECTIONS.keys()))
+async def open_section(m: Message) -> None:
+    async with Session() as s:
+        who = await S.who_by_tg(s, m.from_user.id)
+    if not who.staff or who.staff.current_role != "rahbar":
+        return
+    title, _ = K.SECTIONS[m.text]
+    await m.answer(title + " — pastdagi tugmalardan tanlang. Qaytish: «⬅️ Asosiy menyu».",
+                   reply_markup=K.section_menu(m.text))
+
+
+@router.message(F.text == K.B_BACK)
+async def back_main(m: Message) -> None:
+    async with Session() as s:
+        who = await S.who_by_tg(s, m.from_user.id)
+    if who.staff:
+        roles = who.staff.role_list()
+        await m.answer("Asosiy menyu", reply_markup=K.staff_menu(who.staff.current_role or roles[0],
+                                                                 len(roles) > 1 or who.can_parent))
+    else:
+        await show_menu(m, who)
 
 
 # ---------- tez qidiruv: xodim hech narsa bosmasdan o'quvchi ismini yozsa ----------
@@ -402,8 +493,17 @@ from aiogram.filters import StateFilter as _SF  # noqa: E402
 async def quick_search(m: Message, state: FSMContext) -> None:
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
-        if not who.staff or who.staff.current_role not in ("moliya", "rahbar", "admin"):
-            return
+    if m.chat.type != "private":
+        return
+    if not who.staff or who.staff.current_role not in ("moliya", "rahbar", "admin"):
+        if who.parent or who.student:
+            return await m.answer("Xabaringiz ustozga yoki rahbariyatga yetib borishi uchun «✉️ Murojaat» tugmasidan "
+                                  "foydalaning — u yerda javob ham keladi.",
+                                  reply_markup=IM(inline_keyboard=[[IB(text="✉️ Murojaat yozish", callback_data="mjopen")]]))
+        if who.staff:
+            return await m.answer("Tushunmadim 🙂 Pastdagi menyudan tanlang. Qaysi tugma nima qilishi — «ℹ️ Yordam».")
+        return
+    async with Session() as s:
         found = await S.search_students(s, m.text or "") if len((m.text or "").strip()) >= 2 else []
         labels = await S.student_labels(s, found) if found else {}
     role = who.staff.current_role
@@ -425,3 +525,30 @@ async def quick_search(m: Message, state: FSMContext) -> None:
 @router.message(F.text.func(lambda t: bool(t) and (t.strip().startswith("/") or t.strip().lower() in ("menyu", "menu", "меню", "start"))))
 async def any_command(m: Message, state: FSMContext) -> None:
     await start(m, state)
+
+
+# ---------- kutilmagan rasm / fayl / ovoz (hech qanday jarayonsiz) ----------
+@router.message(_SF(None), F.photo | F.document | F.voice | F.video)
+async def stray_media(m: Message) -> None:
+    if m.chat.type != "private":
+        return
+    async with Session() as s:
+        who = await S.who_by_tg(s, m.from_user.id)
+    if who.parent:
+        await m.answer("Bu to'lov chekimi? Chekni «💳 To'lov chekini yuborish» tugmasi orqali yuboring — farzandingizni "
+                       "tanlaysiz va chek moliyaga tasdiqqa boradi.\nSavol bo'lsa — «✉️ Murojaat».",
+                       reply_markup=IM(inline_keyboard=[[IB(text="✉️ Murojaat yozish", callback_data="mjopen")]]))
+    elif who.staff:
+        await m.answer("Faylni qayerga qo'shmoqchisiz? Kerakli bo'limni avval menyudan oching "
+                       "(PDF kitob bo'lsa — to'g'ridan-to'g'ri yuborsangiz kutubxonaga qo'shishni taklif qilaman).")
+
+
+@router.callback_query(F.data == "noop")
+async def noop(c: CallbackQuery) -> None:
+    await c.answer()
+
+
+# ---------- eskirgan tugmalar: Telegram «yuklanmoqda» bo'lib qolmasin ----------
+@router.callback_query()
+async def stale_button(c: CallbackQuery) -> None:
+    await c.answer("Bu tugma eskirgan yoki jarayon tugagan — menyudan qaytadan oching.", show_alert=True)
