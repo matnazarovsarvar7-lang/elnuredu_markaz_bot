@@ -34,6 +34,7 @@ from app.bot.murojaat import router as murojaat_router
 from app.bot.prints import router as prints_router
 from app.bot.moc import router as moc_router
 from app.bot.certs import router as certs_router
+from app.bot.coach import router as coach_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -124,6 +125,7 @@ async def main() -> None:
     dp.include_router(pin_router)
     dp.include_router(pay_router)
     dp.include_router(manage_router)
+    dp.include_router(coach_router)
     dp.include_router(leads_router)
     dp.include_router(register_router)
     dp.include_router(homework_router)

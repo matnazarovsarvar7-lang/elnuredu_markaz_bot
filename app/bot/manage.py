@@ -70,6 +70,7 @@ async def settings_menu(m: Message, state: FSMContext) -> None:
         [IB(text="📐 Moliya foizi va doimiy xarajatlar", callback_data="set:nums")],
         [IB(text="🔐 PIN-kod (pul amallari)", callback_data="set:pin")],
         [IB(text="🏅 Sertifikatlar", callback_data="set:cert")],
+        [IB(text="👥 Xodimlar murabbiyi (reja va natija)", callback_data="set:coach")],
     ])
     await m.answer("🛠 <b>Sozlamalar</b>\nHar bir o'zgarish kiritilgan paytdan kuchga kiradi va tarixga yoziladi.",
                    reply_markup=kb)
@@ -583,9 +584,11 @@ async def tasks_job(bot: Bot) -> None:
     async with Session() as s:
         rows = (await s.execute(select(Task).where(Task.status == "ochiq"))).scalars().all()
         msgs = []
+        from app.bot.coach import cfg as coach_cfg
+        coach_on = (await coach_cfg(s))["on"] and t.weekday() != 6   # ertalabki rejada bor
         for task in rows:
             x = await s.get(Staff, task.staff_id)
-            if task.due == t and x.tg_id:
+            if task.due == t and x.tg_id and not coach_on:
                 msgs.append((x.tg_id, f"⏰ Bugun muddati tugaydi:\n{task.text}", _done_kb(task.id)))
             if task.due < t and not task.overdue_notified:
                 boss = await s.get(Staff, task.created_by) if task.created_by else None

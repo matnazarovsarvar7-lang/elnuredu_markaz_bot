@@ -209,6 +209,9 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     from app.bot.manage import recurring_job, tasks_job
     sch.add_job(recurring_job, "cron", hour=8, minute=30, args=[bot])
     sch.add_job(tasks_job, "cron", hour=9, minute=0, args=[bot])
+    from app.bot.coach import morning_job as coach_morning, evening_job as coach_evening
+    sch.add_job(coach_morning, "cron", hour=8, minute=45, args=[bot])
+    sch.add_job(coach_evening, "cron", hour=20, minute=40, args=[bot])
     sch.start()
     return sch
 
