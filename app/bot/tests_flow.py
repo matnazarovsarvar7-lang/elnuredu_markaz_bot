@@ -66,11 +66,15 @@ async def tests_menu(m: Message, state: FSMContext) -> None:
         async with Session() as s:
             n_req = len(await pending_requests(s))
         rows.append([IB(text=f"📥 Kelgan so'rovlar ({n_req})", callback_data="tsr:list")])
+    rows.append([IB(text="📄 Tayyor PDF test", callback_data="mq:pdf"),
+                 IB(text="🎓 MOC imtihonlar", callback_data="mq:list")])
     rows.append([IB(text="📎 Tayyor testni yuklash (.txt)", callback_data="tsu:new")])
     rows.append([IB(text="📋 Testlar holati", callback_data="tsl:list")])
     await m.answer("📚 <b>Testlar</b>\n\n"
                    "• So'rov — mavzu va kitob rasmlarini rahbarga yuborasiz, u test tuzib beradi.\n"
-                   "• Tayyor test — andoza bo'yicha yozilgan .txt faylni yuklaysiz.\n"
+                   "• Tayyor PDF test — o'z PDF savollaringiz + kalit; bot javob varaqlarini tayyorlab, tekshiradi.\n"
+                   "• MOC imtihon — Milliy sertifikat, DTM, CEFR, IELTS yoki o'z formatingiz; ball va daraja.\n"
+                   "• Tayyor test (.txt) — andoza bo'yicha yozilgan faylni yuklaysiz.\n"
                    "Bot har bir o'quvchi uchun alohida varaq tayyorlab, adminga chop etishga yuboradi.\n"
                    "• Test o'tgach — «📋 Testlar holati» → «📷 Tekshirish»: javob varaqlarini rasmga olasiz, "
                    "bot o'zi tekshiradi.",
@@ -930,6 +934,24 @@ async def scan_photo(m: Message, state: FSMContext, bot: Bot) -> None:
     fid = m.photo[-1].file_id if m.photo else m.document.file_id
     data = (await bot.download(fid, destination=io.BytesIO())).getvalue()
     res = read_sheet(data)                         # avval QR: qaysi varaq ekanini bilamiz
+    if not res.paper_id:                           # yangi (MOC / PDF test) varag'i bo'lishi mumkin
+        from app.logic.omr import read_sheet2
+        r2 = read_sheet2(data)
+        if r2.seat_id:
+            from app.bot.moc import store, _line
+            from app.db.models import MocSeat
+            async with Session() as s:
+                st = await _staff(s, m.from_user.id)
+                z = await s.get(MocSeat, r2.seat_id)
+                if not z:
+                    return await m.reply("⚠️ Bu varaq bazada topilmadi.")
+                err, line = await store(s, z, r2.answers, r2.unsure, r2.variant, True, st)
+                await s.commit()
+            if err:
+                return await m.reply("⚠️ " + err)
+            kb = IM(inline_keyboard=[[IB(text="⚠️ Hal qilish", callback_data=f"mqu:{z.id}")]]) \
+                if (z.unsure or not z.variant or not z.name) else None
+            return await m.reply("✅ " + line.lstrip("• "), reply_markup=kb)
     if res.paper_id:
         async with Session() as s:
             st = await _staff(s, m.from_user.id)
@@ -968,13 +990,21 @@ async def live_scan_result(m: Message, bot: Bot) -> None:
     data = m.web_app_data.data or ""
     if not data.startswith("E1|"):
         return
-    items = []
+    items, moc_items = [], []
+    for part in data[3:].split(";"):
+        sid, _, raw = part.partition(":")
+        if sid.startswith("m") and sid[1:].isdigit() and raw:
+            moc_items.append((int(sid[1:]), raw))
+    if moc_items:
+        from app.bot.moc import live_scan
+        await live_scan(m, moc_items)
     for part in data[3:].split(";"):
         pid, _, ans = part.partition(":")
         if pid.isdigit() and ans and all(ch in "ABCDabcd-*?" for ch in ans):
             items.append((int(pid), ans))
     if not items:
-        await m.answer("Skanerdan ma'lumot kelmadi.")
+        if not moc_items:
+            await m.answer("Skanerdan ma'lumot kelmadi.")
         return
     by_test: dict[int, list[str]] = {}
     fixes, errors, tids = [], [], []

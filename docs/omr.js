@@ -19,6 +19,43 @@
     return out;
   }
 
+  // ---- v2 universal varaq (app/logic/sheet2.py: geom2 bilan aynan bir xil) ----
+  var TOP2 = 236, BOT2 = 785, GX0 = 52, GW = 491, LBL = 36, VAR_Y = 204, VAR_X0 = 150, VAR_DX = 26, VAR_R = 7.5;
+  function parseLayout(code) {
+    var qs = [], nv = 0, parts = (code || "").split(".");
+    for (var i = 0; i < parts.length; i++) {
+      var p = parts[i];
+      if (!p) continue;
+      if (p[0] === "V") { nv = +p.slice(1); continue; }
+      var kind = p[0], cn = p.slice(1).split("x"), c = +cn[0], n = +cn[1];
+      for (var j = 0; j < n; j++) qs.push([kind, c]);
+    }
+    return { qs: qs, nv: nv };
+  }
+  function geom2(code) {
+    var L = parseLayout(code), qs = L.qs, n = qs.length, maxb = 0, i;
+    for (i = 0; i < n; i++) maxb = Math.max(maxb, qs[i][1]);
+    if (!n) maxb = 4;
+    var cmax = maxb <= 5 ? 4 : 3, best = null;
+    for (var C = 1; C <= cmax; C++) {
+      var R = n ? Math.ceil(n / C) : 1;
+      var rh = R > 1 ? Math.min(24, (BOT2 - TOP2) / (R - 1)) : 24;
+      var dx = Math.min(26, (GW / C - 40) / maxb);
+      var r = Math.min(8, rh * 0.36, dx * 0.4);
+      if (best === null || r > best[0] + 1e-9) best = [r, C, R, rh, dx];
+    }
+    var rr = best[0], CC = best[1], RR = best[2], RH = best[3], DX = best[4];
+    var colw = Math.min(GW / CC, 40 + maxb * DX + 30), x0 = GX0 + (GW - CC * colw) / 2, rows = [];
+    for (i = 0; i < n; i++) {
+      var c = Math.floor(i / RR), k = i % RR, y = TOP2 + k * RH, bx = x0 + c * colw + LBL, row = [];
+      for (var j = 0; j < qs[i][1]; j++) row.push([bx + j * DX, y]);
+      rows.push(row);
+    }
+    var vr = [];
+    for (i = 0; i < L.nv; i++) vr.push([VAR_X0 + i * VAR_DX, VAR_Y]);
+    return { rows: rows, kinds: qs, r: rr, dx: DX, nv: L.nv, v: vr };
+  }
+
   // ---- 4 nuqtali perspektiva (gomografiya): src -> dst ----
   function solve(A, b) {
     var n = b.length, i, j, k;
@@ -113,16 +150,17 @@
   }
 
   // Varaqdagi doirachalar sonini aniqlash (eski varaqlarda QR da yo'q): bosilgan halqalar bor-yo'qligi bo'yicha
-  function ringScore(at, cx, y) {
+  function ringScore(at, cx, y, R) {
+    R = R || 8;
     var ring = 0, out = 0, rn = 0, on = 0;
     for (var a = 0; a < 24; a++) {
       var t = a * Math.PI / 12, m = 256, cs = Math.cos(t), sn = Math.sin(t);
-      for (var rr = 7; rr <= 9.01; rr += 0.5) {
+      for (var rr = R - 1; rr <= R + 1.01; rr += 0.5) {
         var v = at(cx + rr * cs, y + rr * sn);
         if (v >= 0 && v < m) m = v;
       }
       if (m < 256) { ring += m; rn++; }
-      var o = at(cx + 11 * cs, y + 11 * sn);
+      var o = at(cx + (R + 3) * cs, y + (R + 3) * sn);
       if (o >= 0) { out += o; on++; }
     }
     if (!rn || !on) return 0;
@@ -149,6 +187,25 @@
     return b >= 0.38 ? "abcd"[o[0]] : "?";
   }
 
+  // app/logic/omr.py dagi decide_k() bilan bir xil: [belgi, aniqmi]
+  function decideK(f, labels) {
+    if (f.length === 1) {
+      if (f[0] >= 0.45) return [labels[0], true];
+      if (f[0] < 0.30) return ["-", true];
+      return [labels[0], false];
+    }
+    var o = [];
+    for (var i = 0; i < f.length; i++) o.push(i);
+    o.sort(function (a, b) { return f[b] - f[a]; });
+    var b = f[o[0]], s2 = f[o[1]];
+    if (b < 0.30) return ["-", true];
+    if (s2 >= 0.45) return ["*", true];
+    if ((b >= 0.38 && s2 < 0.30 && b - s2 >= 0.20) || (b >= 0.50 && s2 < b * 0.6)) return [labels[o[0]], true];
+    return b >= 0.38 ? [labels[o[0]], false] : ["?", false];
+  }
+  // noaniq belgini bitta harfga o'raymiz: A..F → a..f, 1..5 → p..t (bot qayta ochadi)
+  var GUESS = { A: "a", B: "b", C: "c", D: "d", E: "e", F: "f", "1": "p", "2": "q", "3": "r", "4": "s", "5": "t" };
+
   function percentile(arr, q) {
     if (!arr.length) return 255;
     arr.sort(function (a, b) { return a - b; });
@@ -159,16 +216,21 @@
   function readFrame(rgba, w, h, qrFn) {
     var q = qrFn(rgba, w, h, { inversionAttempts: "dontInvert" });
     if (!q) return { error: "noqr" };
-    var m = /^ELN:(\d+)(?::(\d+))?$/.exec(q.data || "");
-    if (!m) return { error: "foreign" };
-    var pid = +m[1], nQr = m[2] ? +m[2] : 0, L = q.location;
-    var Hq = homography(QR_PTS, [[L.topLeftCorner.x, L.topLeftCorner.y], [L.topRightCorner.x, L.topRightCorner.y],
+    var m = /^ELN:(\d+)(?::(\d+))?$/.exec(q.data || ""), m2 = /^E2:(\d+):([A-Za-z0-9x.]+)$/.exec(q.data || "");
+    if (!m && !m2) return { error: "foreign" };
+    var pid = m ? +m[1] : "m" + m2[1], nQr = m && m[2] ? +m[2] : 0, L = q.location;
+    var QP = QR_PTS;
+    if (m2) {          // v2: QR o'lchami versiyaga bog'liq: ichki kvadrat burchaklari
+      var mods = 17 + 4 * (q.version || 1), off = 96 * 4 / (mods + 8), sz = 96 * mods / (mods + 8);
+      QP = [[448 + off, 66 + off], [448 + off + sz, 66 + off], [448 + off, 66 + off + sz], [448 + off + sz, 66 + off + sz]];
+    }
+    var Hq = homography(QP, [[L.topLeftCorner.x, L.topLeftCorner.y], [L.topRightCorner.x, L.topRightCorner.y],
                                  [L.bottomLeftCorner.x, L.bottomLeftCorner.y], [L.bottomRightCorner.x, L.bottomRightCorner.y]]);
     if (!Hq) return { pid: pid, error: "marks" };
     var g = toGray(rgba, w, h);
     var qside = Math.hypot(L.topRightCorner.x - L.topLeftCorner.x, L.topRightCorner.y - L.topLeftCorner.y);
-    var markPx = qside * MARK / (QR_PTS[1][0] - QR_PTS[0][0]);
-    var I = integral(g, w, h), pts = [], sheetW = qside * W / 68.7;
+    var markPx = qside * MARK / (QP[1][0] - QP[0][0]);
+    var I = integral(g, w, h), pts = [], sheetW = qside * W / (QP[1][0] - QP[0][0]);
     for (var i = 0; i < 4; i++) {
       var pr = apply(Hq, MARK_C[i][0], MARK_C[i][1]);
       var p = findMark(g, I, w, h, Math.round(pr[0]), Math.round(pr[1]), markPx, Math.round(sheetW * 0.16));
@@ -182,10 +244,11 @@
     // tekshiruv 1: QR kod burchaklari topilgan belgilar bo'yicha o'z joyiga tushishi kerak
     var qc = [L.topLeftCorner, L.topRightCorner, L.bottomLeftCorner, L.bottomRightCorner];
     for (i = 0; i < 4; i++) {
-      var pq = apply(Hs, QR_PTS[i][0], QR_PTS[i][1]);
+      var pq = apply(Hs, QP[i][0], QP[i][1]);
       if (Math.hypot(pq[0] - qc[i].x, pq[1] - qc[i].y) > qside * 0.12) return { pid: pid, error: "marks" };
     }
     var at = sampler(g, w, h, Hs);
+    if (m2) return readV2(at, pid, m2[2], pts);
     var n = nQr;
     if (!n) { var cols = detectCols(at); if (!cols) return { pid: pid, error: "marks" }; n = cols * ROWS; }
     // tekshiruv 2: doirachalar halqalari kutilgan joyda bo'lishi kerak
@@ -217,6 +280,51 @@
     return { pid: pid, n: n, answers: answers, unsure: unsure, marks: pts, fills: allFills };
   }
 
-  var api = { readFrame: readFrame, bubbleCenters: bubbleCenters, homography: homography, apply: apply };
+  function fillsAt(at, centers, r) {
+    var y0 = centers[0][1], band = [], fills = [], rs = r * 0.62;
+    for (var yy = y0 - 3 * rs; yy <= y0 + 3 * rs; yy += 2)
+      for (var xx = centers[0][0] - 3 * rs; xx <= centers[centers.length - 1][0] + 3 * rs; xx += 2) {
+        var v = at(xx, yy); if (v >= 0) band.push(v);
+      }
+    var paper = percentile(band, 0.9);
+    for (var k = 0; k < centers.length; k++) {
+      var s = 0, c = 0;
+      for (var dy = -rs; dy <= rs; dy += 0.75)
+        for (var dx = -rs; dx <= rs; dx += 0.75) {
+          if (dx * dx + dy * dy > rs * rs) continue;
+          var vv = at(centers[k][0] + dx, centers[k][1] + dy);
+          if (vv >= 0) { s += vv; c++; }
+        }
+      fills.push(c && paper > 0 ? Math.max(0, 1 - s / c / paper) : 0);
+    }
+    return fills;
+  }
+
+  function readV2(at, pid, layout, pts) {
+    var g = geom2(layout), rows = g.rows, n = rows.length, i, seen = 0, all = 0;
+    if (!n) return { pid: pid, error: "marks" };
+    for (i = 0; i < n; i += Math.max(1, Math.floor(n / 12))) {
+      var row = rows[i];
+      all += 2;
+      if (ringScore(at, row[0][0], row[0][1], g.r) > 0.12) seen++;
+      if (ringScore(at, row[row.length - 1][0], row[row.length - 1][1], g.r) > 0.12) seen++;
+    }
+    if (seen < all * 0.8) return { pid: pid, error: "marks" };
+    var answers = "", unsure = [];
+    for (i = 0; i < n; i++) {
+      var kind = g.kinds[i][0], nb = g.kinds[i][1];
+      var labels = kind === "t" ? "ABCDEF".slice(0, nb) : "123456789".slice(0, nb);
+      var d = decideK(fillsAt(at, rows[i], g.r), labels);
+      if (d[1]) answers += d[0];
+      else { answers += d[0] === "?" ? "?" : (GUESS[d[0]] || "?"); unsure.push(i + 1); }
+    }
+    if (g.nv) {
+      var dv = decideK(fillsAt(at, g.v, VAR_R), "ABCDEF".slice(0, g.nv));
+      answers += "@" + (dv[1] && dv[0].length === 1 && dv[0] !== "-" && dv[0] !== "*" ? dv[0] : "?");
+    }
+    return { pid: pid, n: n, answers: answers, unsure: unsure, marks: pts };
+  }
+
+  var api = { readFrame: readFrame, geom2: geom2, bubbleCenters: bubbleCenters, homography: homography, apply: apply };
   if (typeof module !== "undefined" && module.exports) module.exports = api; else root.ElnOmr = api;
 })(this);

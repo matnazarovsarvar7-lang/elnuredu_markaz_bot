@@ -47,9 +47,14 @@ async def show_menu(m: Message, who: S.Who) -> None:
 
 
 @router.message(CommandStart())
-async def start(m: Message, state: FSMContext | None = None) -> None:
+async def start(m: Message, state: FSMContext | None = None, bot: Bot | None = None) -> None:
     if state:
         await state.clear()   # boshlangan har qanday amal bekor bo'ladi
+    arg = (m.text or "").split(maxsplit=1)[1] if len((m.text or "").split()) > 1 else ""
+    if arg.startswith("r") and "_" in arg and bot:          # MOC chiptasi: natijani Telegramda olish
+        from app.bot.moc import claim
+        if await claim(m, arg, bot):
+            return
     async with Session() as s:
         who = await S.who_by_tg(s, m.from_user.id)
     if who.staff or who.parent or who.student:

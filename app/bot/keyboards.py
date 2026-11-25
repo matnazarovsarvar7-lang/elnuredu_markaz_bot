@@ -35,6 +35,7 @@ B_APPEAL = "✉️ Murojaat"
 B_APPEALS = "📨 Murojaatlar"
 B_PRINT = "🖨 Chop etish"
 B_LIBRARY = "📚 Kutubxona"
+B_MOC = "🎓 MOC imtihonlar"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
@@ -86,7 +87,7 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_NEW_STUDENT, B_LEADS])
         rows.append([B_SERVICES, B_STOCK])
         rows.append([B_ACHIEVE, B_PRINT])
-        rows.append([B_LIBRARY])
+        rows.append([B_LIBRARY, B_MOC])
     if role == "rahbar":
         rows.append([B_PENDING, B_STAFF])
         rows.append([B_APPEALS])

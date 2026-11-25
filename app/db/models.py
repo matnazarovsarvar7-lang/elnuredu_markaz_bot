@@ -715,6 +715,53 @@ class PrintLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class Moc(Base):
+    """MOC imtihon yoki tayyor PDF nazorat testi: o'qituvchining PDF savollari + bot javob varaqlari."""
+    __tablename__ = "mocs"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    kind: Mapped[str] = mapped_column(String(10), default="moc")          # moc | nazorat
+    title: Mapped[str] = mapped_column(String(150))
+    spec: Mapped[str] = mapped_column(Text)                                # format matni (app/logic/moc.py)
+    date: Mapped[date] = mapped_column(Date)
+    group_ids: Mapped[list] = mapped_column(JSON, default=list)
+    exam_id: Mapped[int | None] = mapped_column(Integer)                   # nazorat: haftalik nazorat
+    n_variants: Mapped[int] = mapped_column(Integer, default=1)
+    booklets: Mapped[dict] = mapped_column(JSON, default=dict)             # {"A": {"file_id":…, "pages":…}}
+    keys: Mapped[dict] = mapped_column(JSON, default=dict)                 # {"A": "ABCD.."}
+    price: Mapped[int] = mapped_column(Integer, default=0)                 # tashqi qatnashchi uchun
+    status: Mapped[str] = mapped_column(String(15), default="tayyor")      # tayyor | yakun | bekor
+    created_by: Mapped[int | None] = mapped_column(ForeignKey("staff.id"))
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class MocSeat(Base):
+    """Bitta qatnashchi (guruh o'quvchisi, tashqi yoki bo'sh varaq) va uning javoblari/natijasi."""
+    __tablename__ = "moc_seats"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    moc_id: Mapped[int] = mapped_column(ForeignKey("mocs.id"))
+    enrollment_id: Mapped[int | None] = mapped_column(Integer)
+    student_id: Mapped[int | None] = mapped_column(Integer)
+    name: Mapped[str | None] = mapped_column(String(120))                  # None — bo'sh varaq, hali nomsiz
+    phone: Mapped[str | None] = mapped_column(String(20))
+    tg_id: Mapped[int | None] = mapped_column(BigInteger)                  # chipta QR orqali ulangan
+    blank: Mapped[bool] = mapped_column(Boolean, default=False)
+    variant: Mapped[str | None] = mapped_column(String(2))
+    code: Mapped[str] = mapped_column(String(20))
+    token: Mapped[str] = mapped_column(String(16))
+    answers: Mapped[str | None] = mapped_column(String(120))
+    unsure: Mapped[list | None] = mapped_column(JSON)
+    scanned: Mapped[bool] = mapped_column(Boolean, default=False)
+    absent: Mapped[bool] = mapped_column(Boolean, default=False)
+    baho: Mapped[dict] = mapped_column(JSON, default=dict)                 # {"Writing": 55}
+    result: Mapped[dict | None] = mapped_column(JSON)
+    paid: Mapped[int] = mapped_column(Integer, default=0)
+    pay_method: Mapped[str | None] = mapped_column(String(10))
+    entered_by: Mapped[int | None] = mapped_column(Integer)
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class PrinterUse(Base):
     """Bepul (ichki) chop etish: test varaqlari, markaz hujjatlari, o'qituvchi hujjatlari, texnik xato/isrof."""
     __tablename__ = "printer_uses"
