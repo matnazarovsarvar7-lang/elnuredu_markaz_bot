@@ -239,13 +239,15 @@ async def morning_text(s, cache: Cache, st: Staff, d: date) -> tuple[str, IM | N
     if mine:
         lines.append("\n📚 <b>Darslar</b>")
         for g, _ in mine:
-            tm = f"🕐 {g.start_time:%H:%M}–{g.end_time:%H:%M} · " if g.start_time and g.end_time else "▫️ "
+            tm = (f"🕐 {g.start_time:%H:%M}–{g.end_time:%H:%M} · " if g.start_time and g.end_time
+                  else "🕐 <i>vaqti kiritilmagan</i> · ")
             duty = [w for w, k in (("davomat", "attendance"), ("uy vazifasi", "homework")) if _resp(g, k) == st.id]
             if g.id in c.hw_prev and _resp(g, "homework") == st.id:
                 duty.insert(1, "vazifani tekshirish")
             if not duty:
                 duty = ["dars o'tish (davomat va uy vazifasi — yordamchida)"]
-            lines.append(f"  {tm}<b>{g.name}</b>" + (f" · {g.room}" if g.room else "")
+            room = (f"{g.room}-xona" if g.room.strip().isdigit() else g.room.strip()) if g.room else ""
+            lines.append(f"  {tm}<b>{g.name}</b>" + (f" · 🚪 {room}" if room else "")
                          + f"\n      ↳ {', '.join(duty)}")
         body += 1
     ex = [e for e in c.exams if e.status == "reja" and _cond(e, c) == st.id]
@@ -260,8 +262,13 @@ async def morning_text(s, cache: Cache, st: Staff, d: date) -> tuple[str, IM | N
     if tasks:
         lines.append(f"\n📝 <b>Vazifalar ({len(tasks)})</b>")
         for t in tasks[:8]:
-            when = "bugun" if t.due == d else ("ertaga" if t.due > d else f"⚠️ {t.due:%d.%m} dan o'tgan")
-            lines.append(f"  • {t.text[:90]} — <i>{when}</i>")
+            late = (d - t.due).days
+            when = ("muddati bugun" if t.due == d else "muddati ertaga" if t.due > d
+                    else f"⚠️ muddati {t.due:%d.%m} da o'tgan ({late} kun)")
+            txt = t.text if len(t.text) <= 140 else t.text[:137].rstrip() + "…"
+            lines.append(f"  • {txt}\n     <i>{when}</i>")
+        if any(t.due < d for t in tasks):
+            lines.append("  <i>Bajarilgan bo'lsa — pastdagi «✅» tugmasini bosing, ro'yxatdan chiqadi.</i>")
         kb += [[IB(text=f"✅ {t.text[:28]}", callback_data=f"tdone:{t.id}")] for t in tasks[:5]]
         body += 1
     wait = (await s.execute(select(func.count(Murojaat.id)).where(Murojaat.status == "yangi",
