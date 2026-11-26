@@ -92,7 +92,7 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
         if not st or _role(st) not in VIEWERS:
             return
         q = select(Moc).where(Moc.status != "bekor").order_by(Moc.id.desc()).limit(12)
-        mocs = (await s.execute(q)).scalars().all()
+        mocs = [x for x in (await s.execute(q)).scalars().all() if not (x.meta or {}).get("olimp_id")]
         if _role(st) in ("oqituvchi", "yordamchi"):
             mine = {g.id for g in await S.teacher_groups(s, st, _role(st))}
             mocs = [x for x in mocs if x.created_by == st.id or set(x.group_ids or []) & mine]
@@ -101,7 +101,12 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
             seats = (await s.execute(select(MocSeat).where(MocSeat.moc_id == x.id))).scalars().all()
             done = sum(1 for z in seats if z.answers or z.absent)
             done = sum(1 for z in seats if z.answers or z.absent or z.baho)
-            icon = "✅" if x.status == "yakun" else "📲" if (x.meta or {}).get("online") else {"nazorat": "📄", "tashqi": "🌐"}.get(x.kind, "🎓")
+            icon = "✅" if x.status == "yakun" else "📲" if (x.meta or {}).get("online") else {"nazorat": "📄", "tashqi": "🌐", "olimp": "🏆"}.get(x.kind, "🎓")
+            if x.kind == "olimp":
+                n_c = len(((x.meta or {}).get("olimp") or {}).get("cats") or [])
+                rows.append([IB(text=f"{icon} {x.date:%d.%m} · {x.title[:28]} · olimpiada ({n_c} toifa)",
+                                callback_data=f"mqc:{x.id}")])
+                continue
             rows.append([IB(text=f"{icon} {x.date:%d.%m} · {x.title[:28]} · {done}/{len(seats)}",
                             callback_data=f"mqc:{x.id}")])
     if _role(st) == "rahbar":
@@ -111,6 +116,7 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
         rows.append([IB(text="📄 Tayyor PDF test (nazorat)", callback_data="mq:pdf")])
         rows.append([IB(text="🌐 Tashqi tekshiruvli test (kanal tekshiradi)", callback_data="mq:ext")])
         rows.append([IB(text="📲 Online MOC (kanal orqali, Telegram'da)", callback_data="mq:onl")])
+        rows.append([IB(text="🏆 Olimpiada", callback_data="mq:olp")])
     text = ("🎓 <b>MOC imtihonlar va PDF testlar</b>\n\nFormatlar: Milliy sertifikat, DTM, CEFR, IELTS, oddiy test "
             "yoki o'z formatingiz. Savollar — sizning PDF faylingiz, javob varaqlari va tekshirish — bot.\n"
             "🌐 <b>Tashqi tekshiruv</b> — test sotib olingan kanalda tekshiriladi, siz faqat natijani yuklaysiz.")
@@ -155,6 +161,16 @@ async def new_online(c: CallbackQuery, state: FSMContext) -> None:
     await c.message.answer("📲 <b>Online MOC</b>\n\nQatnashchilar kanalingizdagi tugma orqali botga kiradi, ro'yxatdan "
                            "o'tadi va javoblarni Telegram'ning o'zida belgilaydi. Natija, kalit va sertifikat — "
                            "muddat tugagach avtomatik.\n\nImtihon nomini yozing:")
+
+
+@router.callback_query(F.data == "mq:olp")
+async def new_olymp(c: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.update_data(w={"kind": "moc", "olimp": True})
+    await state.set_state(Mc.title)
+    await c.answer()
+    await c.message.answer("🏆 <b>Olimpiada</b>\n\nSinf toifalari, sovrin pog'onalari, ustozlarni taqdirlash — online yoki "
+                           "markazda.\n\nOlimpiada nomini yozing (masalan: <i>Viloyat matematika olimpiadasi</i>):")
 
 
 @router.callback_query(F.data == "mq:ext")
@@ -322,6 +338,9 @@ async def format_ok(c: CallbackQuery, state: FSMContext) -> None:
     await c.answer()
     await c.message.edit_reply_markup(reply_markup=None)
     w = (await state.get_data()).get("w") or {}
+    if w.get("olimp"):                                    # olimpiada — toifalar (har biriga o'z PDF va kaliti)
+        from app.bot.olymp import ask_cats
+        return await ask_cats(c.message, state)
     if w.get("online"):                                   # online — bitta variant
         w["nv"], w["booklets"], w["keys"], w["cur"] = 1, {}, {}, 0
         await state.update_data(w=w)
@@ -346,6 +365,8 @@ async def _ask_pdf(msg: Message, state: FSMContext) -> None:
     v = VARS[w["cur"]]
     await state.set_state(Mc.pdf)
     name = f"<b>{v}-variant</b> " if w["nv"] > 1 else ""
+    if w.get("cats") and len(w["cats"]) > 1:
+        name = f"<b>{w['cats'][w['cur']]['name']}</b> toifasi uchun "
     await msg.answer(f"📎 {name}savollar PDF faylini yuboring.")
 
 
@@ -368,7 +389,9 @@ async def got_pdf(m: Message, state: FSMContext, bot: Bot) -> None:
     if not sp.n_test:
         return await _next_variant(m, state)
     await state.set_state(Mc.key)
-    await m.answer(f"✅ PDF qabul qilindi ({pages or '?'} bet).\n\n🔑 {v + '-variant ' if w['nv'] > 1 else ''}javob "
+    vl = (w['cats'][w['cur']]['name'] + ' toifasi ') if w.get('cats') and len(w['cats']) > 1 else \
+        (v + '-variant ' if w['nv'] > 1 else '')
+    await m.answer(f"✅ PDF qabul qilindi ({pages or '?'} bet).\n\n🔑 {vl}javob "
                    f"kalitini yuboring — {sp.n_test} ta test savoli uchun.\nIstalgan ko'rinishda: <code>ABCDA…</code> "
                    "yoki <code>1A 2B 3C …</code> (matn yoki .txt fayl)."
                    + (f"\n<i>Yozma savollar ({sp.n_questions - sp.n_test} ta) uchun harf kerak emas.</i>"
@@ -406,6 +429,9 @@ async def _next_variant(msg: Message, state: FSMContext) -> None:
     if w["cur"] < w["nv"]:
         return await _ask_pdf(msg, state)
     await state.set_state(None)
+    if w.get("olimp"):
+        from app.bot.olymp import ask_mode as olymp_mode
+        return await olymp_mode(msg, state)
     if w.get("online"):
         from app.bot.online import ask_mode
         return await ask_mode(msg, state)
@@ -808,6 +834,9 @@ async def card(msg: Message, mid: int, tg: int, edit: bool = False) -> None:
     if moc.kind == "tashqi":
         from app.bot.moc_ext import ext_card
         return await ext_card(msg, moc, sp, seats, st, unpaid, ext, edit)
+    if moc.kind == "olimp":
+        from app.bot.olymp import card as olymp_card
+        return await olymp_card(msg, mid, tg, edit)
     if (moc.meta or {}).get("online"):
         from app.bot.online import online_card
         return await online_card(msg, moc, sp, seats, st, edit)
@@ -1415,8 +1444,12 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
     await bot.send_document(c.message.chat.id, BufferedInputFile(xls, f"MOC{mid}_natijalar.xlsx"),
                             caption=f"📊 Natijalar va savollar tahlili · {n_sent} ta manzilga yuborildi")
     async with Session() as s:
-        kind = (await s.get(Moc, mid)).kind
-    if kind in ("moc", "tashqi"):                        # nazorat (PDF test) — guruh sertifikatlari 48 soatdan so'ng
+        m_ = await s.get(Moc, mid)
+        kind, olimp = m_.kind, (m_.meta or {}).get("olimp_id")
+    if olimp:                                            # olimpiada toifasi — sovrinlar hamma toifa tugagach
+        from app.bot.olymp import child_done
+        await child_done(bot, mid)
+    elif kind in ("moc", "tashqi"):                      # nazorat (PDF test) — guruh sertifikatlari 48 soatdan so'ng
         from app.bot.certs import moc_certs
         await moc_certs(bot, mid)
 

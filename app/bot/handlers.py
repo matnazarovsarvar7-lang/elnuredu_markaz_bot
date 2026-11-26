@@ -55,6 +55,14 @@ async def start(m: Message, state: FSMContext | None = None, bot: Bot | None = N
         from app.bot.moc import claim
         if await claim(m, arg, bot):
             return
+    if arg.startswith("l") and state:                        # olimpiada: qatnashchi (ustoz havolasi bilan ham)
+        from app.bot.olymp import register_start as olymp_reg
+        if await olymp_reg(m, state, arg):
+            return
+    if arg.startswith("u") and arg[1:].isdigit() and state:   # olimpiada: ustozlar ro'yxati
+        from app.bot.olymp import teacher_start
+        if await teacher_start(m, state, int(arg[1:])):
+            return
     if arg.startswith("o") and arg[1:].isdigit() and state:   # online MOC: kanaldagi «Qatnashish» tugmasi
         from app.bot.online import register_start
         if await register_start(m, state, int(arg[1:])):

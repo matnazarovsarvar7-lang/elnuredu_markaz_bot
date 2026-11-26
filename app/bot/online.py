@@ -195,6 +195,18 @@ async def got_minutes(m: Message, state: FSMContext) -> None:
         return await m.answer("Oraliq bu vaqtdan qisqa — kamroq daqiqa yozing yoki oraliqni uzaytiring.")
     await state.update_data(w=w)
     await state.set_state(None)
+    if w.get("olimp"):                                  # olimpiadada maktab va sinf doim so'raladi
+        w["oschool"] = True
+        await state.update_data(w=w)
+        async with Session() as s:
+            st = await _staff(s, m.from_user.id)
+        if _role(st) in PRICERS:
+            await state.set_state(On.price)
+            return await m.answer("💵 Qatnashish narxi (so'm)? Bepul bo'lsa — 0.",
+                                  reply_markup=IM(inline_keyboard=[[IB(text="Bepul", callback_data="onp:0")]]))
+        w["price"] = 0
+        await state.update_data(w=w)
+        return await _after(m, state)
     await m.answer("🏫 Qatnashchidan <b>maktab va sinf</b> so'ralsinmi?", reply_markup=IM(inline_keyboard=[
         [IB(text="✅ Ha", callback_data="ons:1"), IB(text="Yo'q — faqat ism va telefon", callback_data="ons:0")]]))
 
@@ -212,7 +224,7 @@ async def got_school(c: CallbackQuery, state: FSMContext) -> None:
     if _role(st) not in PRICERS:
         w["price"] = 0
         await state.update_data(w=w)
-        return await _confirm(c.message, state)
+        return await _after(c.message, state)
     await state.set_state(On.price)
     await c.message.answer("💵 Qatnashish narxi (so'm)? Bepul bo'lsa — 0.",
                            reply_markup=IM(inline_keyboard=[[IB(text="Bepul", callback_data="onp:0")]]))
@@ -235,7 +247,15 @@ async def price_free(c: CallbackQuery, state: FSMContext) -> None:
     await state.update_data(w=w)
     await state.set_state(None)
     await c.answer()
-    await _confirm(c.message, state)
+    await _after(c.message, state)
+
+
+async def _after(msg: Message, state: FSMContext) -> None:
+    """Vaqt va narxdan keyin: olimpiada — qatnashchilar va sovrinlar; oddiy online MOC — tasdiq."""
+    if ((await state.get_data()).get("w") or {}).get("olimp"):
+        from app.bot.olymp import ask_who
+        return await ask_who(msg, state)
+    await _confirm(msg, state)
 
 
 @router.message(On.price, F.text, ~F.text.in_(K.menu_texts()))
@@ -253,7 +273,7 @@ async def price_typed(m: Message, state: FSMContext) -> None:
         await state.set_state(On.card)
         return await m.answer("💳 Qatnashchilar to'lovni qaysi kartaga o'tkazadi? Karta raqami va egasini yozing "
                               "(bir marta so'raladi, keyin sozlamada qoladi):\n<code>8600 1234 5678 9012 — Sarvar M.</code>")
-    await _confirm(m, state)
+    await _after(m, state)
 
 
 @router.message(On.card, F.text, ~F.text.in_(K.menu_texts()))
@@ -270,7 +290,7 @@ async def card_typed(m: Message, state: FSMContext) -> None:
         await s.commit()
     await state.set_state(None)
     if (await state.get_data()).get("w"):
-        return await _confirm(m, state)
+        return await _after(m, state)
     await state.clear()
     await m.answer("✅ Karta saqlandi — qatnashchilar to'lovni shu kartaga o'tkazadi.")
 
@@ -618,7 +638,7 @@ async def _my_open_seat(s, tg: int, flag: str) -> tuple[Moc, MocSeat] | None:
     rows = (await s.execute(select(MocSeat, Moc).join(Moc, Moc.id == MocSeat.moc_id)
                             .where(MocSeat.tg_id == tg, Moc.status == "tayyor"))).all()
     for z, moc in rows:
-        if is_online(moc) and zinfo(z).get(flag):
+        if (is_online(moc) or (moc.meta or {}).get("olimp_id")) and zinfo(z).get(flag):
             return moc, z
     return None
 
@@ -718,7 +738,15 @@ async def pay_decide(c: CallbackQuery, bot: Bot) -> None:
                                                                           else "\n\n❌ Rad etildi"), reply_markup=None)
     except Exception:
         pass
-    if ok == "1":
+    if ok == "1" and not is_online(moc):              # markazdagi olimpiada
+        await send(bot, z.tg_id, "✅ To'lovingiz tasdiqlandi!")
+        from app.bot.olymp import seat_status
+        async with Session() as s:
+            p = await s.get(Moc, (moc.meta or {}).get("olimp_id"))
+        from aiogram.types import Chat
+        fake = Message(message_id=0, date=datetime.now(), chat=Chat(id=z.tg_id, type="private")).as_(bot)
+        await seat_status(fake, p, moc, z)
+    elif ok == "1":
         await send(bot, z.tg_id, "✅ To'lovingiz tasdiqlandi!")
         st_, _, _, _ = times(moc)
         if now() >= st_:
@@ -859,11 +887,16 @@ async def finalize(bot: Bot, mid: int) -> None:
             m2 = await s.get(Moc, mid)
             m2.status = "yakun"
             await s.commit()
+        if (moc.meta or {}).get("olimp_id"):
+            from app.bot.olymp import child_done
+            return await child_done(bot, mid)
         if creator and creator.tg_id:
             await send(bot, creator.tg_id, f"🏁 <b>{moc.title}</b> yakunlandi — hech kim topshirmadi.")
         return
     n_sent, summary, xls = await compute_and_send(bot, mid, creator.id)
-    await moc_certs(bot, mid)
+    olimp = (moc.meta or {}).get("olimp_id")
+    if not olimp:
+        await moc_certs(bot, mid)
     async with Session() as s:
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
     for t in dict.fromkeys(([creator.tg_id] if creator.tg_id else []) + bosses):
@@ -873,6 +906,9 @@ async def finalize(bot: Bot, mid: int) -> None:
                                     caption=f"📊 Natijalar · {n_sent} ta manzilga yuborildi")
         except Exception:
             pass
+    if olimp:                                        # olimpiada: sovrinlar hamma toifa tugagach
+        from app.bot.olymp import child_done
+        return await child_done(bot, mid)
     for t in bosses:
         await top_preview(bot, mid, t)
 
@@ -1018,11 +1054,15 @@ async def guest_home(m: Message) -> bool:
     async with Session() as s:
         rows = (await s.execute(select(MocSeat, Moc).join(Moc, Moc.id == MocSeat.moc_id)
                                 .where(MocSeat.tg_id == m.from_user.id).order_by(Moc.date.desc()).limit(10))).all()
-    rows = [(z, moc) for z, moc in rows if is_online(moc)]
-    if not rows:
+    rows = [(z, moc) for z, moc in rows if is_online(moc) or (moc.meta or {}).get("olimp_id")]
+    async with Session() as s:
+        teach = [p for p in (await s.execute(select(Moc).where(Moc.kind == "olimp"))).scalars()
+                 if any(t.get("tg") == m.from_user.id for t in ((p.meta or {}).get("olimp") or {}).get("teachers") or [])]
+    if not rows and not teach:
         return False
     kb = [[IB(text=f"{'✅' if moc.status == 'yakun' else '🎓'} {moc.title[:40]}", callback_data=f"onme:{z.id}")]
           for z, moc in rows]
+    kb += [[IB(text=f"👩‍🏫 {p.title[:36]} — o'quvchilarim", callback_data=f"olmy:{p.id}")] for p in teach]
     await m.answer("🎓 <b>Mening imtihonlarim</b>", reply_markup=IM(inline_keyboard=kb))
     return True
 
@@ -1035,6 +1075,12 @@ async def guest_one(c: CallbackQuery) -> None:
             return await c.answer()
         moc = await s.get(Moc, z.moc_id)
     await c.answer()
+    if not is_online(moc):
+        from app.bot.olymp import seat_status
+        async with Session() as s:
+            p = await s.get(Moc, (moc.meta or {}).get("olimp_id"))
+        if not (moc.status == "yakun" and z.result):
+            return await seat_status(c.message, p, moc, z)
     if moc.status == "yakun" and z.result:
         from app.bot.moc import _deliver
         sp = M.parse_spec(moc.spec)

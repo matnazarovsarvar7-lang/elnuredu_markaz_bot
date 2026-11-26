@@ -164,6 +164,8 @@ async def deliver(bot: Bot, ids: list[int], title: str, notify_staff: list[int])
                 from app.db.models import MocSeat
                 z = await s.get(MocSeat, c.seat_id)
                 tgs = [z.tg_id] if z and z.tg_id else []
+            elif (c.data or {}).get("tg"):                   # olimpiada ustozi
+                tgs = [c.data["tg"]]
             targets.append((c, tgs))
     for c, tgs in targets:
         im = C.render(_cert_obj(c, uname))

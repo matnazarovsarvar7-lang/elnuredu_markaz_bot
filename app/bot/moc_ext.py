@@ -243,6 +243,9 @@ async def _price_save(msg: Message, state: FSMContext, mid: int, v: int, every: 
         moc.meta = {**(moc.meta or {}), "pay_all": every}
         await S.audit(s, st, "moc_narx", id=mid, price=v, pay_all=every)
         await s.commit()
+    if moc.kind == "olimp":
+        from app.bot.olymp import sync_price
+        await sync_price(mid)
     await msg.answer(f"✅ Narx: <b>{S.fmt_som(v)}</b> · " + ("hamma to'laydi" if every and v else "faqat tashqi qatnashchilar"
                                                          if v else "bepul")
                      + ("\n<i>Oldin to'langan summalar o'zgarmadi.</i>" if paid else ""))

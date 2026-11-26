@@ -38,6 +38,7 @@ from app.bot.coach import router as coach_router
 from app.bot.moc_ext import router as moc_ext_router
 from app.bot.analysis import router as analysis_router
 from app.bot.online import router as online_router
+from app.bot.olymp import router as olymp_router
 from app.config import settings
 from app.db.session import init_db
 from app.bot.jobs import setup as setup_jobs
@@ -125,6 +126,7 @@ async def main() -> None:
     top.message.register(start_handler, CommandStart())
     dp.include_router(top)
     dp.include_router(online_router)
+    dp.include_router(olymp_router)
     dp.include_router(scan_router)
     dp.include_router(pin_router)
     dp.include_router(pay_router)
