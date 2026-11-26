@@ -827,6 +827,8 @@ async def card(msg: Message, mid: int, tg: int, edit: bool = False) -> None:
         rows.append([IB(text="🏁 Yakunlash va natijalarni yuborish", callback_data=f"mqz:{mid}")])
     if moc.status == "yakun":
         rows.append([IB(text="📊 Natijalar (Excel)", callback_data=f"mqxl:{mid}")])
+        if moc.kind != "tashqi":
+            rows.append([IB(text="📈 Savollar tahlili", callback_data=f"anm:{mid}")])
     if r in MAKERS and moc.status != "yakun":
         rows.append([IB(text="🖨 Varaqlarni qayta olish", callback_data=f"mqr:{mid}"),
                      IB(text="🗑 Bekor qilish", callback_data=f"mqdel:{mid}")])
@@ -1477,7 +1479,7 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
                 if k == "t" and a != key[q - 1]:
                     wrong.append(f"{q} ({'—' if a == '-' else 'ikkita' if a == '*' else a}→{key[q - 1]})")
             r["wrong"] = wrong
-            r.pop("per_q", None)
+            r["pq"] = [round(x, 3) for x in r.pop("per_q", [])]        # savollar tahlili uchun
             ext = (z.baho or {}).get("_ext") or {}
             if ext.get("lvl") and sp.levels:              # tashqi kanal bergan daraja — o'shani qo'yamiz
                 r["level"] = ext["lvl"]
@@ -1490,6 +1492,12 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
         ranks = dense({z.id: z.result["total"] for z in present})      # teng natija — teng o'rin
         for z in order:
             z.result = {**z.result, "rank": ranks[z.id]}
+        from app.bot.analysis import moc_report
+        rep = moc_report(moc, sp, present)
+        if rep and sp.topics:
+            for z in present:
+                if z.id in rep.students:
+                    z.result = {**z.result, "topics": rep.students[z.id]["topics"]}
         moc.status = "yakun"
         st = await s.get(Staff, staff_id)
         if moc.kind in ("nazorat", "tashqi"):
@@ -1512,6 +1520,13 @@ async def compute_and_send(bot: Bot, mid: int, staff_id: int) -> tuple[int, str,
                 zz = await s.get(MocSeat, z.id)
                 zz.sent_at = datetime.utcnow()
                 await s.commit()
+    if rep and moc.kind != "tashqi":
+        from app.bot.analysis import after_moc_finish
+        try:
+            await after_moc_finish(bot, moc, sp, rep, targets, st.tg_id if st else None)
+        except Exception:
+            import logging
+            logging.getLogger(__name__).exception("MOC tahlili")
     totals = [z.result["total"] for z in present]
     avg = sum(totals) / len(totals) if totals else 0
     levels: dict[str, int] = {}
@@ -1579,6 +1594,7 @@ async def _to_exam_one(s, moc: Moc, gid: int, present: list[MocSeat], st: Staff 
         r.percent = z.result["percent"]
         r.score = z.result["percent"]
         r.answers = (z.answers or "")[:400]
+        r.topics = z.result.get("topics")
         await s.flush()
         stu = await s.get(Student, z.student_id)
         await _apply_coins(s, r, stu, rules, st, ex)

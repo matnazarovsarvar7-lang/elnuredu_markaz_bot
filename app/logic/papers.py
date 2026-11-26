@@ -88,6 +88,8 @@ def bank_need(n_students: int, n: int, k: int | None = None) -> dict:
 def level_quotas(n: int, counts: dict[str, int]) -> dict[str, int]:
     """Bir o'quvchiga har darajadan nechta: bankdagi nisbatga mos (odatda 50/30/20)."""
     tot = sum(counts.values())
+    if not tot or not n:
+        return {L: 0 for L in counts}
     q = {L: math.floor(n * c / tot) for L, c in counts.items()}
     for L in sorted(counts, key=lambda L: -(n * counts[L] / tot - q[L]))[:n - sum(q.values())]:
         q[L] += 1
@@ -101,7 +103,24 @@ def assign_bank(levels: dict[int, str], n_students: int, n: int, k: int, seed: i
     by: dict[str, list[int]] = {}
     for qid, L in levels.items():
         by.setdefault(L, []).append(qid)
-    quota = level_quotas(n, {L: len(v) for L, v in by.items()})
+    if any("|" in L for L in by):                 # qiyinlik|mavzu: avval qiyinlik nisbati, keyin ichida mavzular
+        lv: dict[str, dict[str, int]] = {}
+        for L, v in by.items():
+            a, _, t = L.partition("|")
+            lv.setdefault(a, {})[t] = len(v)
+        quota, per_t = {}, {}
+        for a, qa in level_quotas(n, {a: sum(x.values()) for a, x in lv.items()}).items():
+            cnt, tot = lv[a], sum(lv[a].values())
+            base = {t: math.floor(qa * c / tot) for t, c in cnt.items()}
+            # ortiqchalar: avval qoldig'i katta, teng bo'lsa — hozircha kam olgan mavzuga (mavzular teng chiqadi)
+            order = sorted(cnt, key=lambda t: (-round(qa * cnt[t] / tot - base[t], 6), per_t.get(t, 0) + base[t]))
+            for t in order[:qa - sum(base.values())]:
+                base[t] += 1
+            for t, qt in base.items():
+                quota[f"{a}|{t}"] = qt
+                per_t[t] = per_t.get(t, 0) + qt
+    else:
+        quota = level_quotas(n, {L: len(v) for L, v in by.items()})
     if any(quota[L] > len(by[L]) for L in quota):
         return None
     rnd = random.Random(seed)

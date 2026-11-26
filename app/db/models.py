@@ -280,6 +280,7 @@ class ExamResult(Base):
     score: Mapped[float | None] = mapped_column(Float)            # None = qatnashmadi
     percent: Mapped[float | None] = mapped_column(Float)
     answers: Mapped[str | None] = mapped_column(String(400))      # bot testi uchun
+    topics: Mapped[dict | None] = mapped_column(JSON)             # {"Kasrlar": [to'g'ri, jami]} — mavzu tahlili
     coins_given: Mapped[int] = mapped_column(Integer, default=0)
     appeals: Mapped[int] = mapped_column(Integer, default=0)
 
@@ -356,6 +357,7 @@ class TestQuestion(Base):
     options: Mapped[list] = mapped_column(JSON)
     answer: Mapped[str] = mapped_column(String(20))
     figure: Mapped[str | None] = mapped_column(Text)        # SVG chizma
+    topic: Mapped[str | None] = mapped_column(String(120))  # mavzu (tip) — tahlil uchun
 
 
 class TestPaper(Base):

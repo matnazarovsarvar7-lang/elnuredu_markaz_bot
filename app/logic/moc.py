@@ -55,6 +55,7 @@ class Spec:
     scale: float = 100.0      # shkala uchun eng katta ball
     levels: list[tuple[float, str]] = field(default_factory=list)   # kamayish tartibida
     errors: list[str] = field(default_factory=list)
+    topics: dict[int, str] = field(default_factory=dict)            # savol raqami -> mavzu (tahlil uchun)
 
     @property
     def n_questions(self) -> int:
@@ -123,6 +124,8 @@ class Spec:
         out.append(f"Natija: {res}")
         if self.levels:
             out.append("Darajalar: " + ", ".join(f"{b} ≥{_num(a)}" for a, b in self.levels))
+        if self.topics:
+            out.append(f"Mavzular: {len(set(self.topics.values()))} ta ({len(self.topics)} savolga) — tahlil kartasi bo'ladi")
         return "\n".join(out)
 
 
@@ -193,6 +196,25 @@ def parse_spec(text: str) -> Spec:
                 except (IndexError, ValueError):
                     sp.errors.append("shkala uchun eng katta ballni yozing: natija: shkala 75")
             continue
+        if low.startswith("mavzu:"):
+            for part in line.split(":", 1)[1].split(";"):
+                mm = re.match(r"^\s*([\d\s,\-–]+?)\s+([^\d\s].*)$", part)
+                if not mm:
+                    if part.strip():
+                        sp.errors.append(f"mavzu «{part.strip()}» — avval savollar, keyin nomi: 1-5 Kasrlar")
+                    continue
+                for chunk in re.split(r"[,\s]+", mm.group(1).replace("–", "-").strip()):
+                    if not chunk:
+                        continue
+                    a_, _, b_ = chunk.partition("-")
+                    try:
+                        lo_, hi_ = int(a_), int(b_ or a_)
+                    except ValueError:
+                        sp.errors.append(f"mavzu «{part.strip()}» — raqamlar noto'g'ri")
+                        continue
+                    for q in range(lo_, hi_ + 1):
+                        sp.topics[q] = mm.group(2).strip()[:60]
+            continue
         if low.startswith("daraja:"):
             lv = []
             for part in line.split(":", 1)[1].split(";"):
@@ -262,6 +284,9 @@ def parse_spec(text: str) -> Spec:
         sp.errors.append(f"Varaqqa ko'pi bilan 100 ta savol sig'adi (hozir {sp.n_questions})")
     if sp.mode == "cefr" and not sp.levels:
         sp.levels = list(CEFR_LEVELS)
+    bad = sorted(q for q in sp.topics if not 1 <= q <= sp.n_questions)
+    if bad and sp.sections:
+        sp.errors.append(f"mavzu: {bad[0]}-savol varaqda yo'q (savollar 1–{sp.n_questions})")
     return sp
 
 

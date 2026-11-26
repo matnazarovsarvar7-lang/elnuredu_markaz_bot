@@ -269,7 +269,11 @@ async def exam_view(c: CallbackQuery) -> None:
                                 .order_by(ExamResult.percent.desc().nullslast()))).all()
     lines = [f"{n}: " + (f"{r.score:g}/{ex.max_score:g} · {r.percent:.0f}%" if r.percent is not None else "qatnashmadi")
              for r, n in rows]
-    await c.message.answer("📊 <b>Natijalar</b>\n" + "\n".join(lines))
+    kb = None
+    if ex.kind == "test":
+        from app.bot.analysis import exam_button
+        kb = IM(inline_keyboard=[exam_button(eid)])
+    await c.message.answer("📊 <b>Natijalar</b>\n" + "\n".join(lines), reply_markup=kb)
 
 
 async def _exam_papers(s, eid: int):

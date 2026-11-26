@@ -9,6 +9,7 @@ umumiy: 5
 id: 1
 variant: umumiy | A | B | C | D
 qiyinlik: oson | orta | qiyin
+mavzu: ...         (ixtiyoriy — sarlavhadagi «mavzular:» ro'yxatidan; mavzu tahlili uchun)
 manba: ...
 savol: ...
 chizma:            (ixtiyoriy — SVG, keyingi qatordan </svg> gacha)
@@ -40,6 +41,7 @@ class Q:
     options: list[str]
     answer: str             # "A".."D"
     figure: str = ""        # SVG chizma (bo'lmasa — bo'sh)
+    topic: str = ""         # mavzu (tip)
 
 
 @dataclass
@@ -52,6 +54,11 @@ class TestFile:
     @property
     def n(self) -> int:
         return int(self.meta.get("savollar_soni", 0) or 0)
+
+    @property
+    def topics(self) -> list[str]:
+        """Sarlavhadagi «mavzular: A; B; C» ro'yxati (tartibi saqlanadi)."""
+        return [x.strip() for x in re.split(r"[;\n]", str(self.meta.get("mavzular", ""))) if x.strip()]
 
     @property
     def is_bank(self) -> bool:
@@ -130,7 +137,7 @@ def _parse_q(block: str, i: int, errors: list[str]) -> Q | None:
                 fields["chizma"], svg = rest, None
             continue
         m_opt = re.match(r"^\s*([A-Da-d])\s*[\)\.]\s*(.+)$", line)
-        m_key = re.match(r"^\s*(id|variant|qiyinlik|manba|savol|javob)\s*:\s*(.*)$", line, flags=re.I)
+        m_key = re.match(r"^\s*(id|variant|qiyinlik|mavzu|manba|savol|javob)\s*:\s*(.*)$", line, flags=re.I)
         if m_key:
             cur = m_key.group(1).lower()
             fields[cur] = m_key.group(2).strip()
@@ -174,7 +181,7 @@ def _parse_q(block: str, i: int, errors: list[str]) -> Q | None:
     except ValueError:
         qid = i
     return Q(qid, variant, level, fields.get("manba", ""), fields["savol"], [opts[x] for x in LETTERS], ans,
-             fields.get("chizma", ""))
+             fields.get("chizma", ""), " ".join(fields.get("mavzu", "").split())[:120])
 
 
 def _validate(tf: TestFile) -> None:
@@ -214,6 +221,7 @@ def _validate(tf: TestFile) -> None:
         extra = [q for q in tf.questions if q.variant not in ("umumiy", *VARIANTS[:v])]
         if extra:
             tf.errors.append(f"{len(extra)} ta savol mavjud bo'lmagan variantga yozilgan.")
+    _check_topics(tf)
     # ogohlantirishlar
     texts = {}
     for q in tf.questions:
@@ -223,6 +231,33 @@ def _validate(tf: TestFile) -> None:
         texts[key] = q.qid
         if len(set(o.strip().lower() for o in q.options)) < 4:
             tf.warnings.append(f"{q.qid}-savolda bir xil javob variantlari bor.")
+
+
+def _key(t: str) -> str:
+    return re.sub(r"[^a-z0-9а-яё]", "", t.lower().replace("'", ""))
+
+
+def _check_topics(tf: TestFile) -> None:
+    """Mavzular: sarlavhadagi ro'yxatga moslab yozilishini bir xillashtiradi; kam savolli mavzuni ogohlantiradi."""
+    tagged = [q for q in tf.questions if q.topic]
+    if not tagged:
+        return
+    canon = {_key(t): t for t in tf.topics}
+    for q in tagged:
+        k = _key(q.topic)
+        if k in canon:
+            q.topic = canon[k]
+        elif canon:
+            tf.warnings.append(f"{q.qid}-savol mavzusi «{q.topic}» sarlavhadagi «mavzular» ro'yxatida yo'q.")
+    if len(tagged) < len(tf.questions):
+        tf.warnings.append(f"{len(tf.questions) - len(tagged)} ta savolda «mavzu:» yozilmagan — ular tahlilda "
+                           "«Boshqa» deb ko'rinadi.")
+    cnt: dict[str, int] = {}
+    for q in tagged:
+        cnt[q.topic] = cnt.get(q.topic, 0) + 1
+    small = [f"{t} ({n})" for t, n in cnt.items() if n < 3]
+    if small:
+        tf.warnings.append("Kamida 3 ta savol bo'lmagan mavzular (xulosa ishonchsiz): " + ", ".join(small))
 
 
 def level_counts(qs: list[Q]) -> dict[str, int]:
@@ -236,8 +271,10 @@ def render(meta: dict, questions: list[Q]) -> str:
     """Saqlangan testni qayta fayl ko'rinishiga keltiradi (tuzatishdan keyin yuborish uchun)."""
     lines = ["#TEST"] + [f"{k}: {v}" for k, v in meta.items()]
     for q in questions:
-        lines += ["#SAVOL", f"id: {q.qid}", f"variant: {q.variant}", f"qiyinlik: {q.level}",
-                  f"manba: {q.source}", f"savol: {q.text}"]
+        lines += ["#SAVOL", f"id: {q.qid}", f"variant: {q.variant}", f"qiyinlik: {q.level}"]
+        if q.topic:
+            lines.append(f"mavzu: {q.topic}")
+        lines += [f"manba: {q.source}", f"savol: {q.text}"]
         if q.figure:
             lines += ["chizma:", q.figure]
         lines += [f"{x}) {o}" for x, o in zip(LETTERS, q.options)]

@@ -477,7 +477,7 @@ async def up_file(m: Message, state: FSMContext, bot: Bot) -> None:
         await s.execute(delete(TestQuestion).where(TestQuestion.test_id == t.id))
         for q in tf.questions:
             s.add(TestQuestion(test_id=t.id, qid=q.qid, variant=q.variant, level=q.level, source=q.source[:120],
-                               figure=q.figure or None,
+                               figure=q.figure or None, topic=q.topic or None,
                                text=q.text, options=q.options, answer=q.answer))
         t.n_questions, t.n_variants, t.common = tf.n, tf.variants, tf.common
         planned = d.get("planned") or (t.meta or {}).get("sana")      # so'rovdagi sana yo'qolmasin
@@ -698,7 +698,7 @@ async def return_send(m: Message, state: FSMContext, bot: Bot) -> None:
         await s.commit()
         qs = (await s.execute(select(TestQuestion).where(TestQuestion.test_id == t.id)
                               .order_by(TestQuestion.qid))).scalars().all()
-        txt = TF.render(t.meta or {}, [TF.Q(q.qid, q.variant, q.level, q.source or "", q.text, q.options, q.answer, q.figure or "")
+        txt = TF.render(t.meta or {}, [TF.Q(q.qid, q.variant, q.level, q.source or "", q.text, q.options, q.answer, q.figure or "", q.topic or "")
                                        for q in qs])
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
         g = await s.get(Group, t.group_id)
@@ -771,8 +771,16 @@ async def make_papers(bot: Bot, tid: int, report_to: int | None = None) -> None:
         bank_note = ""
         if t.n_variants == 0:               # bank rejimi: har o'quvchiga shaxsiy to'plam
             k0 = int((t.meta or {}).get("takror") or P.overlap_limit(t.n_questions))
-            levels = {q.qid: ("orta" if q.level in ("orta", "o'rta") else q.level) for q in qs}
-            sets, k = None, k0
+            # qatlam = qiyinlik × mavzu: har o'quvchining testi barcha mavzularni bankdagi ulushida qamraydi
+            plain = {q.qid: ("orta" if q.level in ("orta", "o'rta") else q.level) for q in qs}
+            levels = {qid: L + "|" + (by_id[qid].topic or "") for qid, L in plain.items()}
+            sets = None
+            if any(q.topic for q in qs):
+                for sd in range(3):
+                    sets = P.assign_bank(levels, len(roster), t.n_questions, k0, seed=tid * 7 + sd)
+                    if sets:
+                        break
+            levels, k = plain, k0               # mavzu bilan topilmasa — faqat qiyinlik bo'yicha
             while sets is None and k <= t.n_questions:
                 for sd in range(3):
                     sets = P.assign_bank(levels, len(roster), t.n_questions, k, seed=tid * 7 + sd)
@@ -1355,11 +1363,17 @@ async def finish(c: CallbackQuery, bot: Bot) -> None:
                 msgs.append((tgt, text, r.id))
         await S.audit(s, st, "nazorat", group=g.name, date=ex.date.isoformat(), kind="test")
         await s.commit()
+        done_eid = ex.id
     kb = lambda rid: IM(inline_keyboard=[[IB(text="📝 Apellyatsiya", callback_data=f"apl:{rid}")]])
     for tgt, text, rid in msgs:
         await send(bot, tgt, text + f"\n\nE'tirozingiz bo'lsa — {APPEAL_HOURS} soat ichida:", reply_markup=kb(rid))
     await c.message.answer(f"✅ Nazorat yakunlandi. Natijalar {len(msgs)} ta manzilga yuborildi.")
     await c.answer()
+    try:
+        from app.bot.analysis import after_test_finish
+        await after_test_finish(bot, done_eid, [c.from_user.id])
+    except Exception:
+        log.exception("tahlil kartasi")
 
 
 async def paper_question_info(result_id: int, qno: int) -> str | None:
