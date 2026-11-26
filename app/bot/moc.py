@@ -109,19 +109,9 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
                 continue
             rows.append([IB(text=f"{icon} {x.date:%d.%m} · {x.title[:28]} · {done}/{len(seats)}",
                             callback_data=f"mqc:{x.id}")])
-    if _role(st) == "rahbar":
-        rows.append([IB(text="📐 Mock ballini rasmiy natijaga moslash", callback_data="mq:cal")])
-    if _role(st) in MAKERS:
-        rows.append([IB(text="➕ Yangi MOC imtihon", callback_data="mq:new")])
-        rows.append([IB(text="📄 Tayyor PDF test (nazorat)", callback_data="mq:pdf")])
-        rows.append([IB(text="🌐 Tashqi tekshiruvli test (kanal tekshiradi)", callback_data="mq:ext")])
-        rows.append([IB(text="📲 Online MOC (kanal orqali, Telegram'da)", callback_data="mq:onl")])
-        rows.append([IB(text="🏆 Olimpiada", callback_data="mq:olp")])
-        rows.append([IB(text="👩‍🏫 Attestatsiya testi (o'qituvchilar, online)", callback_data="mq:att")])
-    text = ("🎓 <b>MOC imtihonlar va PDF testlar</b>\n\nFormatlar: Milliy sertifikat, DTM, CEFR, IELTS, oddiy test "
-            "yoki o'z formatingiz. Savollar — sizning PDF faylingiz, javob varaqlari va tekshirish — bot.\n"
-            "🌐 <b>Tashqi tekshiruv</b> — test sotib olingan kanalda tekshiriladi, siz faqat natijani yuklaysiz.")
-    kb = IM(inline_keyboard=rows)
+    text = ("📋 <b>Imtihonlar</b> — ochish uchun bosing:" if rows else
+            "📋 Hozircha imtihon yo'q." + (" Yangisini pastdagi tugmalardan yarating." if _role(st) in MAKERS else ""))
+    kb = IM(inline_keyboard=rows) if rows else None
     if edit:
         try:
             return await msg.edit_text(text, reply_markup=kb)
@@ -130,10 +120,47 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
     await msg.answer(text, reply_markup=kb)
 
 
-@router.message(F.text == K.B_MOC)
+EXAM_HELP = ("🎓 <b>Imtihonlar</b> — kerakli turini pastdan tanlang:\n"
+             "🎓 <b>MOC (markazda)</b> — qog'ozda: Milliy sertifikat, DTM, CEFR, IELTS; javob varag'i + skaner\n"
+             "📲 <b>Online MOC</b> — kanalingiz orqali, Telegram'ning o'zida\n"
+             "🏆 <b>Olimpiada</b> — toifalar, sovrinlar, ustozlarni taqdirlash\n"
+             "👩‍🏫 <b>Attestatsiya</b> — o'qituvchilar uchun tayyorlov testi (online)\n"
+             "📄 <b>PDF nazorat</b> — guruhda o'z PDF testingiz bilan nazorat\n"
+             "🌐 <b>Tashqi test</b> — sotib olingan test: kanal tekshiradi, siz natijani yuklaysiz")
+
+
+@router.message(F.text.in_({K.B_MOC, K.B_MOC_OLD}))
 async def moc_menu(m: Message, state: FSMContext) -> None:
     await state.clear()
+    async with Session() as s:
+        st = await _staff(s, m.from_user.id)
+    if _role(st) in MAKERS:
+        await m.answer(EXAM_HELP, reply_markup=K.exam_menu(_role(st) == "rahbar"))
     await list_view(m, m.from_user.id)
+
+
+class _Tap:
+    """Pastki menyu tugmasini mavjud tugma (callback) ishlovchisiga uzatish uchun."""
+
+    def __init__(self, m: Message, data: str):
+        self.message, self.from_user, self.data, self.bot = m, m.from_user, data, m.bot
+
+    async def answer(self, *a, **k) -> None:
+        return None
+
+
+@router.message(F.text.in_({K.B_X_MOC, K.B_X_ONL, K.B_X_OLP, K.B_X_ATT, K.B_X_PDF, K.B_X_EXT, K.B_X_LIST, K.B_X_CAL}))
+async def exam_button(m: Message, state: FSMContext) -> None:
+    async with Session() as s:
+        st = await _staff(s, m.from_user.id)
+    if m.text == K.B_X_LIST:
+        await state.clear()
+        return await list_view(m, m.from_user.id)
+    if _role(st) not in MAKERS:
+        return
+    fn = {K.B_X_MOC: new_moc, K.B_X_ONL: new_online, K.B_X_OLP: new_olymp, K.B_X_ATT: new_attest,
+          K.B_X_PDF: new_pdf, K.B_X_EXT: new_ext, K.B_X_CAL: cal_menu}[m.text]
+    await fn(_Tap(m, ""), state)
 
 
 @router.callback_query(F.data == "mq:list")

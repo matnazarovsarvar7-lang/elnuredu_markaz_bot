@@ -35,7 +35,17 @@ B_APPEAL = "✉️ Murojaat"
 B_APPEALS = "📨 Murojaatlar"
 B_PRINT = "🖨 Chop etish"
 B_LIBRARY = "📚 Kutubxona"
-B_MOC = "🎓 MOC imtihonlar"
+B_MOC = "🎓 Imtihonlar"
+B_MOC_OLD = "🎓 MOC imtihonlar"          # eski klaviaturalar uchun
+# 🎓 Imtihonlar bo'limi — har biri to'g'ridan-to'g'ri yaratishni boshlaydi
+B_X_MOC = "🎓 MOC (markazda)"
+B_X_ONL = "📲 Online MOC"
+B_X_OLP = "🏆 Olimpiada"
+B_X_ATT = "👩‍🏫 Attestatsiya"
+B_X_PDF = "📄 PDF nazorat"
+B_X_EXT = "🌐 Tashqi test"
+B_X_LIST = "📋 Imtihonlar ro'yxati"
+B_X_CAL = "📐 Ballni moslash"
 B_CASH_CLOSE = "🔐 Kassani yopish"
 B_HANDOVER = "💼 Kassani topshirish"
 B_CASH = "💼 Kassa"
@@ -85,13 +95,13 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
                     [B_SEC_EDU, B_SEC_FIN],
                     [B_SEC_ADM] + tail])
     rows: list[list[str]] = []
-    if role in ("oqituvchi", "yordamchi"):
+    if role in ("oqituvchi", "yordamchi"):           # testlar — «Nazoratlar» ichida, kutubxona — «Chop etish» ichida
         rows.append([B_TODAY, B_EXAMS])
-        rows.append([B_TESTS, B_SCAN])
+        rows.append([B_SCAN, B_MOC])
         rows.append([B_RATING, B_APPEALS])
-        rows.append([B_LIBRARY, B_PRINT])
+        rows.append([B_PRINT] + ([B_ACHIEVE] if role == "oqituvchi" else []))
     if role == "oqituvchi":
-        rows.append([B_DELEGATE, B_ACHIEVE])
+        rows.append([B_DELEGATE])
     if role == "moliya":
         rows.append([B_PAY_IN, B_DEBTS])
         rows.append([B_STUDENT, B_GROUPS])
@@ -105,20 +115,26 @@ def staff_menu(role: str, multi: bool) -> ReplyKeyboardMarkup:
         rows.append([B_NEW_STUDENT, B_LEADS])
         rows.append([B_SERVICES, B_STOCK])
         rows.append([B_ACHIEVE, B_PRINT])
-        rows.append([B_LIBRARY, B_MOC])
+        rows.append([B_MOC])
     rows.append([B_MY_TASKS, B_MY_SALARY])
     rows.append(tail)
     return _kb(rows)
 
 
 SECTIONS = {
-    B_SEC_EDU: ("🎓 <b>Ta'lim bo'limi</b>", [[B_EXAMS, B_TESTS], [B_MOC, B_RATING], [B_APPEALS, B_ACHIEVE],
-                                            [B_LIBRARY, B_PRINT], [B_BACK]]),
+    B_SEC_EDU: ("🎓 <b>Ta'lim bo'limi</b>", [[B_EXAMS, B_MOC], [B_RATING, B_APPEALS], [B_PRINT, B_ACHIEVE],
+                                            [B_BACK]]),
     B_SEC_FIN: ("💰 <b>Moliya bo'limi</b>", [[B_CASH, B_REPORT], [B_EXPENSE, B_SERVICES], [B_MARKET, B_STOCK],
                                             [B_BACK]]),
     B_SEC_ADM: ("🏢 <b>Boshqaruv bo'limi</b>", [[B_STAFF, B_GROUPS], [B_TASK_NEW, B_TASKS_ALL], [B_LEADS, B_DELEGATE],
                                                [B_LEAVE, B_HISTORY], [B_SETTINGS, B_BACK]]),
 }
+
+
+def exam_menu(boss: bool) -> ReplyKeyboardMarkup:
+    """🎓 Imtihonlar: yangi imtihon turini bir bosishda boshlash + ro'yxat."""
+    return _kb([[B_X_MOC, B_X_ONL], [B_X_OLP, B_X_ATT], [B_X_PDF, B_X_EXT],
+                [B_X_LIST] + ([B_X_CAL] if boss else []), [B_BACK]])
 
 
 def section_menu(key: str) -> ReplyKeyboardMarkup:

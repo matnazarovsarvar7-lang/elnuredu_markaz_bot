@@ -55,8 +55,19 @@ def _is_boss(st: Staff | None) -> bool:
 @router.message(F.text == K.B_TESTS)
 async def tests_menu(m: Message, state: FSMContext) -> None:
     await state.clear()
+    await _tests_menu(m, m.from_user.id)
+
+
+@router.callback_query(F.data == "tsm:open")
+async def tests_menu_cb(c: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await c.answer()
+    await _tests_menu(c.message, c.from_user.id)
+
+
+async def _tests_menu(m: Message, tg: int) -> None:
     async with Session() as s:
-        st = await _staff(s, m.from_user.id)
+        st = await _staff(s, tg)
     if not st or st.current_role not in ("rahbar", "oqituvchi", "yordamchi"):
         return
     rows = []
@@ -66,14 +77,13 @@ async def tests_menu(m: Message, state: FSMContext) -> None:
         async with Session() as s:
             n_req = len(await pending_requests(s))
         rows.append([IB(text=f"📥 Kelgan so'rovlar ({n_req})", callback_data="tsr:list")])
-    rows.append([IB(text="📄 Tayyor PDF test", callback_data="mq:pdf"),
-                 IB(text="🎓 MOC imtihonlar", callback_data="mq:list")])
+    rows.append([IB(text="📄 Tayyor PDF test", callback_data="mq:pdf")])
     rows.append([IB(text="📎 Tayyor testni yuklash (.txt)", callback_data="tsu:new")])
     rows.append([IB(text="📋 Testlar holati", callback_data="tsl:list")])
     await m.answer("📚 <b>Testlar</b>\n\n"
                    "• So'rov — mavzu va kitob rasmlarini rahbarga yuborasiz, u test tuzib beradi.\n"
                    "• Tayyor PDF test — o'z PDF savollaringiz + kalit; bot javob varaqlarini tayyorlab, tekshiradi.\n"
-                   "• MOC imtihon — Milliy sertifikat, DTM, CEFR, IELTS yoki o'z formatingiz; ball va daraja.\n"
+
                    "• Tayyor test (.txt) — andoza bo'yicha yozilgan faylni yuklaysiz.\n"
                    "Bot har bir o'quvchi uchun alohida varaq tayyorlab, adminga chop etishga yuboradi.\n"
                    "• Test o'tgach — «📋 Testlar holati» → «📷 Tekshirish»: javob varaqlarini rasmga olasiz, "

@@ -111,8 +111,7 @@ async def menu(m: Message, state: FSMContext) -> None:
                      IB(text="🖥 Printer dasturi", callback_data="chp:ag")])
     if r in CASHIERS:
         rows.append([IB(text="💵 Kitobcha to'lovlari", callback_data="chp:pay")])
-    if r == "moliya":
-        rows.append([IB(text="📚 Kutubxona — kitob narxlari", callback_data="chp:lib")])
+    rows.append([IB(text="📚 Kutubxona (fanlar bo'yicha kitoblar)", callback_data="chp:lib")])
     if r == "rahbar":
         rows.append([IB(text="📊 Hisobot", callback_data="chp:rep"), IB(text="⚙️ Narx va ulush", callback_data="chp:set")])
     await m.answer("🖨 <b>Chop etish</b>\n\n📄 <b>Ichki hujjat</b> — o'zingizga yoki o'quvchilarga kerak hujjat, bepul.\n"

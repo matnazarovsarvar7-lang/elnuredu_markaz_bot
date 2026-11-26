@@ -110,6 +110,35 @@ async def announce_menu_v2(bot: Bot) -> None:
             pass
 
 
+async def announce_menu_v3(bot: Bot) -> None:
+    """Bir marta: imtihonlar bo'limi va soddalashgan Ta'lim menyusi haqida xabar + yangi klaviatura."""
+    from app.db.session import Session
+    from sqlalchemy import select
+    from app.db.models import Setting, Staff
+    from app.bot import keyboards as K
+    async with Session() as s:
+        if await s.get(Setting, "menu_v3"):
+            return
+        s.add(Setting(key="menu_v3", value={"on": True}))
+        staff = list((await s.execute(select(Staff).where(Staff.tg_id.is_not(None), Staff.active))).scalars())
+        await s.commit()
+    for st in staff:
+        role = st.current_role or (st.role_list() or ["oqituvchi"])[0]
+        if role not in ("rahbar", "oqituvchi", "yordamchi", "admin", "moliya"):
+            continue
+        maker = role in ("rahbar", "oqituvchi", "yordamchi")
+        text = ("✨ <b>Menyu soddalashdi</b>\n"
+                + ("• «🎓 Imtihonlar» — ichida: MOC, Online MOC, Olimpiada, Attestatsiya, PDF nazorat, Tashqi test "
+                   "(har biri bitta bosishda boshlanadi)\n" if maker else
+                   "• «🎓 MOC imtihonlar» endi «🎓 Imtihonlar» deb ataladi\n")
+                + ("• «📚 Testlar» endi «📝 Nazoratlar» ichida\n" if role in ("rahbar", "oqituvchi", "yordamchi") else "")
+                + "• «📚 Kutubxona» endi «🖨 Chop etish» ichida")
+        try:
+            await bot.send_message(st.tg_id, text, reply_markup=K.staff_menu(role, len(st.role_list()) > 1))
+        except Exception:
+            pass
+
+
 async def main() -> None:
     logging.basicConfig(level=logging.INFO)
     await init_db()
@@ -163,6 +192,7 @@ async def main() -> None:
     setup_jobs(bot)
     await announce_scanner(bot)
     await announce_menu_v2(bot)
+    await announce_menu_v3(bot)
     from app import agent_api
     await agent_api.start(bot)          # printer dasturi uchun API (faqat ichki port, tashqariga Caddy orqali)
     await dp.start_polling(bot)

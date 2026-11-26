@@ -208,12 +208,15 @@ async def exams_list(m: Message) -> None:
         if not who.staff:
             return
         rows = await _my_exams(s, who.staff, who.staff.current_role)
+    tests_btn = [IB(text="📚 Testlar: so'rash, yuklash, holati", callback_data="tsm:open")]
     if not rows:
-        await m.answer("Hozircha nazorat rejasi yo'q. Reja har yakshanba kechqurun tuziladi.")
+        await m.answer("Hozircha nazorat rejasi yo'q. Reja har yakshanba kechqurun tuziladi.",
+                       reply_markup=IM(inline_keyboard=[tests_btn]))
         return
     kb = [[IB(text=f"{STATUS[e.status][:1]} {fmt_day(e.date)} · {g.name}" + (" · oylik" if e.monthly else ""),
               callback_data=f"ex:{e.id}")] for e, g in rows]
-    await m.answer("📝 <b>Nazoratlar</b> (o'tgan, shu va kelasi hafta). Tanlang:", reply_markup=IM(inline_keyboard=kb))
+    await m.answer("📝 <b>Nazoratlar</b> (o'tgan, shu va kelasi hafta). Tanlang:",
+                   reply_markup=IM(inline_keyboard=[tests_btn] + kb))
 
 
 async def exam_card(eid: int) -> tuple[str, IM]:

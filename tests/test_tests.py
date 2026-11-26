@@ -60,7 +60,7 @@ def test_menus_have_core_buttons():
     assert {K.B_STUDENT, K.B_GROUPS, K.B_NEW_STUDENT, K.B_PAY_IN, K.B_CASH, K.B_NOW, K.B_MARKET, K.B_TODAY} <= boss
     fin = flat(K.staff_menu("moliya", True))
     assert {K.B_STUDENT, K.B_CASH_CLOSE, K.B_HANDOVER, K.B_MARKET, K.B_SWITCH} <= fin
-    assert {K.B_TODAY, K.B_EXAMS, K.B_TESTS, K.B_DELEGATE} <= flat(K.staff_menu("oqituvchi", False))
+    assert {K.B_TODAY, K.B_EXAMS, K.B_MOC, K.B_DELEGATE} <= flat(K.staff_menu("oqituvchi", False))
     assert K.B_MARKET in flat(K.parent_menu()) and K.B_MARKET in flat(K.student_menu())
 
 
@@ -126,3 +126,10 @@ def test_question_figure_svg():
     pdf = SH.booklets_pdf([SH.BookletItem("Ali", "G", "13.11.2026", "K1", "A", "T",
                                           [("Uchburchak perimetri?", ["10", "20", "30", "40"], svg)])], "ELNUR")
     assert pdf[:4] == b"%PDF" and len(pdf) > 1500
+
+
+def test_exam_menu_buttons_unique():
+    from app.bot import keyboards as K
+    kb = [b.text for r in K.exam_menu(True).keyboard for b in r]
+    assert K.B_X_CAL in kb and K.B_X_CAL not in [b.text for r in K.exam_menu(False).keyboard for b in r]
+    assert len(set(K.menu_texts())) == len(K.menu_texts())
