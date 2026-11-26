@@ -46,6 +46,7 @@ class Ol(StatesGroup):
     t_name = State()
     t_phone = State()
     t_school = State()
+    stage_n = State()
 
 
 def ocfg(p: Moc) -> dict:
@@ -304,10 +305,43 @@ async def create(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
             cats.append({**cat, "mid": ch.id})
         meta = dict(p.meta)
         meta["olimp"] = {**meta["olimp"], "cats": cats}
+        moved = []
+        if w.get("stage_from"):                          # keyingi bosqich: o'tganlar avtomatik ro'yxatda
+            prev = await s.get(Moc, w["stage_from"])
+            pc = ocfg(prev)
+            meta["olimp"].update(stage_of=prev.id, teachers=pc.get("teachers") or [])
+            for old, new in zip(pc["cats"], cats):
+                for z in await O._seats(s, old["mid"]):
+                    rk = (z.result or {}).get("rank")
+                    if z.absent or not rk or rk > w["stage_n"]:
+                        continue
+                    nz = MocSeat(moc_id=new["mid"], name=z.name, phone=z.phone, tg_id=z.tg_id, variant="A", code="",
+                                 token=secrets.token_hex(4), paid=p.price,
+                                 online={k: v for k, v in (z.online or {}).items()
+                                         if k in ("school", "grade", "teacher_id", "teacher_name")}
+                                 | {"reg": O.now().isoformat(), "from": z.id})
+                    s.add(nz)
+                    await s.flush()
+                    nz.code = f"M{new['mid']}-{nz.id:03d}"
+                    moved.append(nz.id)
         p.meta = meta
-        await S.audit(s, st, "olimpiada", title=p.title)
+        await S.audit(s, st, "olimpiada", title=p.title, stage_from=w.get("stage_from"), moved=len(moved))
         await s.commit()
         pid = p.id
+    for zid in moved:                                    # o'tganlarga xabar
+        async with Session() as s:
+            z = await s.get(MocSeat, zid)
+            kid = await s.get(Moc, z.moc_id)
+            pp = await s.get(Moc, pid)
+        if z.tg_id:
+            await send(bot, z.tg_id, f"🎉 <b>Tabriklaymiz, {z.name}!</b>\nSiz «{pp.title}» bosqichiga o'tdingiz — "
+                                     "ro'yxatga avtomatik kiritildingiz.")
+            from aiogram.types import Chat
+            fake = Message(message_id=0, date=datetime.now(), chat=Chat(id=z.tg_id, type="private")).as_(bot)
+            try:
+                await seat_status(fake, pp, kid, z)
+            except Exception:
+                pass
     if O._role(st) not in O.PRICERS:
         from app.bot.moc_ext import ask_price
         await ask_price(bot, pid)
@@ -351,6 +385,8 @@ async def card(msg: Message, pid: int, tg: int, edit: bool = False) -> None:
         rows.append([IB(text="🖨 Javob varaqlarini chiqarish", callback_data=f"olpr:{pid}")])
     if p.status == "yakun":
         rows.append([IB(text="🎁 Sovrinlar ro'yxati", callback_data=f"olg:{pid}")])
+        if r in MB.MAKERS:
+            rows.append([IB(text="➡️ Keyingi bosqich (eng yaxshilarni o'tkazish)", callback_data=f"olnx:{pid}")])
     if r in O.PRICERS:
         from app.bot.moc_ext import money_rows
         rows += money_rows(p)
@@ -457,6 +493,53 @@ async def print_sheets(c: CallbackQuery, bot: Bot) -> None:
         if ids:
             await c.message.answer(f"⏳ {cat['name']}: {len(ids)} ta javob varag'i tayyorlanmoqda…")
             await MB.issue(bot, cat["mid"], ids, c.from_user.id, booklets=True)
+
+
+# ======================= keyingi bosqich =======================
+@router.callback_query(F.data.startswith("olnx:"))
+async def next_stage(c: CallbackQuery, state: FSMContext) -> None:
+    from app.bot import moc as MB
+    pid = int(c.data.split(":")[1])
+    async with Session() as s:
+        st = await O._staff(s, c.from_user.id)
+        p = await s.get(Moc, pid)
+    if MB._role(st) not in MB.MAKERS or not p or p.status != "yakun":
+        return await c.answer("Bo'lmaydi.", show_alert=True)
+    await state.clear()
+    await state.set_state(Ol.stage_n)
+    await state.update_data(olnx=pid)
+    await c.answer()
+    await c.message.answer("➡️ Har bir toifadan <b>nechanchi o'ringacha</b> keyingi bosqichga o'tadi? (masalan <code>10</code>)\n"
+                           "<i>Teng ball — teng o'rin: chegaradagi teng natijalilar ham o'tadi.</i>")
+
+
+@router.message(Ol.stage_n, F.text, ~F.text.in_(K.menu_texts()))
+async def next_stage_n(m: Message, state: FSMContext) -> None:
+    from app.bot import moc as MB
+    try:
+        n = int(m.text.strip())
+        assert 1 <= n <= 500
+    except (ValueError, AssertionError):
+        return await m.answer("Raqam yozing: 10")
+    pid = (await state.get_data())["olnx"]
+    async with Session() as s:
+        p = await s.get(Moc, pid)
+        c = ocfg(p)
+        counts = []
+        for cat in c["cats"]:
+            k = sum(1 for z in await O._seats(s, cat["mid"])
+                    if not z.absent and (z.result or {}).get("rank") and z.result["rank"] <= n)
+            counts.append(f"• {cat['name']}: {k} kishi")
+    stage = 2 + sum(1 for _ in [c.get("stage_of")] if _)
+    w = {"kind": "moc", "olimp": True, "title": f"{p.title.split(' — ')[0]} — {stage}-bosqich", "spec": p.spec,
+         "cats": [{"name": x["name"], "grades": x["grades"]} for x in c["cats"]], "nv": len(c["cats"]),
+         "booklets": {}, "keys": {}, "cur": 0, "stage_from": pid, "stage_n": n}
+    await state.clear()
+    await state.update_data(w=w)
+    await m.answer(f"✅ {stage}-bosqichga o'tadiganlar:\n" + "\n".join(counts)
+                   + "\n\nEndi yangi bosqich savollarini yuklang (har toifa uchun PDF va kalit), so'ng vaqt va "
+                     "sovrinlar. O'tganlar avtomatik ro'yxatga kiritiladi va xabar oladi.")
+    await MB._ask_pdf(m, state)
 
 
 # ======================= ustozlar =======================
@@ -615,6 +698,10 @@ async def register_start(m: Message, state: FSMContext, arg: str) -> bool:
         closed = closed or O.now() >= datetime.fromisoformat(c["start"])
     if closed:
         await m.answer(f"🏆 <b>{p.title}</b>\nRo'yxatdan o'tish yopilgan.", reply_markup=ReplyKeyboardRemove())
+        return True
+    if c.get("stage_of"):
+        await m.answer(f"🏆 <b>{p.title}</b>\nBu bosqichda faqat oldingi bosqichdan o'tganlar qatnashadi — ular "
+                       "avtomatik ro'yxatga kiritilgan.", reply_markup=ReplyKeyboardRemove())
         return True
     teacher = next((t for t in _teachers(p) if t["code"] == code), None) if code else None
     await state.clear()
