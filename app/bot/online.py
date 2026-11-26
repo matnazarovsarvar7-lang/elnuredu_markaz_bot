@@ -195,8 +195,8 @@ async def got_minutes(m: Message, state: FSMContext) -> None:
         return await m.answer("Oraliq bu vaqtdan qisqa — kamroq daqiqa yozing yoki oraliqni uzaytiring.")
     await state.update_data(w=w)
     await state.set_state(None)
-    if w.get("olimp"):                                  # olimpiadada maktab va sinf doim so'raladi
-        w["oschool"] = True
+    if w.get("olimp") or w.get("attest"):               # olimpiada: maktab+sinf doim; attestatsiya: joriy toifa
+        w["oschool"] = bool(w.get("olimp"))
         await state.update_data(w=w)
         async with Session() as s:
             st = await _staff(s, m.from_user.id)
@@ -322,8 +322,9 @@ async def create(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         moc = Moc(kind="moc", title=w["title"], date=datetime.fromisoformat(w["ostart"]).date(), spec=w["spec"],
                   n_variants=1, booklets=w["booklets"], keys=w["keys"], group_ids=[], price=int(w.get("price") or 0),
                   created_by=st.id if st else None,
-                  meta={"pay_all": True, "online": {"start": w["ostart"], "end": w["oend"], "minutes": w["omin"],
-                                                    "mode": w["omode"], "school": bool(w.get("oschool"))}})
+                  meta={"pay_all": True, "attest": bool(w.get("attest")),
+                        "online": {"start": w["ostart"], "end": w["oend"], "minutes": w["omin"],
+                                   "mode": w["omode"], "school": bool(w.get("oschool"))}})
         s.add(moc)
         await S.audit(s, st, "online_moc", title=moc.title)
         await s.commit()
@@ -369,7 +370,8 @@ async def online_card(msg: Message, moc: Moc, sp: M.Spec, seats: list[MocSeat], 
     if moc.status == "yakun":
         rows.append([IB(text="📊 Natijalar (Excel)", callback_data=f"mqxl:{moc.id}"),
                      IB(text="📈 Savollar tahlili", callback_data=f"anm:{moc.id}")])
-        rows.append([IB(text="🏆 TOP-10 ni kanalga", callback_data=f"ontop:{moc.id}")])
+        if not (moc.meta or {}).get("attest"):
+            rows.append([IB(text="🏆 TOP-10 ni kanalga", callback_data=f"ontop:{moc.id}")])
     if r in PRICERS:
         rows += money_rows(moc)
     if moc.status == "tayyor" and r in MB.MAKERS and not done:
@@ -391,6 +393,13 @@ def _baho_names(sp: M.Spec) -> list[str]:
 # ======================= kanal =======================
 def post_text(moc: Moc, sp: M.Spec) -> str:
     secs = [f"• {x.name}: {x.n} ta" if x.kind != "baho" else f"• {x.name} (yozma ish)" for x in sp.sections]
+    if (moc.meta or {}).get("attest"):
+        return (f"👩‍🏫 <b>{moc.title}</b>\n<b>ATTESTATSIYAGA TAYYORLOV TESTI</b> — online\n\n{when_text(moc)}\n\n"
+                + "\n".join(secs)
+                + f"\n\n💵 Qatnashish: <b>{S.fmt_som(moc.price) if moc.price else 'BEPUL'}</b>"
+                + "\n📋 Natijada: joriy toifangizni saqlash yoki oshirish uchun 2-bosqichda nechta ball kerakligi"
+                + "\n📊 Xatolar va mavzular tahlili — shaxsan sizga, natijalar boshqalarga ko'rinmaydi"
+                + "\n\n👇 Qatnashish uchun tugmani bosing")
     return (f"🎓 <b>{moc.title}</b>\n<b>ONLINE MOC</b> — Telegram'ning o'zida\n\n{when_text(moc)}\n\n"
             + "\n".join(secs)
             + f"\n\n💵 Qatnashish: <b>{S.fmt_som(moc.price) if moc.price else 'BEPUL'}</b>"
@@ -502,7 +511,8 @@ async def register_start(m: Message, state: FSMContext, mid: int) -> bool:
     await state.update_data(onreg={"mid": mid})
     await state.set_state(Reg.name)
     sp = M.parse_spec(moc.spec)
-    await m.answer(f"🎓 <b>{moc.title}</b> — online MOC\n\n{when_text(moc)}\n"
+    kind_txt = "attestatsiyaga tayyorlov testi" if (moc.meta or {}).get("attest") else "online MOC"
+    await m.answer(f"🎓 <b>{moc.title}</b> — {kind_txt}\n\n{when_text(moc)}\n"
                    f"💵 {S.fmt_som(moc.price) if moc.price else 'Bepul'} · {sp.n_questions} ta savol\n\n"
                    "📝 <b>Ro'yxatdan o'tish</b> (1 daqiqa)\nIsm va familiyangizni yozing — sertifikatga shunday yoziladi:",
                    reply_markup=ReplyKeyboardRemove())
@@ -538,6 +548,11 @@ async def reg_phone(m: Message, state: FSMContext, bot: Bot) -> None:
                               "ishtirok etadi.", reply_markup=ReplyKeyboardRemove())
     d["phone"] = phone
     await state.update_data(onreg=d)
+    if (moc.meta or {}).get("attest"):
+        from app.logic.attest import CATS
+        await m.answer("✅", reply_markup=ReplyKeyboardRemove())
+        return await m.answer("📋 Hozirgi malaka toifangiz? (natija shunga qarab izohlanadi)", reply_markup=IM(
+            inline_keyboard=[[IB(text=v, callback_data=f"ona:{k}")] for k, v in CATS.items()]))
     if cfg(moc).get("school"):
         await state.set_state(Reg.school)
         return await m.answer("🏫 Maktabingiz (masalan: <i>12-maktab, Urganch</i>):", reply_markup=ReplyKeyboardRemove())
@@ -557,6 +572,18 @@ async def reg_school(m: Message, state: FSMContext) -> None:
     await m.answer("Nechanchi sinfdasiz?", reply_markup=IM(inline_keyboard=[
         [IB(text=g, callback_data=f"ong:{g}") for g in GRADES[:5]],
         [IB(text=g, callback_data=f"ong:{g}") for g in GRADES[5:]]]))
+
+
+@router.callback_query(F.data.startswith("ona:"))
+async def reg_toifa(c: CallbackQuery, state: FSMContext, bot: Bot) -> None:
+    d = (await state.get_data()).get("onreg")
+    if not d or "phone" not in d:
+        return await c.answer("Jarayon eskirgan — kanaldagi tugmani qayta bosing.", show_alert=True)
+    d["toifa"] = c.data.split(":", 1)[1]
+    await state.update_data(onreg=d)
+    await c.answer()
+    await c.message.edit_reply_markup(reply_markup=None)
+    await _make_seat(c.message, state, bot, c.from_user.id)
 
 
 @router.callback_query(F.data.startswith("ong:"))
@@ -583,7 +610,7 @@ async def _make_seat(msg: Message, state: FSMContext, bot: Bot, tg: int | None =
         ids = await MB._make_seats(s, moc, [], [(d["name"], d["phone"])], 0)
         z = await s.get(MocSeat, ids[0])
         z.tg_id = tg
-        z.online = {"reg": now().isoformat(), **{k: d[k] for k in ("school", "grade") if d.get(k)}}
+        z.online = {"reg": now().isoformat(), **{k: d[k] for k in ("school", "grade", "toifa") if d.get(k)}}
         await s.commit()
     await msg.answer(f"✅ <b>{d['name']}</b>, ro'yxatdan o'tdingiz!", reply_markup=ReplyKeyboardRemove())
     await status_view(msg, moc, z)
@@ -895,7 +922,8 @@ async def finalize(bot: Bot, mid: int) -> None:
         return
     n_sent, summary, xls = await compute_and_send(bot, mid, creator.id)
     olimp = (moc.meta or {}).get("olimp_id")
-    if not olimp:
+    attest = (moc.meta or {}).get("attest")
+    if not olimp and not attest:                     # attestatsiyada o'rin sertifikati va ommaviy reyting yo'q
         await moc_certs(bot, mid)
     async with Session() as s:
         bosses = [x.tg_id for x in await S.staff_with_role(s, "rahbar") if x.tg_id]
@@ -909,6 +937,8 @@ async def finalize(bot: Bot, mid: int) -> None:
     if olimp:                                        # olimpiada: sovrinlar hamma toifa tugagach
         from app.bot.olymp import child_done
         return await child_done(bot, mid)
+    if attest:
+        return
     for t in bosses:
         await top_preview(bot, mid, t)
 

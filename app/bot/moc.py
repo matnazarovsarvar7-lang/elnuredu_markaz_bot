@@ -117,6 +117,7 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
         rows.append([IB(text="🌐 Tashqi tekshiruvli test (kanal tekshiradi)", callback_data="mq:ext")])
         rows.append([IB(text="📲 Online MOC (kanal orqali, Telegram'da)", callback_data="mq:onl")])
         rows.append([IB(text="🏆 Olimpiada", callback_data="mq:olp")])
+        rows.append([IB(text="👩‍🏫 Attestatsiya testi (o'qituvchilar, online)", callback_data="mq:att")])
     text = ("🎓 <b>MOC imtihonlar va PDF testlar</b>\n\nFormatlar: Milliy sertifikat, DTM, CEFR, IELTS, oddiy test "
             "yoki o'z formatingiz. Savollar — sizning PDF faylingiz, javob varaqlari va tekshirish — bot.\n"
             "🌐 <b>Tashqi tekshiruv</b> — test sotib olingan kanalda tekshiriladi, siz faqat natijani yuklaysiz.")
@@ -161,6 +162,18 @@ async def new_online(c: CallbackQuery, state: FSMContext) -> None:
     await c.message.answer("📲 <b>Online MOC</b>\n\nQatnashchilar kanalingizdagi tugma orqali botga kiradi, ro'yxatdan "
                            "o'tadi va javoblarni Telegram'ning o'zida belgilaydi. Natija, kalit va sertifikat — "
                            "muddat tugagach avtomatik.\n\nImtihon nomini yozing:")
+
+
+@router.callback_query(F.data == "mq:att")
+async def new_attest(c: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.update_data(w={"kind": "moc", "online": True, "attest": True})
+    await state.set_state(Mc.title)
+    await c.answer()
+    await c.message.answer("👩‍🏫 <b>O'qituvchilar attestatsiyasi — tayyorlov testi (online)</b>\n\nKanalingizdagi o'qituvchilar "
+                           "Telegram'da test topshiradi; natijada joriy toifasi bo'yicha «saqlanadi / oshadi» uchun "
+                           "2-bosqichda nechta ball kerakligi ko'rsatiladi (VM 572-son qarori chegaralari).\n\n"
+                           "Test nomini yozing (masalan: <i>Matematika o'qituvchilari attestatsiyasi</i>):")
 
 
 @router.callback_query(F.data == "mq:olp")
@@ -275,6 +288,16 @@ async def got_title(m: Message, state: FSMContext) -> None:
     w["title"] = m.text.strip()[:140]
     await state.update_data(w=w)
     await state.set_state(None)
+    if w.get("attest"):
+        from app.logic.attest import SPEC
+        sp = M.parse_spec(SPEC.format(title=w["title"]))
+        w["spec"] = sp.to_text()
+        await state.update_data(w=w)
+        return await m.answer(sp.summary() + "\n\n<i>Standart: 40 ta test × 2 ball = 80 (1-bosqich). Savollar soni "
+                                             "boshqacha bo'lsa — «O'zgartirish»; natija baribir 80 ballik shkalaga "
+                                             "o'tkaziladi.</i>",
+                              reply_markup=IM(inline_keyboard=[[IB(text="✅ Shu format", callback_data="mqfok")],
+                                                               [IB(text="✏️ O'zgartirish", callback_data="mqf:own")]]))
     if w.get("kind") == "tashqi":
         return await m.answer("Kanal natijani qaysi ko'rinishda beradi?", reply_markup=IM(inline_keyboard=[
             [IB(text=v[0], callback_data=f"mqk:{k}")] for k, v in EXT_FORMATS.items()]))
@@ -1481,6 +1504,9 @@ def _res_text(moc: Moc, sp: M.Spec, z: MocSeat, n: int) -> str:
         lines.append("\n<i>Ball taxminiy: rasmiy imtihonda Rasch modeli qo'llanadi.</i>")
     if sp.mode == "rasch":
         lines.append("\n<i>Rasch modeli bo'yicha hisoblangan mock bali — rasmiy imtihon natijasining bashorati.</i>")
+    if (moc.meta or {}).get("attest"):
+        from app.logic import attest
+        lines.append("\n" + attest.text(r["total"], r["total_max"], (z.online or {}).get("toifa")))
     return "\n".join(lines)
 
 
