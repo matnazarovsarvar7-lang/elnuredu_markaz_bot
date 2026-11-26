@@ -212,6 +212,8 @@ def setup(bot: Bot) -> AsyncIOScheduler:
     from app.bot.coach import morning_job as coach_morning, evening_job as coach_evening
     sch.add_job(coach_morning, "cron", hour=8, minute=45, args=[bot])
     sch.add_job(coach_evening, "cron", hour=20, minute=40, args=[bot])
+    from app.bot.online import tick as online_tick
+    sch.add_job(online_tick, "interval", minutes=2, args=[bot], max_instances=1, coalesce=True)
     sch.start()
     return sch
 

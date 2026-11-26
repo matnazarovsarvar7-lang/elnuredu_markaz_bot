@@ -761,6 +761,7 @@ class MocSeat(Base):
     scanned: Mapped[bool] = mapped_column(Boolean, default=False)
     absent: Mapped[bool] = mapped_column(Boolean, default=False)
     baho: Mapped[dict] = mapped_column(JSON, default=dict)                 # {"Writing": 55}
+    online: Mapped[dict | None] = mapped_column(JSON)                      # online MOC: boshlash/topshirish, chek, rasmlar
     result: Mapped[dict | None] = mapped_column(JSON)
     paid: Mapped[int] = mapped_column(Integer, default=0)
     pay_method: Mapped[str | None] = mapped_column(String(10))

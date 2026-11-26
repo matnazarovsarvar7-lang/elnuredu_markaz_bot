@@ -247,6 +247,15 @@ async def _price_save(msg: Message, state: FSMContext, mid: int, v: int, every: 
                                                          if v else "bepul")
                      + ("\n<i>Oldin to'langan summalar o'zgarmadi.</i>" if paid else ""))
     await MB.card(msg, mid, tg)
+    if v and (moc.meta or {}).get("online"):
+        from app.db.models import Setting
+        from app.bot.online import On
+        async with Session() as s:
+            card = await s.get(Setting, "online_card")
+        if not (card and card.value):
+            await state.set_state(On.card)
+            await msg.answer("💳 Qatnashchilar to'lovni qaysi kartaga o'tkazadi? Karta raqami va egasini yozing:\n"
+                             "<code>8600 1234 5678 9012 — Sarvar M.</code>")
 
 
 @router.callback_query(F.data.startswith("xre:"))

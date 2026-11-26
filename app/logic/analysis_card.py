@@ -278,3 +278,36 @@ def personal(name: str, title: str, date_txt: str, pct: float, topics: dict[str,
             d.text((x + 18 * S, y + 34 * S + j * 18 * S), ln, font=fw, fill=INK)
     _footer(d, int(h), "Har bir mavzu — bitta qadam")
     return _png(img)
+
+
+# ================================ TOP-10 (kanal uchun) ================================
+def top_list(title: str, date_txt: str, rows: list[tuple], total: int) -> bytes:
+    """rows: (o'rin, ism, natija matni, daraja)."""
+    from app.logic.rating_card import BRONZE, SILVER
+    rh = 58 * S
+    h = 124 * S + 20 * S + len(rows) * (rh + 8 * S) + 70 * S
+    img = Image.new("RGB", (W, int(h)), CREAM)
+    d = ImageDraw.Draw(img)
+    y = _head(d, "TOP-10 NATIJALAR", title, f"Qatnashchilar: {total} kishi", date_txt) + 20 * S
+    medal = {1: GOLD, 2: SILVER, 3: BRONZE}
+    for rank, name, score, level in rows:
+        top3 = bool(rank and rank <= 3)
+        d.rounded_rectangle([PAD, y, W - PAD, y + rh], radius=14 * S, fill=WHITE,
+                            outline=medal.get(rank, LINE), width=(3 if top3 else 1) * S)
+        cx, cy = PAD + 34 * S, y + rh / 2
+        rr = 19 * S
+        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], fill=medal.get(rank, NAVY2))
+        t = str(rank or "–")
+        d.text((cx - d.textlength(t, font=_f(15, True)) / 2, cy - 10 * S), t, font=_f(15, True), fill=WHITE)
+        d.text((PAD + 68 * S, y + 10 * S), _fit(d, name, _f(15, True), 300 * S), font=_f(15, True), fill=INK)
+        if level and level not in ("—", "Sertifikatsiz"):
+            d.text((PAD + 68 * S, y + 34 * S), f"Daraja: {level}", font=_f(10, True), fill=GREEN)
+        fs = _f(16, True)
+        d.text((W - PAD - 16 * S - d.textlength(score, font=fs), y + 18 * S), score, font=fs, fill=NAVY)
+        y += rh + 8 * S
+    fy = h - 44 * S
+    d.line([(PAD, fy), (W - PAD, fy)], fill=LINE, width=S)
+    d.text((PAD, fy + 12 * S), "Teng natija — teng o'rin", font=_f(9), fill=MUTED)
+    tw = d.textlength("ELNUR EDU", font=_f(9, True))
+    d.text((W - PAD - tw, fy + 12 * S), "ELNUR EDU", font=_f(9, True), fill=NAVY)
+    return _png(img)

@@ -235,6 +235,8 @@ def make_app(bot: Bot) -> web.Application:
     app.router.add_get("/agent/script", _guard(script))
     app.router.add_get("/agent/install/{t}", install)
     app.router.add_get("/agent/ping", lambda r: web.Response(text="ok"))
+    from app.online_api import add_routes
+    add_routes(app)                                       # online MOC mini-ilovasi
     return app
 
 

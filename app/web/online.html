@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ELNUR EDU · Online MOC</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<style>
+:root{
+  --navy:#0E2A47;--navy2:#183E66;--gold:#E9A23B;--cream:#FBF7EF;--ink:#16202C;--muted:#6B7A8C;--line:#E6E0D4;
+  --green:#269664;--red:#D64545;--card:#fff;
+  --bg:var(--tg-theme-bg-color,var(--cream));--text:var(--tg-theme-text-color,var(--ink));
+  --hint:var(--tg-theme-hint-color,var(--muted));--sec:var(--tg-theme-secondary-bg-color,#F3EEE4);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.top{position:sticky;top:0;z-index:5;background:var(--navy);color:#fff;padding:12px 16px 10px;box-shadow:0 2px 10px rgba(0,0,0,.15)}
+.top .row{display:flex;align-items:center;gap:10px}
+.title{flex:1;font-weight:700;font-size:15px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.timer{font:700 17px/1 ui-monospace,Menlo,monospace;background:rgba(255,255,255,.12);padding:7px 11px;border-radius:999px;min-width:84px;text-align:center}
+.timer.low{background:var(--red);animation:pulse 1s infinite}
+@keyframes pulse{50%{opacity:.75}}
+.sub{display:flex;justify-content:space-between;margin-top:8px;font-size:12px;color:#BFCCDB}
+.bar{height:4px;background:rgba(255,255,255,.15);border-radius:4px;margin-top:6px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--gold);transition:width .3s}
+.tabs{display:flex;gap:6px;padding:10px 12px;position:sticky;top:86px;z-index:4;background:var(--bg)}
+.tabs button{flex:1;border:0;border-radius:12px;padding:10px;font-weight:700;font-size:14px;background:var(--sec);color:var(--hint)}
+.tabs button.on{background:var(--navy);color:#fff}
+.pane{display:none;padding:4px 12px 110px}.pane.on{display:block}
+.pg{background:#fff;border-radius:14px;margin:0 0 12px;overflow:hidden;box-shadow:0 1px 4px rgba(0,0,0,.08);position:relative;min-height:120px}
+.pg img{display:block;width:100%;height:auto;-webkit-touch-callout:none;user-select:none;-webkit-user-select:none}
+.pg .lbl{position:absolute;top:8px;right:8px;background:rgba(14,42,71,.75);color:#fff;font-size:11px;padding:3px 8px;border-radius:999px}
+.sec{margin:14px 0 6px;font-weight:800;color:var(--navy2);font-size:13px;letter-spacing:.3px;text-transform:uppercase;display:flex;justify-content:space-between}
+.sec small{color:var(--hint);font-weight:600;text-transform:none}
+.q{display:flex;align-items:center;gap:8px;background:var(--card);border-radius:14px;padding:8px 10px;margin:6px 0;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.q .n{width:34px;font-weight:800;color:var(--navy);font-size:15px;text-align:center}
+.q.done .n{color:var(--green)}
+.opts{display:flex;gap:7px;flex:1;flex-wrap:wrap}
+.o{width:40px;height:40px;border-radius:50%;border:2px solid #C9D2DC;background:#fff;font-weight:800;color:#55667A;font-size:15px}
+.o.sel{background:var(--navy);border-color:var(--navy);color:#fff;transform:scale(1.05)}
+.o.num{border-radius:12px}
+.note{background:#FFF6E6;border:1px solid #F3D9A6;border-radius:14px;padding:12px;margin:8px 0;font-size:14px}
+.grid{display:grid;grid-template-columns:repeat(10,1fr);gap:4px;margin:6px 0 4px}
+.grid span{font-size:10px;text-align:center;padding:4px 0;border-radius:6px;background:var(--sec);color:var(--hint);font-weight:700}
+.grid span.ok{background:var(--green);color:#fff}
+.screen{min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:30px}
+.screen h2{margin:16px 0 8px}.screen p{color:var(--hint);max-width:320px}
+.logo{width:74px;height:74px;border-radius:22px;background:var(--navy);display:flex;align-items:center;justify-content:center;font-size:36px}
+.spin{width:36px;height:36px;border:4px solid var(--line);border-top-color:var(--gold);border-radius:50%;animation:sp 1s linear infinite;margin-top:20px}
+@keyframes sp{to{transform:rotate(360deg)}}
+.saved{transition:opacity .4s}
+.finish{position:fixed;left:12px;right:12px;bottom:14px;border:0;border-radius:16px;padding:16px;font-weight:800;font-size:16px;background:var(--gold);color:#1B1B1B;box-shadow:0 6px 18px rgba(233,162,59,.4);display:none}
+</style>
+</head>
+<body>
+<div id="load" class="screen"><div class="logo">🎓</div><h2>ELNUR EDU</h2><p>Test yuklanmoqda…</p><div class="spin"></div></div>
+<div id="err" class="screen" style="display:none"><div class="logo">⚠️</div><h2 id="errt">Xatolik</h2><p id="errp"></p></div>
+<div id="ok" class="screen" style="display:none"><div class="logo">✅</div><h2>Javoblaringiz qabul qilindi!</h2>
+  <p>Natija, kalit va tahlil muddat tugagach botga keladi. Yozma qism bo'lsa — rasmini botga yuboring.</p></div>
+<div id="main" style="display:none">
+  <div class="top">
+    <div class="row"><div class="title" id="ttl"></div><div class="timer" id="tm">--:--</div></div>
+    <div class="sub"><span id="prog">0 / 0 belgilandi</span><span class="saved" id="sv">✓ saqlandi</span></div>
+    <div class="bar"><i id="pb"></i></div>
+  </div>
+  <div class="tabs"><button id="t1" class="on">📄 Savollar</button><button id="t2">✍️ Javob varag'i</button></div>
+  <div class="pane on" id="p1"></div>
+  <div class="pane" id="p2"></div>
+  <button class="finish" id="fin">Yakunlash</button>
+</div>
+<script>
+const tg = window.Telegram && Telegram.WebApp; if (tg) { tg.ready(); tg.expand(); try{tg.setHeaderColor('#0E2A47')}catch(e){} }
+const P = new URLSearchParams(location.search), MID = P.get('m');
+let S = null, A = [], remain = 0, tick = null, saveT = null, busy = false, done = false;
+const $ = id => document.getElementById(id);
+function show(id){ ['load','err','ok','main'].forEach(x => $(x).style.display = x===id ? (id==='main'?'block':'flex') : 'none'); }
+function fail(t,p){ $('errt').textContent=t; $('errp').textContent=p||''; show('err'); if(tg) tg.MainButton.hide(); }
+async function api(path, body){
+  const r = await fetch('/o/api/'+path, {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+  let j = {}; try { j = await r.json(); } catch(e) {}
+  if (!r.ok && !j.error) j.error = 'Tarmoq xatosi ('+r.status+')';
+  return j;
+}
+function fmt(s){ s=Math.max(0,s|0); const h=s/3600|0, m=(s%3600)/60|0, x=s%60; return (h?h+':':'')+String(m).padStart(2,'0')+':'+String(x).padStart(2,'0'); }
+function progress(){
+  const n = A.filter(c => c !== '-').length; $('prog').textContent = n+' / '+S.n+' belgilandi';
+  $('pb').style.width = (S.n ? 100*n/S.n : 0)+'%';
+  document.querySelectorAll('.grid span').forEach((e,i)=> e.classList.toggle('ok', A[i] !== '-'));
+}
+function queueSave(){
+  $('sv').style.opacity = .3; $('sv').textContent='saqlanmoqda…';
+  clearTimeout(saveT); saveT = setTimeout(doSave, 700);
+}
+async function doSave(){
+  const j = await api('save', {m:MID, z:S.seat, t:S.token, a:A.join('')}).catch(()=>({}));
+  if (j.ok){ $('sv').textContent='✓ saqlandi'; $('sv').style.opacity=1; if (j.remain!==undefined) remain=j.remain; if (j.submitted) finishView(); }
+  else { $('sv').textContent='⚠ qayta urinilmoqda'; setTimeout(doSave, 3000); }
+}
+function pick(i, v, row){
+  if (done) return;
+  A[i] = (A[i] === v) ? '-' : v;
+  row.querySelectorAll('.o').forEach(b => b.classList.toggle('sel', b.dataset.v === A[i]));
+  row.classList.toggle('done', A[i] !== '-');
+  if (tg && tg.HapticFeedback) tg.HapticFeedback.selectionChanged();
+  progress(); queueSave();
+}
+function build(){
+  $('ttl').textContent = S.title;
+  const p1 = $('p1'); p1.innerHTML = '';
+  if (!S.pages) p1.innerHTML = '<div class="note">Savollar qog\'ozda berilgan — javoblarni «Javob varag\'i» bo\'limida belgilang.</div>';
+  for (let p=1; p<=S.pages; p++){
+    const d = document.createElement('div'); d.className='pg';
+    d.innerHTML = '<span class="lbl">'+p+' / '+S.pages+'</span>';
+    const im = new Image(); im.loading = p>2 ? 'lazy' : 'eager'; im.alt = p+'-sahifa';
+    im.src = '/o/api/page?m='+MID+'&z='+S.seat+'&t='+S.token+'&p='+p;
+    im.oncontextmenu = e => e.preventDefault();
+    d.appendChild(im); p1.appendChild(d);
+  }
+  const p2 = $('p2'); p2.innerHTML = '<div class="grid" id="gr"></div>';
+  const gr = $('gr'); for (let i=0;i<S.n;i++){ const s=document.createElement('span'); s.textContent=i+1;
+    s.onclick = () => { const r = document.getElementById('q'+(i+1)); if (r) r.scrollIntoView({behavior:'smooth', block:'center'}); };
+    gr.appendChild(s); }
+  S.sections.forEach(sec => {
+    const h = document.createElement('div'); h.className='sec';
+    if (sec.kind === 'baho'){
+      h.innerHTML = sec.name; p2.appendChild(h);
+      const n = document.createElement('div'); n.className='note';
+      n.innerHTML = '✍️ <b>Yozma ish.</b> Varaqqa yozing — testni yakunlagach rasmini botga yuborasiz (20 daqiqa vaqt beriladi).';
+      p2.appendChild(n); return;
+    }
+    h.innerHTML = sec.name + '<small>'+sec.start+'–'+(sec.start+sec.n-1)+'</small>'; p2.appendChild(h);
+    for (let q=sec.start; q<sec.start+sec.n; q++){
+      const i = q-1, row = document.createElement('div'); row.className='q'+(A[i] !== '-' ? ' done':''); row.id = 'q'+q;
+      row.innerHTML = '<div class="n">'+q+'</div><div class="opts"></div>';
+      const box = row.querySelector('.opts');
+      const vals = sec.kind === 'test' ? 'ABCDEF'.slice(0, sec.opts).split('') : Array.from({length: sec.mx+1}, (_,k)=>String(k));
+      vals.forEach(v => {
+        const b = document.createElement('button'); b.className='o'+(sec.kind==='test'?'':' num')+(A[i]===v?' sel':'');
+        b.textContent = v; b.dataset.v = v; b.onclick = () => pick(i, v, row); box.appendChild(b);
+      });
+      p2.appendChild(row);
+    }
+  });
+  progress();
+}
+const pos = {1:0, 2:0}; let cur = 1;
+function tab(n){ if (n===cur) return; pos[cur] = window.scrollY; cur = n;
+  $('t1').classList.toggle('on', n===1); $('t2').classList.toggle('on', n===2);
+  $('p1').classList.toggle('on', n===1); $('p2').classList.toggle('on', n===2); window.scrollTo(0, pos[n]); }
+$('t1').onclick = () => tab(1); $('t2').onclick = () => tab(2);
+function startTimer(){
+  const t0 = Date.now(), r0 = remain;
+  tick = setInterval(() => {
+    const left = r0 - ((Date.now()-t0)/1000|0);
+    $('tm').textContent = fmt(left); $('tm').classList.toggle('low', left <= 300);
+    if (left === 300 && tg && tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('warning');
+    if (left <= 0){ clearInterval(tick); submit(true); }
+  }, 1000);
+}
+async function submit(auto){
+  if (busy || done) return; busy = true;
+  clearTimeout(saveT);
+  const j = await api('submit', {m:MID, z:S.seat, t:S.token, a:A.join('')}).catch(()=>({}));
+  busy = false;
+  if (j.ok) finishView(); else if (auto) setTimeout(()=>submit(true), 3000); else alert(j.error || 'Xatolik, qayta urinib ko\'ring');
+}
+function finishView(){
+  done = true; clearInterval(tick); show('ok');
+  if (tg){ tg.MainButton.hide(); if (tg.HapticFeedback) tg.HapticFeedback.notificationOccurred('success'); setTimeout(()=>tg.close(), 3500); }
+}
+function askFinish(){
+  const empty = A.filter(c => c === '-').length;
+  const msg = (empty ? empty+' ta savol belgilanmagan. ' : 'Hamma savollar belgilangan. ') + 'Yakunlaysizmi? Keyin o\'zgartirib bo\'lmaydi.';
+  if (tg && tg.showConfirm) tg.showConfirm(msg, ok => ok && submit(false)); else if (confirm(msg)) submit(false);
+}
+async function init(){
+  if (!tg || !tg.initData) return fail('Telegram orqali oching', 'Bu sahifa faqat bot ichidagi «▶️ Testni boshlash» tugmasi bilan ishlaydi.');
+  const j = await api('start', {init: tg.initData, m: MID}).catch(()=>({error:'Internet aloqasini tekshiring'}));
+  if (j.submitted) return finishView();
+  if (!j.ok) return fail('Test ochilmadi', j.error);
+  S = j; remain = j.remain;
+  A = (j.answers || '').padEnd(j.n, '-').slice(0, j.n).split('');
+  build(); show('main'); startTimer();
+  if (tg){ tg.MainButton.setParams({text:'Yakunlash', color:'#E9A23B', text_color:'#1B1B1B'}); tg.MainButton.onClick(askFinish); tg.MainButton.show();
+           tg.enableClosingConfirmation && tg.enableClosingConfirmation(); }
+  else { $('fin').style.display='block'; $('fin').onclick = askFinish; }
+}
+init();
+</script>
+</body>
+</html>

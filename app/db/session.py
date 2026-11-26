@@ -11,6 +11,7 @@ Session = async_sessionmaker(engine, expire_on_commit=False)
 
 # Mavjud bazaga yangi ustunlar (create_all ularni qo'shmaydi)
 MIGRATIONS = [
+    "ALTER TABLE moc_seats ADD COLUMN online JSON",
     "ALTER TABLE test_questions ADD COLUMN topic VARCHAR(120)",
     "ALTER TABLE exam_results ADD COLUMN topics JSON",
     "ALTER TABLE print_books ADD COLUMN price INTEGER",

@@ -55,6 +55,10 @@ async def start(m: Message, state: FSMContext | None = None, bot: Bot | None = N
         from app.bot.moc import claim
         if await claim(m, arg, bot):
             return
+    if arg.startswith("o") and arg[1:].isdigit() and state:   # online MOC: kanaldagi «Qatnashish» tugmasi
+        from app.bot.online import register_start
+        if await register_start(m, state, int(arg[1:])):
+            return
     if arg.startswith("c") and "_" in arg:                   # sertifikat QR: haqiqiyligini tekshirish
         from app.bot.certs import verify
         if await verify(m, arg):
@@ -64,6 +68,9 @@ async def start(m: Message, state: FSMContext | None = None, bot: Bot | None = N
     if who.staff or who.parent or who.student:
         await show_menu(m, who)
     else:
+        from app.bot.online import guest_home
+        if await guest_home(m):                              # online MOC qatnashchisi — faqat o'z imtihonlari
+            return
         await m.answer(f"{settings.center_name} botiga xush kelibsiz!\n\n"
                        "• Farzandingiz markazimizda o'qisa — «📱 Raqamni yuborish» tugmasini bosing.\n"
                        "• Kursga yozilmoqchi bo'lsangiz — «✍️ Kursga yozilish» tugmasini bosing.",

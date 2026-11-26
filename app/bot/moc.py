@@ -101,7 +101,7 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
             seats = (await s.execute(select(MocSeat).where(MocSeat.moc_id == x.id))).scalars().all()
             done = sum(1 for z in seats if z.answers or z.absent)
             done = sum(1 for z in seats if z.answers or z.absent or z.baho)
-            icon = "✅" if x.status == "yakun" else {"nazorat": "📄", "tashqi": "🌐"}.get(x.kind, "🎓")
+            icon = "✅" if x.status == "yakun" else "📲" if (x.meta or {}).get("online") else {"nazorat": "📄", "tashqi": "🌐"}.get(x.kind, "🎓")
             rows.append([IB(text=f"{icon} {x.date:%d.%m} · {x.title[:28]} · {done}/{len(seats)}",
                             callback_data=f"mqc:{x.id}")])
     if _role(st) == "rahbar":
@@ -110,6 +110,7 @@ async def list_view(msg: Message, tg: int, edit: bool = False) -> None:
         rows.append([IB(text="➕ Yangi MOC imtihon", callback_data="mq:new")])
         rows.append([IB(text="📄 Tayyor PDF test (nazorat)", callback_data="mq:pdf")])
         rows.append([IB(text="🌐 Tashqi tekshiruvli test (kanal tekshiradi)", callback_data="mq:ext")])
+        rows.append([IB(text="📲 Online MOC (kanal orqali, Telegram'da)", callback_data="mq:onl")])
     text = ("🎓 <b>MOC imtihonlar va PDF testlar</b>\n\nFormatlar: Milliy sertifikat, DTM, CEFR, IELTS, oddiy test "
             "yoki o'z formatingiz. Savollar — sizning PDF faylingiz, javob varaqlari va tekshirish — bot.\n"
             "🌐 <b>Tashqi tekshiruv</b> — test sotib olingan kanalda tekshiriladi, siz faqat natijani yuklaysiz.")
@@ -143,6 +144,17 @@ async def new_moc(c: CallbackQuery, state: FSMContext) -> None:
     await state.set_state(Mc.title)
     await c.answer()
     await c.message.answer("🎓 <b>Yangi MOC imtihon</b>\n\nImtihon nomini yozing (masalan: <i>Noyabr DTM mock</i>):")
+
+
+@router.callback_query(F.data == "mq:onl")
+async def new_online(c: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await state.update_data(w={"kind": "moc", "online": True})
+    await state.set_state(Mc.title)
+    await c.answer()
+    await c.message.answer("📲 <b>Online MOC</b>\n\nQatnashchilar kanalingizdagi tugma orqali botga kiradi, ro'yxatdan "
+                           "o'tadi va javoblarni Telegram'ning o'zida belgilaydi. Natija, kalit va sertifikat — "
+                           "muddat tugagach avtomatik.\n\nImtihon nomini yozing:")
 
 
 @router.callback_query(F.data == "mq:ext")
@@ -309,6 +321,11 @@ async def got_spec(m: Message, state: FSMContext) -> None:
 async def format_ok(c: CallbackQuery, state: FSMContext) -> None:
     await c.answer()
     await c.message.edit_reply_markup(reply_markup=None)
+    w = (await state.get_data()).get("w") or {}
+    if w.get("online"):                                   # online — bitta variant
+        w["nv"], w["booklets"], w["keys"], w["cur"] = 1, {}, {}, 0
+        await state.update_data(w=w)
+        return await _ask_pdf(c.message, state)
     await c.message.answer("Nechta variant bor? (har variantning o'z PDF fayli va kaliti bo'ladi)",
                            reply_markup=IM(inline_keyboard=[[IB(text=str(i), callback_data=f"mqv:{i}") for i in range(1, 7)]]))
 
@@ -389,6 +406,9 @@ async def _next_variant(msg: Message, state: FSMContext) -> None:
     if w["cur"] < w["nv"]:
         return await _ask_pdf(msg, state)
     await state.set_state(None)
+    if w.get("online"):
+        from app.bot.online import ask_mode
+        return await ask_mode(msg, state)
     t = now().date()
     await msg.answer("📅 Imtihon sanasi?", reply_markup=IM(inline_keyboard=[[
         IB(text=f"Bugun {t:%d.%m}", callback_data=f"mqd:{t.isoformat()}"),
@@ -788,6 +808,9 @@ async def card(msg: Message, mid: int, tg: int, edit: bool = False) -> None:
     if moc.kind == "tashqi":
         from app.bot.moc_ext import ext_card
         return await ext_card(msg, moc, sp, seats, st, unpaid, ext, edit)
+    if (moc.meta or {}).get("online"):
+        from app.bot.online import online_card
+        return await online_card(msg, moc, sp, seats, st, edit)
     lines = [f"{KIND_ICON.get(moc.kind, '🎓')} <b>{moc.title}</b> · {moc.date:%d.%m.%Y}"
              + (" · ✅ yakunlangan" if moc.status == "yakun" else ""),
              f"{sp.name} · {sp.n_questions} savol · {moc.n_variants} variant",
